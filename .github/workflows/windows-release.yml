@@ -44,6 +44,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
       - name: Verify packaged app
         run: node tests/appearance-clipboard-smoke.js dist/win-unpacked/fanbox-pro.exe
+      - name: Verify file scrolling
+        run: node tests/file-scroll-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -64,12 +66,16 @@ jobs:
           基于 alchaincyf/fanbox 的 Windows 衍生版本，增加多工作区 Git 仓库管理、自动同步及定时任务。
           包含主题配置、编辑器配色、盘符切换、文件选中框及资源管理器定位修复。
 
+          本次修订：滚动区域隔离绘制、暂停装饰动画，后台刷新保留滚动位置。
+
           下载 fanbox-pro-$env:RELEASE_VERSION-x64.exe 并运行安装。Git 功能需要本机 Git；Agent 功能需要另行配置对应工具。
           原项目：https://github.com/alchaincyf/fanbox
           "@
           $notes | Set-Content dist/release-notes.md -Encoding utf8
           gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
+            gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --notes-file dist/release-notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'Release notes update failed' }
             gh release upload $env:GITHUB_REF_NAME $installer --repo $env:GITHUB_REPOSITORY --clobber
           } else {
             gh release create $env:GITHUB_REF_NAME $installer --repo $env:GITHUB_REPOSITORY --verify-tag --title "fanbox-pro $env:RELEASE_VERSION (Windows)" --notes-file dist/release-notes.md --latest

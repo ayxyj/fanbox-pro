@@ -1180,3 +1180,14 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 @media(max-width:1000px) { .schedule-preview ol { grid-template-columns: 1fr; } }
 
 .drive-select { flex: none; max-width: 84px; padding: 4px 7px; border: 1px solid var(--border); border-radius: 6px; color: var(--text); background: var(--bg-2); cursor: pointer; -webkit-app-region: no-drag; }
+
+/* Keep scrolling content in its own paint boundary and avoid animated hover trails. */
+#content, #preview-body { isolation: isolate; overscroll-behavior: contain; }
+#content, #preview-body:not(:has(#ed-host)) { contain: paint; }
+#file-area .item, #file-area .row { transition: none; }
+#content.is-scrolling .item, #content.is-scrolling .row, #content.is-scrolling .svg-icon, #content.is-scrolling .fname { animation: none !important; transition: none !important; }
+#content.is-scrolling .item:hover .svg-icon { transform: none; }
+#content.is-scrolling .changed { box-shadow: inset 0 0 0 1.5px var(--accent); }
+#content.is-scrolling .edit-ripple { display: none; }
+
+#content.is-scrolling .changed::after { animation: none; }

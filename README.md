@@ -181,6 +181,7 @@ node tests/scheduler-controls.integration.js
 node tests/theme-menu-state.js
 node tests/appearance-clipboard-smoke.js
 node tests/sql-preview-smoke.js
+node tests/file-scroll-smoke.js
 ```
 
 验证打包后的主题、编辑器、剪贴板、任务界面及盘符菜单：

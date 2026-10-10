@@ -371,8 +371,12 @@ function renderFiles() {
   if (state.gsMode) return;
   if (state.skillsMode) return; // skills 视图自管 #file-area，文件渲染不要清掉它
   const area = $('#file-area');
+  const viewport = $('#content');
+  const scrollTop = viewport.scrollTop, scrollLeft = viewport.scrollLeft;
+  const cursorPath = state.visible[state.cursor]?.path;
   const list = visibleEntries();
   state.visible = list;
+  if (cursorPath) state.cursor = list.findIndex(e => e.path === cursorPath);
   renderStatusbar();
   if (!list.length) {
     const emptyMsg = state.recentMode ? '没找到最近修改的文件' : '这个文件夹是空的';
@@ -393,7 +397,8 @@ function renderFiles() {
     area.appendChild(wrap);
     if (state.recentMode && state.recentTruncated) area.insertAdjacentHTML('beforeend', truncNote());
     state.cols = 1;
-    highlightCursor();
+    highlightCursor(false);
+    viewport.scrollTop = scrollTop; viewport.scrollLeft = scrollLeft;
     return;
   }
   // 至此只剩网格视图（列表/最近已在上面提前返回）
@@ -403,7 +408,22 @@ function renderFiles() {
   area.innerHTML = '';
   area.appendChild(grid);
   measureCols();
-  highlightCursor();
+  highlightCursor(false);
+  viewport.scrollTop = scrollTop; viewport.scrollLeft = scrollLeft;
+}
+// Pause decorative paints while the scroll viewport is moving.
+const scrollTimers = new WeakMap();
+document.addEventListener('scroll', event => {
+  const viewport = event.target;
+  if (!(viewport instanceof Element) || !['content','preview-body'].includes(viewport.id)) return;
+  viewport.classList.add('is-scrolling');
+  clearTimeout(scrollTimers.get(viewport));
+  scrollTimers.set(viewport, setTimeout(() => { viewport.classList.remove('is-scrolling'); scrollTimers.delete(viewport); if (viewport.id === 'content' && viewport.__pendingFiles) { viewport.__pendingFiles = false; renderFiles(); } }, 180));
+}, { capture: true, passive: true });
+function renderFilesWhenIdle() {
+  const viewport = $('#content');
+  if (viewport.classList.contains('is-scrolling')) viewport.__pendingFiles = true;
+  else renderFiles();
 }
 function measureCols() {
   const items = $('#file-area').querySelectorAll('.item');
@@ -1177,7 +1197,7 @@ async function refresh() {
   state.project = data.project;
   state.breadcrumb = data.breadcrumb;
   renderBreadcrumb();
-  renderFiles();
+  renderFilesWhenIdle();
 }
 // 文本原地编辑：md → Milkdown Crepe 所见即所得；其它 → Monaco；都失败回退 textarea
 async function enterEditMode(e) {
@@ -3575,7 +3595,7 @@ if (window.fanboxFs) {
       const now = Date.now(); let dirty = false;
       for (const [k, v] of state.changed) { if (now - v.ts > 4500) { state.changed.delete(k); dirty = true; } }
       if (!state.changed.size) { clearInterval(sweep); sweep = null; }
-      if (dirty) renderFiles();
+      if (dirty) renderFilesWhenIdle();
     }, 1000); // 单一清理定时器，避免大批量变更时堆积成千上万个 timer
   };
   window.fanboxFs.onChanged(({ dir, filename }) => {
