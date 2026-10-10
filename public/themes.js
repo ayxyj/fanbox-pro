@@ -96,24 +96,52 @@
     try { return await new Promise((resolve,reject)=>{ const tx=database.transaction('images',op==='get'?'readonly':'readwrite'); const store=tx.objectStore('images'); const request=op==='get'?store.get('background'):op==='put'?store.put(value,'background'):store.delete('background'); let result; request.onsuccess=()=>result=request.result; tx.oncomplete=()=>resolve(result); tx.onerror=()=>reject(tx.error); }); }
     finally { database.close(); }
   }
-  let imageUrl;
-  function displayImage(blob) {
-    if(imageUrl) URL.revokeObjectURL(imageUrl);
-    imageUrl=blob ? URL.createObjectURL(blob) : null;
+  let imageUrl, imageBlob, imageRevision=0, blurTimer;
+  async function displayImage(blob) {
+    imageBlob=blob;
+    const revision=++imageRevision;
+    let rendered=blob;
+    const blur=Number(background.blur)||0;
+    if(blob && blur>0) {
+      const bitmap=await createImageBitmap(blob);
+      try {
+        // Bake blur into the image; a live CSS filter on a Mica window can smear scrolling content.
+        const scale=Math.min(1,2048/Math.max(bitmap.width,bitmap.height));
+        const canvas=document.createElement('canvas');
+        canvas.width=Math.max(1,Math.round(bitmap.width*scale));
+        canvas.height=Math.max(1,Math.round(bitmap.height*scale));
+        const ctx=canvas.getContext('2d');
+        ctx.filter=`blur(${blur}px)`;
+        const pad=blur*3;
+        ctx.drawImage(bitmap,-pad,-pad,canvas.width+pad*2,canvas.height+pad*2);
+        rendered=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(Error('无法处理背景图片')),'image/png'));
+      } finally { bitmap.close(); }
+    }
+    if(revision!==imageRevision)return;
+    const previous=imageUrl;
+    imageUrl=rendered ? URL.createObjectURL(rendered) : null;
     bgLayer.style.backgroundImage=imageUrl ? `url("${imageUrl}")` : '';
     bgLayer.style.opacity=String(background.opacity);
-    bgLayer.style.filter=`blur(${background.blur}px)`;
+    bgLayer.style.filter='none';
+    bgLayer.dataset.renderedBlur=String(blob?blur:0);
     root.classList.toggle('has-theme-background', !!blob);
+    if(previous) URL.revokeObjectURL(previous);
   }
   imageStore('get').then(displayImage).catch(()=>{});
-  function saveBackground() { localStorage.setItem('fb_theme_background',JSON.stringify(background)); bgLayer.style.opacity=String(background.opacity); bgLayer.style.filter=`blur(${background.blur}px)`; }
+  function saveBackground() {
+    localStorage.setItem('fb_theme_background',JSON.stringify(background));
+    bgLayer.style.opacity=String(background.opacity);
+    bgLayer.style.filter='none';
+    clearTimeout(blurTimer);
+    blurTimer=setTimeout(()=>displayImage(imageBlob).catch(console.error),100);
+  }
   function exportTheme(t) {
     const url=URL.createObjectURL(new Blob([JSON.stringify(t,null,2)],{type:'application/json'})); const a=document.createElement('a'); a.href=url; a.download=t.id+'.json'; a.click(); setTimeout(()=>URL.revokeObjectURL(url),1000);
   }
   function settings() {
     if (document.getElementById('appearance-settings')) return;
     const overlay=document.createElement('div'); overlay.className='appearance-overlay'; overlay.id='appearance-settings';
-    overlay.innerHTML=`<section class="appearance-dialog" role="dialog" aria-modal="true" aria-label="主题配置"><header><h2>主题配置</h2><button data-close>关闭</button></header><div class="appearance-controls"><label>明暗模式 <select data-mode><option value="dark">深色</option><option value="light">浅色</option><option value="system">跟随系统</option></select></label><label>编辑器配色 <select data-editor><option value="auto">跟随主题</option><option value="dark">深色</option><option value="light">浅色</option></select></label></div><div class="appearance-grid"></div><h3>自定义主题</h3><div class="appearance-actions"><button data-import>导入 JSON</button><button data-create>新建主题</button><input type="file" accept=".json,application/json" data-file hidden multiple></div><h3>背景</h3><p class="appearance-background-note">透明度和模糊作用于所选背景图片。</p><div class="appearance-actions"><button data-image>选择图片</button><button data-remove-image>移除图片</button><input type="file" accept="image/*" data-image-file hidden></div><div class="appearance-controls"><label>透明度 <input type="range" min="0" max="1" step=".01" data-opacity><output data-opacity-value></output></label><label>模糊 <input type="range" min="0" max="64" step="1" data-blur><output data-blur-value></output></label><label><input type="checkbox" data-vibrancy> Windows Mica 背景效果</label></div><p class="appearance-error" role="status"></p><div class="appearance-edit" hidden><label>主题 JSON<textarea spellcheck="false"></textarea></label><button data-save>保存主题</button><button data-cancel>取消</button></div></section>`;
+    overlay.innerHTML=`<section class="appearance-dialog" role="dialog" aria-modal="true" aria-label="主题配置"><header><h2>主题配置</h2><button data-close>关闭</button></header><div class="appearance-controls"><label>明暗模式 <select data-mode><option value="dark">深色</option><option value="light">浅色</option><option value="system">跟随系统</option></select></label><label>编辑器配色 <select data-editor><option value="auto">跟随主题</option><option value="dark">深色</option><option value="light">浅色</option></select></label></div><div class="appearance-grid"></div><h3>自定义主题</h3><div class="appearance-actions"><button data-import>导入 JSON</button><button data-create>新建主题</button><input type="file" accept=".json,application/json" data-file hidden multiple></div><h3>背景</h3><p class="appearance-background-note">图片不透明度和图片模糊只作用于所选图片；100% 为完全不透明。Mica 使用 Windows 系统背景效果，独立于这两个设置。</p><div class="appearance-actions"><button data-image>选择图片</button><button data-remove-image>移除图片</button><input type="file" accept="image/*" data-image-file hidden></div><div class="appearance-controls"><label>图片不透明度 <input type="range" min="0" max="1" step=".01" data-opacity><output data-opacity-value></output></label><label>图片模糊 <input type="range" min="0" max="64" step="1" data-blur><output data-blur-value></output></label><label><input type="checkbox" data-vibrancy> Windows Mica 背景效果</label></div><p class="appearance-error" role="status"></p><div class="appearance-edit" hidden><label>主题 JSON<textarea spellcheck="false"></textarea></label><button data-save>保存主题</button><button data-cancel>取消</button></div></section>`;
     document.body.appendChild(overlay);
     const q=s=>overlay.querySelector(s);
     const error=e=>q('.appearance-error').textContent=e?.message || String(e || '');
@@ -147,8 +175,8 @@
     q('[data-import]').onclick=()=>q('[data-file]').click();q('[data-file]').onchange=async e=>{try{for(const file of e.target.files){if(file.size>1024*1024)throw Error('主题文件过大');save(JSON.parse(await file.text()));}error('');}catch(err){error(err);}e.target.value='';};
     q('[data-create]').onclick=()=>{const template=JSON.parse(JSON.stringify(find(localStorage.getItem('fb_theme')) || window.TERAX_THEMES[0]));template.id='custom-'+Date.now();template.name='我的主题';editTheme(template);};
     q('[data-save]').onclick=()=>{try{save(JSON.parse(q('textarea').value));q('.appearance-edit').hidden=true;error('');}catch(err){error(err);}};q('[data-cancel]').onclick=()=>q('.appearance-edit').hidden=true;
-    q('[data-image]').onclick=()=>q('[data-image-file]').click();q('[data-image-file]').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(!file.type.startsWith('image/') || file.size>20*1024*1024)throw Error('请选择 20 MB 以内的图片');await createImageBitmap(file).then(b=>b.close());await imageStore('put',file);displayImage(file);error('');}catch(err){error(err);}e.target.value='';};
-    q('[data-remove-image]').onclick=async()=>{try{await imageStore('delete');displayImage(null);}catch(err){error(err);}};
+    q('[data-image]').onclick=()=>q('[data-image-file]').click();q('[data-image-file]').onchange=async e=>{try{const file=e.target.files[0];if(!file)return;if(!file.type.startsWith('image/') || file.size>20*1024*1024)throw Error('请选择 20 MB 以内的图片');await createImageBitmap(file).then(b=>b.close());await imageStore('put',file);await displayImage(file);error('');}catch(err){error(err);}e.target.value='';};
+    q('[data-remove-image]').onclick=async()=>{try{await imageStore('delete');await displayImage(null);}catch(err){error(err);}};
     for(const key of ['opacity','blur']){q('[data-'+key+']').value=background[key];const update=()=>q('[data-'+key+'-value]').textContent=key==='opacity'?Math.round(background[key]*100)+'%':background[key]+' px';update();q('[data-'+key+']').oninput=e=>{background[key]=Number(e.target.value);saveBackground();update();};}
     q('[data-vibrancy]').checked=!!background.vibrancy;q('[data-vibrancy]').onchange=async e=>{const result=await window.fanboxTheme?.vibrancy(e.target.checked);if(!result?.ok){e.target.checked=false;error(result?.error || '当前环境不支持此效果');}background.vibrancy=e.target.checked;root.classList.toggle('has-theme-mica',background.vibrancy);saveBackground();};
     render();q('[data-close]').focus();

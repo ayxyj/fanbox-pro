@@ -419,6 +419,7 @@ function gsRepoContextMenu(id, x, y) {
       { label: repo.enabled ? '停用' : '启用', fn: async () => { await apiPost('/api/gs/repo/toggle', { id, enabled: !repo.enabled }); gsShow('repos'); } },
       { label: '选择关注分支', fn: () => document.querySelector('tr[data-repoid="' + id + '"] .gs-branch-select')?.focus() },
       { sep: true },
+      { label: '在终端打开', fn: async () => { try { await term.openInDir(repo.path); } catch (error) { toast('打开终端失败：' + error.message, true); } } },
       { label: '复制路径', fn: () => { navigator.clipboard.writeText(repo.path); toast('已复制'); } },
       { label: '删除', fn: () => gsConfirm('删除此仓库记录？', async (ok) => { if (!ok) return; await apiPost('/api/gs/repo/delete', { id }); gsShow('repos'); }), danger: true },
     ];
