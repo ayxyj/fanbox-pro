@@ -402,8 +402,7 @@ async function gsRepoResultShow(id) {
 
 // 模拟 fanbox 的 popupMenuAt：点击位置弹出上下文菜单
 function gsRepoContextMenu(id, x, y) {
-  api('/api/gs/repo/list').then((r) => {
-    const repo = (r.repos || []).find((x) => x.id === id);
+  const show = (repo) => {
     if (!repo) return;
     const items = [
       { label: '立即同步', fn: () => gsRepoSyncOne(id) },
@@ -424,7 +423,10 @@ function gsRepoContextMenu(id, x, y) {
       { label: '删除', fn: () => gsConfirm('删除此仓库记录？', async (ok) => { if (!ok) return; await apiPost('/api/gs/repo/delete', { id }); gsShow('repos'); }), danger: true },
     ];
     gsPopup(x, y, items);
-  });
+  };
+  const cached = (gs.repoSnapshot?.[0]?.repos || []).find(repo => repo.id === id);
+  if (cached) show(cached);
+  else api('/api/gs/repo/list').then(r => show((r.repos || []).find(repo => repo.id === id))).catch(error => toast(error.message, true));
 }
 
 function gsPopup(x, y, items) {

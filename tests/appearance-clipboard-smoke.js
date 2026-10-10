@@ -4,7 +4,6 @@ const {spawn,execFileSync}=require('child_process');
 const workspace=path.resolve(__dirname,'..');
 const scratch=path.join(workspace,'dist','test-data');fs.mkdirSync(scratch,{recursive:true});
 const root=fs.mkdtempSync(path.join(scratch,'appearance-'));
-execFileSync('git',['init',root],{stdio:'ignore'});
 fs.writeFileSync(path.join(root,'sample.js'),"const message = 'editor test';\n");
 fs.writeFileSync(path.join(root,'定位 测试.sql'),'SELECT 1;');
 const executable=process.argv[2] || path.join(workspace,'node_modules/electron/dist/electron.exe');
@@ -52,7 +51,7 @@ async function evaluate(expression){const id=++seq;const result=await new Promis
  branch.dispatchEvent(new MouseEvent('mouseenter'));const tip=document.querySelector('.gs-branch-tooltip');if(tip?.textContent!==full || tip.parentElement!==document.body)throw Error('Full branch tooltip missing');const bounds=tip.getBoundingClientRect();if(bounds.left<0 || bounds.right>innerWidth || bounds.bottom>innerHeight)throw Error('Tooltip outside viewport');
  branch.dispatchEvent(new MouseEvent('mouseleave'));if(document.querySelector('.gs-branch-tooltip'))throw Error('Tooltip failed to dismiss');branch.focus();if(!document.querySelector('.gs-branch-tooltip'))throw Error('Keyboard focus tooltip missing');branch.blur();return {statusWidth:status.getBoundingClientRect().width,fullBranch:full.length,tooltip:true};
  })()`);
- const repoTerminal=await evaluate(`(async()=>{const originalOpen=term.openInDir;let opened;const ws=await apiPost('/api/gs/workspace/save',{path:${JSON.stringify(root)},name:'Terminal fixture'});const saved=await apiPost('/api/gs/repo/add',{path:${JSON.stringify(root)},workspaceId:ws.workspace.id});if(saved.error)throw Error(saved.error);const repo=(await api('/api/gs/repo/list')).repos[0];if(!repo)throw Error('Fixture repository missing');try{term.openInDir=async path=>{opened=path;};gsRepoContextMenu(repo.id,100,100);for(let i=0;i<50&&!document.querySelector('#gs-popup');i++)await new Promise(r=>setTimeout(r,100));const item=[...document.querySelectorAll('#gs-popup .ctx-item')].find(el=>el.textContent==='在终端打开');if(!item)throw Error('Repository terminal menu missing');item.click();if(opened!==repo.path)throw Error('Repository path not passed to terminal');return true;}finally{term.openInDir=originalOpen;}})()`);assert(repoTerminal);
+ const repoTerminal=await evaluate(`(()=>{const originalOpen=term.openInDir;let opened;try{term.openInDir=async path=>{opened=path;};document.querySelector('tr[data-repoid="layout-test"]').dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:100,clientY:100}));const item=[...document.querySelectorAll('#gs-popup .ctx-item')].find(el=>el.textContent==='在终端打开');if(!item)throw Error('Repository terminal menu missing');item.click();if(opened!=='D:/test')throw Error('Repository path not passed to terminal');return true;}finally{term.openInDir=originalOpen;}})()`);assert(repoTerminal);
  const schedulerControls=await evaluate(`(async()=>{
  const check=(ok,message)=>{if(!ok)throw Error(message);};
  const saved=await apiPost('/api/gs/task/save',{name:'UI controller test',enabled:false,trigger:{type:'interval',sec:3600},action:{type:'shell_command',cmd:'echo UI_TEST'}});if(saved.error)throw Error(saved.error);
