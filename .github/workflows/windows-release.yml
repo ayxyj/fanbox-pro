@@ -1,0 +1,77 @@
+name: Windows release
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Verify release version
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          if ($env:GITHUB_REF_TYPE -eq 'tag' -and $env:GITHUB_REF_NAME -ne "v$version") { throw 'Tag and package version differ' }
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Verify source
+        run: |
+          node --check electron/main.js
+          node --check public/app.js
+          node tests/theme-menu-state.js
+          npm test
+      - name: Package Windows app
+        shell: pwsh
+        run: |
+          npm run dist:win -- --dir --config.electronDist=node_modules/electron/dist
+          if (!(Test-Path dist/win-unpacked/resources/app.asar) -or !(Test-Path dist/win-unpacked/fanbox-pro.exe)) { throw 'Windows app packaging failed' }
+          node scripts/finalize-win.js dist/win-unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'Executable resources failed' }
+          npm run dist:win -- --prepackaged dist/win-unpacked
+          if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
+      - name: Verify packaged app
+        run: node tests/appearance-clipboard-smoke.js dist/win-unpacked/fanbox-pro.exe
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: fanbox-pro-windows-${{ env.RELEASE_VERSION }}
+          path: dist/fanbox-pro-*-x64.exe
+          if-no-files-found: error
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $installer = "dist/fanbox-pro-$env:RELEASE_VERSION-x64.exe"
+          if (!(Test-Path $installer)) { throw 'Installer not found' }
+          $notes = @"
+          fanbox-pro $env:RELEASE_VERSION · Windows x64
+
+          基于 alchaincyf/fanbox 的 Windows 衍生版本，增加多工作区 Git 仓库管理、自动同步及定时任务。
+          包含主题配置、编辑器配色、盘符切换、文件选中框及资源管理器定位修复。
+
+          下载 fanbox-pro-$env:RELEASE_VERSION-x64.exe 并运行安装。Git 功能需要本机 Git；Agent 功能需要另行配置对应工具。
+          原项目：https://github.com/alchaincyf/fanbox
+          "@
+          $notes | Set-Content dist/release-notes.md -Encoding utf8
+          gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:GITHUB_REF_NAME $installer --repo $env:GITHUB_REPOSITORY --clobber
+          } else {
+            gh release create $env:GITHUB_REF_NAME $installer --repo $env:GITHUB_REPOSITORY --verify-tag --title "fanbox-pro $env:RELEASE_VERSION (Windows)" --notes-file dist/release-notes.md --latest
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Release upload failed' }
