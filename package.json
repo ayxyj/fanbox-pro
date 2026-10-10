@@ -1,0 +1,121 @@
+{
+  "name": "fanbox-pro",
+  "version": "1.0.0",
+  "description": "fanbox-pro — Windows file browser, embedded terminal, Git repository management and scheduled tasks",
+  "bin": {
+    "fanbox-pro": "server.js"
+  },
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "node server.js",
+    "app": "electron .",
+    "rebuild": "electron-rebuild -f -w node-pty",
+    "build:milkdown": "esbuild src-vendor/milkdown-entry.js --bundle --format=iife --minify --outfile=public/vendor/milkdown/milkdown.js --loader:.svg=dataurl --loader:.woff=file --loader:.woff2=file --loader:.ttf=file --loader:.eot=file --asset-names=[name]",
+    "build:hljs": "esbuild src-vendor/hljs-entry.js --bundle --format=iife --minify --outfile=public/vendor/hljs/highlight.js && cp node_modules/marked/marked.min.js public/vendor/marked/marked.min.js && cp node_modules/highlight.js/styles/github-dark.min.css node_modules/highlight.js/styles/github.min.css public/vendor/hljs/styles/",
+    "check:vendor-patch": "grep -q '20===e.keyCode||229===e.keyCode' public/vendor/xterm/xterm.js",
+    "predist": "npm run check:vendor-patch",
+    "dist": "electron-builder --mac --linux",
+    "dist:mac": "electron-builder --mac",
+    "dist:linux": "electron-builder --linux",
+    "dist:win": "electron-builder --win --x64 --publish never",
+    "test": "node tests/gitsync.integration.js"
+  },
+  "build": {
+    "appId": "com.huashu.fanbox-pro-win",
+    "productName": "fanbox-pro",
+    "directories": {
+      "buildResources": "build",
+      "output": "dist"
+    },
+    "asar": true,
+    "npmRebuild": false,
+    "asarUnpack": [
+      "**/node_modules/node-pty/**"
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": "arm64"
+        }
+      ]
+    },
+    "dmg": {
+      "title": "FanBox",
+      "writeUpdateInfo": false
+    },
+    "linux": {
+      "target": [
+        "AppImage",
+        "deb"
+      ],
+      "icon": "build/icon.png",
+      "category": "Development",
+      "executableName": "fanbox",
+      "synopsis": "FanBox — the cockpit for vibe coding",
+      "description": "Browse/search/preview/edit local files, command coding agents from the built-in terminal."
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "fanbox-pro",
+      "artifactName": "${productName}-${version}-${arch}.${ext}"
+    },
+    "files": [
+      "**/*",
+      "!dist{,/**/*}",
+      "!experiments{,/**/*}",
+      "!design-demos{,/**/*}",
+      "!素材{,/**/*}",
+      "!tests{,/**/*}"
+    ]
+  },
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/addon-unicode11": "^0.9.0",
+    "@xterm/addon-webgl": "^0.18.0",
+    "@xterm/xterm": "^5.5.0",
+    "node-pty": "^1.0.0"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.7.0",
+    "@milkdown/crepe": "^7.21.2",
+    "electron": "^33.2.0",
+    "electron-builder": "^25.1.8",
+    "esbuild": "^0.28.0",
+    "highlight.js": "^11.11.1",
+    "marked": "^12.0.2",
+    "monaco-editor": "^0.52.2"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ayxyj/fanbox-pro.git"
+  },
+  "homepage": "https://github.com/ayxyj/fanbox-pro",
+  "bugs": {
+    "url": "https://github.com/ayxyj/fanbox-pro/issues"
+  }
+}

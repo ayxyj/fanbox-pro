@@ -1,0 +1,7 @@
+'use strict';
+const fs=require('fs'),vm=require('vm'),assert=require('assert');
+const source=fs.readFileSync(require('path').join(__dirname,'../electron/main.js'),'utf8');const snippet=source.slice(source.indexOf('function buildMenu()'),source.indexOf('function assertWindowSender'));
+const choices=[['terminal','终端','Terminal'],['warm','档案','Archive'],...require('../public/themes/terax-builtin.json').map(t=>[t.id,t.name,t.name])];let handler,template;
+const context={process:{platform:'win32'},skinChoices:choices,currentTheme:'terminal',currentThemeMode:'dark',customMenuThemes:[],M:zh=>zh,sendTheme:()=>{},sendEdit:()=>{},checkUpdate:()=>{},win:{isDestroyed:()=>false,webContents:{}},ipcMain:{on:(event,callback)=>handler=callback},Menu:{buildFromTemplate:value=>value,setApplicationMenu:value=>template=value}};vm.createContext(context);vm.runInContext(snippet,context);
+for(const id of ['terminal','nord','dracula','warm','my-theme']){handler({sender:context.win.webContents},{id,mode:'light',custom:[{id:'my-theme',name:'我的主题'}]});const appearance=template.find(t=>t.label==='视图').submenu[0].submenu;const checked=appearance.filter(t=>t.id?.startsWith('skin-')&&t.checked);assert.equal(checked.length,1);assert.equal(checked[0].id,'skin-'+id);assert(appearance.find(t=>t.label==='明暗模式').submenu.find(t=>t.id==='theme-mode-light').checked);}
+console.log('PASS native menu matches applied builtin/custom theme and color mode');

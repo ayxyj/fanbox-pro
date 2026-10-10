@@ -1,0 +1,68 @@
+'use strict';
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { execFileSync } = require('node:child_process');
+const { Store } = require('../gitsync/store');
+const { SyncEngine, runAction } = require('../gitsync/sync-engine');
+const api = require('../gitsync/api');
+const { TaskScheduler } = require('../gitsync/tasks');
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fanbox-sync-test-'));
+const git = (dir, ...args) => execFileSync('git', ['-C', dir, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+const remote = path.join(root, 'origin.git'), author = path.join(root, 'author'), local = path.join(root, 'workspace', 'repo');
+const commit = (dir, text) => { fs.writeFileSync(path.join(dir, 'file.txt'), text); git(dir, 'add', '.'); git(dir, 'commit', '-m', text); };
+let store;
+(async () => {
+  fs.mkdirSync(remote); git(remote, 'init', '--template=', '--bare', '--initial-branch=master');
+  git(root, 'clone', remote, author); git(author, 'config', 'user.name', 'Test'); git(author, 'config', 'user.email', 'test@example.com');
+  commit(author, 'initial'); git(author, 'push', 'origin', 'master');
+  fs.mkdirSync(path.dirname(local)); git(root, 'clone', remote, local); git(local, 'config', 'user.name', 'Test'); git(local, 'config', 'user.email', 'test@example.com');
+  store = new Store(path.join(root, 'data')); await store.load(); const ws = store.addWorkspace({ path: path.dirname(local) }); const repo = store.addRepo({ path: local, workspaceId: ws.id }); const engine = new SyncEngine(store); api.init(store, engine); const sync = engine.syncRepo.bind(engine); engine.syncRepo = async (...args) => { const result = await sync(...args); console.log('Sync result:', result.status, result.message); return result; };
+  console.log('Checking default master fast-forward');
+  commit(author, 'remote update'); git(author, 'push', 'origin', 'master');
+  assert.equal((await engine.syncRepo(repo.id)).status, 'ok'); assert.equal(fs.readFileSync(path.join(local, 'file.txt'), 'utf8'), 'remote update');
+  git(author, 'checkout', '-b', 'feature'); commit(author, 'feature code'); git(author, 'push', 'origin', 'feature');
+  console.log('Checking dirty blocking and configured branch');
+  store.updateRepo(repo.id, { branches: ['feature'] }); fs.writeFileSync(path.join(local, 'untracked.txt'), 'keep');
+  const oldSync = repo.lastSync; const dirtyResult = await engine.syncRepo(repo.id); assert.equal(dirtyResult.status, 'dirty_blocked', JSON.stringify(dirtyResult)); assert.equal(git(local, 'branch', '--show-current'), 'master'); assert.equal(repo.lastSync, oldSync);
+  git(local, 'stash', 'push', '-u'); assert.equal((await engine.syncRepo(repo.id)).status, 'ok'); assert.equal(git(local, 'branch', '--show-current'), 'feature'); assert.equal(repo.stashCount, 1); assert.equal(git(local, 'rev-parse', '--abbrev-ref', '@{upstream}'), 'origin/feature');
+  store.updateRepo(repo.id, { branches: ['master'] }); assert.equal((await engine.syncRepo(repo.id, true, null, true)).status, 'ok'); assert.equal(git(local, 'branch', '--show-current'), 'master');
+  console.log('Checking divergence and missing branch');
+  commit(local, 'local change'); git(author, 'checkout', 'master'); commit(author, 'conflicting remote'); git(author, 'push', 'origin', 'master');
+  const localHead = git(local, 'rev-parse', 'HEAD'); assert.equal((await engine.syncRepo(repo.id)).status, 'diverged'); assert.equal(git(local, 'rev-parse', 'HEAD'), localHead);
+  store.updateRepo(repo.id, { branches: ['missing'] }); assert.match((await engine.syncRepo(repo.id)).message, /不存在关注分支/);
+  const persisted = new Store(store.dir); await persisted.load(); const last = persisted.getRepo(repo.id).lastResult; assert.equal(last.status, 'error'); assert.equal(last.targetBranch, 'missing'); assert.match(last.errorDetails, /missing/); assert.equal(last.failedStage, '获取远端分支');
+  const history = await persisted.readLogs({repoId:repo.id}); assert.equal(history[0].status,'error'); assert.equal(history[0].operation,'sync'); assert.match(history[0].logText,/missing/);
+  const qp = new URLSearchParams({ id: repo.id }); const before = [...repo.branches]; const refs = await api.handleApi('GET', 'repo/branches', qp, {}); assert.deepEqual(repo.branches, before);
+  assert.deepEqual(refs.obj.branches, ['feature', 'master']);
+  await store.flush(); const reloaded = new Store(store.dir); await reloaded.load(); assert.deepEqual(reloaded.getRepo(repo.id).availableBranches, ['feature', 'master']);
+  const gitOps = require('../gitsync/git'); const originalStatus = gitOps.getStatus, originalExec = gitOps.execGit;
+  gitOps.getStatus = () => { throw Error('Cached list must not query Git status'); };
+  gitOps.execGit = () => { throw Error('Cached branches must not run Git'); };
+  try { assert.equal((await api.handleApi('GET', 'repo/list', new URLSearchParams({cached:'1'}), {})).obj.repos.length, 1); assert.deepEqual((await api.handleApi('GET', 'repo/branches', qp, {})).obj.branches, ['feature', 'master']); }
+  finally { gitOps.getStatus = originalStatus; gitOps.execGit = originalExec; }
+  const refreshed = await api.handleApi('POST', 'repo/refresh', qp, {id: repo.id}); assert.equal(refreshed.code, 200); assert.ok(repo.lastRefreshAt); assert.deepEqual(repo.availableBranches, ['feature', 'master']);
+  assert.equal((await api.handleApi('POST', 'repo/branches/save', qp, { id: repo.id, branches: ['feature', 'master'] })).code, 400);
+  await api.handleApi('POST', 'repo/branches/save', qp, { id: repo.id, branches: ['feature'] });
+  const scan1 = await api.handleApi('POST', 'workspace/scan', qp, { id: ws.id }); assert.equal(scan1.obj.added, 0); assert.deepEqual(repo.branches, ['feature']);
+  console.log('Checking shared schedule presets and 10-run previews');
+  const future=new Date(Date.now()+3600000).toISOString();
+  for(const trigger of [{type:'interval',sec:300},{type:'cron',expr:'0 9 * * *'},{type:'cron',expr:'30 8 * * 1'},{type:'cron',expr:'15 * * * *'},{type:'at',time:future}]) {
+    const preview=await api.handleApi('POST','task/preview',new URLSearchParams(),{trigger,enabled:true});
+    assert.equal(preview.obj.times.length,trigger.type==='at'?1:10);
+    assert.ok(preview.obj.times.every((t,i,arr)=>i===0||t>arr[i-1]));
+  }
+  console.log('Checking batch and scheduler');
+  const second = store.addRepo({ path: author, workspaceId: ws.id });
+  store.updateRepo(repo.id, { branches: ['missing'] }); const task = store.saveTask({ name: 'batch', enabled: true, trigger: { type: 'interval', sec: 1 }, action: { type: 'git_sync', repoIds: [repo.id, second.id] } });
+  const batch = await runAction(store, engine, task); assert.equal(batch.status, 'partial'); assert.equal(batch.repoResults[1].status, 'ok');
+  task.action.repoIds = [second.id]; commit(author, 'scheduler local ahead');
+  const scheduler = new TaskScheduler(store, engine);
+  let completion; const fire = scheduler._fire.bind(scheduler); scheduler._fire = t => (completion = fire(t));
+  task.nextRun = Date.now() - 1; scheduler._tick(); await completion;
+  assert.equal(task.lastStatus, 'success'); assert.ok(task.lastRunAt);
+  const once=store.saveTask({name:'once',enabled:true,trigger:{type:'at',time:future},action:{type:'git_sync',repoIds:[second.id]}}); await scheduler.triggerNow(once.id);assert.equal(once.enabled,false);assert.equal(once.nextRun,null);
+  const taskRows=(await api.handleApi('GET','tasks',new URLSearchParams(),{})).obj.tasks;assert.ok(taskRows.find(t=>t.id===task.id).history.length);assert.ok(taskRows.every(t=>t.history.length<=10));
+  console.log('PASS: default master, fast-forward, dirty blocking, tracking branch, stash count, switch-only, divergence, missing branch, API configuration, scanning, batch isolation, scheduler');
+})().catch(e => { console.error(e); process.exitCode = 1; }).finally(async () => { if(store) await store.flush(); fs.rmSync(root, { recursive: true, force: true }); });
