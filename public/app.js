@@ -2037,7 +2037,11 @@ function bindEvents() {
   $('#skills-entry').onclick = () => skillsView.show();
   $('#term-newtab').onclick = () => term.newTab();
   for (const [id, direction] of [['term-tabs-left',-1],['term-tabs-right',1]]) $('#'+id).onclick=()=>$('#term-tabs').scrollBy({left:direction*Math.max(100,$('#term-tabs').clientWidth*.75),behavior:'smooth'});
-  $('#term-tabs-all').onclick=()=>term.showTabList();
+  $('#term-tabs-all').onclick=(event)=>{
+    event.stopPropagation();
+    if ($('#context-menu.terminal-tab-menu')) closeContextMenu();
+    else term.showTabList();
+  };
   if (window.ResizeObserver) new ResizeObserver(()=>{term.revealActiveTab();term.updateTabNav();}).observe($('#term-tabs'));
   $('#term-tabs').addEventListener('wheel',e=>{const bar=$('#term-tabs');if(e.ctrlKey||bar.scrollWidth<=bar.clientWidth)return;e.preventDefault();bar.scrollLeft+=e.deltaY||e.deltaX;},{passive:false});
 
@@ -2803,6 +2807,7 @@ const term = {
     $('#term-tabs-all').title='全部终端标签（'+this.sessions.length+'）';
   },
   showTabList() {
+    $('#gs-popup')?.remove();
     const rect=$('#term-tabs-all').getBoundingClientRect();
     popupMenu({clientX:rect.left,clientY:rect.bottom+4},this.sessions.map(s=>({label:(s.id===this.active?'✓ ':'')+this.tabLabel(s)+' · '+(s.repoDir || s.cwd || s.startDir || ''),fn:()=>this.activate(s.id)})));
     $('#context-menu')?.classList.add('terminal-tab-menu');
