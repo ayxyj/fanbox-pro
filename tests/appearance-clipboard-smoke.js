@@ -6,8 +6,9 @@ const scratch=path.join(workspace,'dist','test-data');fs.mkdirSync(scratch,{recu
 const root=fs.mkdtempSync(path.join(scratch,'appearance-'));
 fs.writeFileSync(path.join(root,'sample.js'),"const message = 'editor test';\n");
 fs.writeFileSync(path.join(root,'定位 测试.sql'),'SELECT 1;');
+fs.writeFileSync(path.join(root,'npm-wrapper.ps1'),"Write-Output 'PS_WRAPPER_OK'; Write-Output ('POLICY:'+ (Get-ExecutionPolicy -Scope Process))");
 const executable=process.argv[2] || path.join(workspace,'node_modules/electron/dist/electron.exe');
-const child=spawn(executable,[...(process.argv[2]?[]:['.']),'--remote-debugging-port=14574','--user-data-dir='+path.join(root,'electron')],{cwd:workspace,env:{...process.env,GITSYNC_PORT:'14573',GITSYNC_HOME:path.join(root,'data'),TEMP:root,TMP:root},windowsHide:true,stdio:['ignore','pipe','pipe']});
+const child=spawn(executable,[...(process.argv[2]?[]:['.']),'--remote-debugging-port=14574','--user-data-dir='+path.join(root,'electron')],{cwd:workspace,env:{...process.env,PSExecutionPolicyPreference:'Restricted',GITSYNC_PORT:'14573',GITSYNC_HOME:path.join(root,'data'),TEMP:root,TMP:root},windowsHide:true,stdio:['ignore','pipe','pipe']});
 let logs='',socket,seq=0;const pending=new Map();
 child.stdout.on('data',d=>logs+=d);child.stderr.on('data',d=>logs+=d);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
@@ -42,6 +43,7 @@ async function evaluate(expression){const id=++seq;const result=await new Promis
      return {selection:selected,copy:true,context:true,interrupt:true,paste:true};
    } finally { await window.fanboxClipboard.write(previous); }
  })()`);
+ const powershellPolicy=await evaluate(`(async()=>{const results=[];for(const autorun of [false,true]){const id='policy-'+autorun;let output='';const stop=window.fanboxPty.onData(m=>{if(m.id===id)output+=m.data;});try{const cmd="& '"+${JSON.stringify(path.join(root,'npm-wrapper.ps1'))}.replaceAll("'","''")+"'";const result=await window.fanboxPty.spawn({id,cwd:${JSON.stringify(root)},cols:100,rows:24,...(autorun?{autorun:cmd}:{})});if(!result.ok)throw Error(result.error);if(!autorun){await new Promise(r=>setTimeout(r,700));window.fanboxPty.input(id,cmd+'\\r');}for(let i=0;i<100&&(!output.includes('PS_WRAPPER_OK')||!output.includes('POLICY:Bypass'));i++)await new Promise(r=>setTimeout(r,100));if(!output.includes('PS_WRAPPER_OK')||!output.includes('POLICY:Bypass'))throw Error('PowerShell wrapper blocked: '+output);results.push(autorun?'autorun':'interactive');}finally{stop();window.fanboxPty.kill(id);}}return results;})()`);assert.equal(powershellPolicy.length,2);
  const repoLayout=await evaluate(`(async()=>{
  const full='feature/'+('very-long-branch-name-'.repeat(9));state.gsMode=true;gs.view='repos';
  await gsRenderRepos(document.getElementById('file-area'),[{repos:[{id:'layout-test',name:'布局测试',path:'D:/test',branches:['master'],currentBranch:full,enabled:true,ahead:12345,behind:99999}]},{workspaces:[]}]);

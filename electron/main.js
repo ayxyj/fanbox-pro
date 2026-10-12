@@ -360,7 +360,12 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, autorun }) => {
   if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';
   let p;
   try {
-    const args = autorun ? (process.platform === 'win32' ? ['-NoLogo', '-NoProfile', '-NoExit', '-Command', String(autorun)] : ['-c', String(autorun)]) : [];
+    const isPowerShell = process.platform === 'win32' && /^(powershell|pwsh)(\.exe)?$/i.test(path.basename(shellPath));
+    // npm installs .ps1 command wrappers. Apply policy only to this terminal process,
+    // including scheduled/autorun sessions; never change machine or user settings.
+    const args = isPowerShell
+      ? ['-NoLogo', '-ExecutionPolicy', 'Bypass', ...(autorun ? ['-NoProfile', '-NoExit', '-Command', String(autorun)] : [])]
+      : autorun ? (process.platform === 'win32' ? ['-NoLogo', '-NoProfile', '-NoExit', '-Command', String(autorun)] : ['-c', String(autorun)]) : [];
     p = pty.spawn(shellPath, args, {
       name: 'xterm-256color',
       cols: cols || 80,

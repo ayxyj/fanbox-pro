@@ -69,7 +69,7 @@ jobs:
           包含主题配置、编辑器配色、盘符切换、文件选中框及资源管理器定位修复。
 
           本次修订：修复 Mica 与图片模糊叠加的滚动拖影，后台刷新保留滚动位置；仓库右键支持在对应目录打开终端，修复仓库操作与新建文件菜单重叠。
-          HTML/HTM 支持软件内直接渲染和交互，包含模块脚本、fetch、页面存储、链接和表单；修复自动缩放导致的卡顿与空白，移除空白按钮。
+          HTML/HTM 支持软件内直接渲染和交互、Ctrl + 鼠标滚轮缩放；修复 claude 等 npm 脚本入口被 PowerShell 执行策略拦截，仅影响软件内新建的终端会话。
 
           下载 fanbox-pro-$env:RELEASE_VERSION-x64.exe 并运行安装。Git 功能需要本机 Git；Agent 功能需要另行配置对应工具。
           原项目：https://github.com/alchaincyf/fanbox
