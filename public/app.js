@@ -2323,7 +2323,7 @@ const term = {
     sess.repoDir = dir; sess.agent = agent; sess.agentStartingUntil = Date.now() + 3000;
     sess.title = (baseOf(dir.replaceAll('\\','/')) || dir) + ' · ' + (labels[agent] || agent);
     this.open(); this.activate(sess.id);
-    const cmd = windows ? command.replace(/^(claude|codebuddy|codex)(?=\s|$)/,'$1.cmd') : command;
+    const cmd = windows ? command.replace(/^(claude|codex)(?=\s|$)/,'$1.cmd') : command;
     this.input(sess.id, cmd + '\r'); sess.xterm.focus(); this.renderTabs();
     toast('已在当前目录启动 ' + (labels[agent] || agent));
     return sess;
