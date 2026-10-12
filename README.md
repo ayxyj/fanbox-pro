@@ -37,6 +37,7 @@
 - 浏览本机目录，在路径栏根盘符下拉菜单中切换 C:、D: 等可用磁盘。
 - 文件搜索、收藏、最近使用记录，以及在 Windows 资源管理器中定位文件。
 - 预览代码、SQL、Markdown、HTML、图片、音视频、PDF 和压缩包内容；具体格式能力以 Windows 环境为准。
+- HTML/HTM 在软件预览区直接渲染和交互，支持按钮、表单、相对路径 CSS/图片、JavaScript 模块、fetch 和 localStorage；链接与新窗口请求留在预览区，可重新加载或切换查看源码。预览仅提供文件所在目录的静态资源，需要后端的页面仍需运行对应服务。
 - Monaco 代码编辑器与 Markdown 编辑，未保存内容提供离开提示。
 - 文件变化监听和预览更新，长 SQL 预览保留滚动位置。
 
@@ -182,6 +183,7 @@ node tests/theme-menu-state.js
 node tests/appearance-clipboard-smoke.js
 node tests/sql-preview-smoke.js
 node tests/file-scroll-smoke.js
+node tests/html-preview-smoke.js
 ```
 
 验证打包后的主题、编辑器、剪贴板、任务界面及盘符菜单：

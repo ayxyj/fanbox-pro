@@ -647,16 +647,27 @@ function csvTable(text, delim) {
 function fsUrl(p, mtime) {
   return '/fs/' + p.split('/').filter(Boolean).map(encodeURIComponent).join('/') + '?v=' + (mtime || 0);
 }
-function renderHtmlPreview(data, meta) {
+async function htmlPreviewUrl(file) {
+  const result = await apiPost('/api/html-preview', { path: file });
+  if (result.error || !result.url) throw Error(result.error || 'HTML 预览启动失败');
+  return result.url;
+}
+async function renderHtmlPreview(data, meta) {
   const body = $('#preview-body');
+  const revision = (renderHtmlPreview._revision || 0) + 1;
+  renderHtmlPreview._revision = revision;
+  let url;
+  try { url = await htmlPreviewUrl(data.path); }
+  catch (error) { if (renderHtmlPreview._revision === revision && state.selected === data.path) body.innerHTML = `<div class="cmdk-loading">${escapeHtml(error.message)}</div>`; return; }
+  if (renderHtmlPreview._revision !== revision || state.selected !== data.path) return;
   // 用 html-preview-host 把 meta、工具栏、iframe 包成 flex 列：
   // iframe 占满剩余高度，避免 100% 高度叠加兄弟元素导致父容器也出现滚动条，
   // 从而让 iframe 自己稳定处理页面内滚动。
   body.innerHTML =
     `<div class="html-preview-host">
       ${meta}
-      <div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-fit" class="ghost-btn hidden"></button><button id="html-browser" class="ghost-btn">${ic('globe', 'currentColor', 13)} 浏览器打开（看完整交互）</button></div>
-      <div class="iframe-wrap"><iframe class="iframe-preview" sandbox="allow-scripts" scrolling="yes" src="${fsUrl(data.path, data.mtime)}"></iframe></div>
+      <div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-fit" class="ghost-btn hidden"></button><button id="html-reload" class="ghost-btn">重新加载</button></div>
+      <div class="iframe-wrap"><iframe class="iframe-preview" title="HTML 交互预览" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads" scrolling="yes" src="${url}?v=${data.mtime || 0}"></iframe></div>
     </div>`;
   // 桌面 Chromium 的 iframe 不认 viewport meta，定宽桌面页在窄预览框里只露左上角。
   // /fs/ 注入的测宽脚本会把页面自然宽度 postMessage 过来：超出容器就整页等比缩到适配，
@@ -687,7 +698,7 @@ function renderHtmlPreview(data, meta) {
   renderHtmlPreview._cleanup = () => { window.removeEventListener('message', onMsg); ro.disconnect(); renderHtmlPreview._cleanup = null; };
   fitBtn.onclick = () => { fitOn = !fitOn; applyFit(); };
   let src = false;
-  $('#html-browser').onclick = () => openWith(data.path, 'default');
+  $('#html-reload').onclick = () => { frame.src = url + '?v=' + Date.now(); };
   $('#html-toggle').onclick = () => {
     src = !src;
     if (src) {
@@ -3492,18 +3503,21 @@ async function liveMd(e, first) {
 }
 // html 实时网页：新 iframe 隐身加载、onload 后换掉旧的（双缓冲），白屏闪烁为零；
 // 半截 html 浏览器本来就能渐进渲染，正好呈现「网页长出来」的过程
-function liveHtml(e, first) {
+async function liveHtml(e, first) {
+  let url;
+  try { url = await htmlPreviewUrl(e.path); } catch (error) { toast(error.message, true); return; }
+  if (!follow.on || follow.path !== e.path) return;
   const body = $('#preview-body');
   let wrap = body.querySelector('.follow-html');
   if (first || !wrap) {
-    body.innerHTML = `<div class="follow-html"><iframe class="iframe-preview" sandbox="allow-scripts" src="${fsUrl(e.path, Date.now())}"></iframe></div>`;
+    body.innerHTML = `<div class="follow-html"><iframe class="iframe-preview" title="HTML 交互预览" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads" src="${url}?v=${Date.now()}"></iframe></div>`;
     return;
   }
   if (follow.swapping) { follow.swapDirty = true; return; } // 正在换页，攒一次换完补刷
   follow.swapping = true;
   const next = document.createElement('iframe');
   next.className = 'iframe-preview follow-next';
-  next.setAttribute('sandbox', 'allow-scripts'); // 与常规 html 预览同口径：不给 same-origin，防 RCE
+  next.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-downloads'); // Separate preview origin, no app API or parent DOM access.
   let swapped = false;
   const swap = () => {
     if (swapped) return;
@@ -3517,7 +3531,7 @@ function liveHtml(e, first) {
   };
   next.onload = swap;
   setTimeout(swap, 2500); // onload 不来（死循环脚本等）也强制换，跟随不卡死
-  next.src = fsUrl(e.path, Date.now());
+  next.src = url + '?v=' + Date.now();
   wrap.appendChild(next);
 }
 

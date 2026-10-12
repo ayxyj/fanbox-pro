@@ -1,0 +1,34 @@
+'use strict';
+const fs=require('fs'),path=require('path'),assert=require('assert');const {spawn,execFileSync}=require('child_process');
+const workspace=path.resolve(__dirname,'..'),scratch=path.join(workspace,'dist/test-data');fs.mkdirSync(scratch,{recursive:true});const root=fs.mkdtempSync(path.join(scratch,'html-preview-')),fixtures=path.join(root,'fixtures');fs.mkdirSync(fixtures);
+const file=path.join(fixtures,'interactive page.html');
+fs.writeFileSync(file,`<!doctype html><html><head><link rel="stylesheet" href="style.css"><script type="module" src="app.js"></script></head><body><button id="counter">Count</button><output id="value">0</output><div id="data"></div><a id="link" target="_blank" href="next.html">Next</a><form action="next.html" target="_blank"><input name="q" value="test"><button id="submit">Submit</button></form></body></html>`);
+fs.writeFileSync(path.join(fixtures,'style.css'),'#counter{color:rgb(12,34,56)}');
+fs.writeFileSync(path.join(fixtures,'app.js'),`import {message} from './module.js';let count=Number(localStorage.getItem('count')||0);const value=document.getElementById('value');value.textContent=count;document.getElementById('counter').onclick=()=>{localStorage.setItem('count',++count);value.textContent=count;};fetch('./data.json').then(r=>r.json()).then(d=>document.getElementById('data').textContent=message+d.value);`);
+fs.writeFileSync(path.join(fixtures,'module.js'),"export const message='module:';");fs.writeFileSync(path.join(fixtures,'data.json'),' {"value":"fetch"}');fs.writeFileSync(path.join(fixtures,'next.html'),'<h1 id="next">Internal navigation</h1>');
+fs.writeFileSync(path.join(root,'outside.txt'),'outside');
+const executable=process.argv[2] || path.join(workspace,'node_modules/electron/dist/electron.exe');const child=spawn(executable,[...(process.argv[2]?[]:['.']),'--remote-debugging-port=14582','--user-data-dir='+path.join(root,'electron')],{cwd:workspace,env:{...process.env,GITSYNC_HOME:path.join(root,'data'),GITSYNC_PORT:'14581',TEMP:root,TMP:root},windowsHide:true,stdio:['ignore','pipe','pipe']});
+let socket,seq=0,logs='';const pending=new Map();child.stderr.on('data',d=>logs+=d);child.stdout.on('data',d=>logs+=d);const delay=ms=>new Promise(r=>setTimeout(r,ms));
+async function request(method,params){const id=++seq;const m=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>reject(Error(method+' timeout')),60000);pending.set(id,m=>{clearTimeout(timer);resolve(m);});socket.send(JSON.stringify({id,method,params}));});if(m.error)throw Error(JSON.stringify(m.error));return m.result;}
+async function evaluate(expression){const r=await request('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
+(async()=>{try{
+ let target;for(let i=0;i<100;i++){await delay(400);try{target=(await(await fetch('http://127.0.0.1:14582/json')).json()).find(t=>t.url==='http://127.0.0.1:14581/');if(target)break;}catch{}}if(!target)throw Error('Page failed '+logs);
+ socket=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>socket.addEventListener('open',r,{once:true}));socket.addEventListener('message',e=>{const m=JSON.parse(e.data);pending.get(m.id)?.(m);pending.delete(m.id);});
+ for(let i=0;i<100;i++){try{if(await evaluate("typeof state!=='undefined' && document.readyState==='complete'"))break;}catch{}await delay(100);}
+ await delay(2500);
+ await evaluate(`(async()=>{await navigate(${JSON.stringify(fixtures)});const entry=state.entries.find(e=>e.name==='interactive page.html');applySelection(entry.path);await openPreview(entry);})()`);
+ let frame,context;
+ async function frameContext(){for(let i=0;i<80;i++){const tree=await request('Page.getFrameTree',{});frame=tree.frameTree.childFrames?.find(f=>f.frame.url.startsWith('http://127.0.0.1:')&&!f.frame.url.includes(':14581/'));if(frame){context=(await request('Page.createIsolatedWorld',{frameId:frame.frame.id,worldName:'html-preview-test'})).executionContextId;return;}await delay(100);}throw Error('Interactive preview frame missing');}
+ async function inside(expression){const r=await request('Runtime.evaluate',{expression,contextId:context,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
+ await frameContext();let metrics;for(let i=0;i<60;i++){metrics=await inside("({data:document.getElementById('data')?.textContent,color:document.getElementById('counter')?getComputedStyle(document.getElementById('counter')).color:''})");if(metrics.data==='module:fetch')break;await delay(100);}assert.equal(metrics.data,'module:fetch');assert.equal(metrics.color,'rgb(12, 34, 56)');
+ assert.equal(await inside("document.getElementById('counter').click();document.getElementById('value').textContent"),'1');
+ assert(await inside("(()=>{try{parent.document.body;return false;}catch{return true;}})()"),'Preview must not access app DOM');
+ const origin=new URL(frame.frame.url).origin;assert.notEqual(origin,'http://127.0.0.1:14581');assert.equal((await fetch('http://127.0.0.1:14581/api/html-preview',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({path:file})})).status,403,'Preview must not invoke app write APIs');
+ assert.equal((await fetch(origin+'/api/list')).status,404);assert.equal((await fetch(origin+'/%2e%2e%2foutside.txt')).status,403);
+ await inside("document.getElementById('link').click();true");await delay(400);await frameContext();assert.equal(await inside("document.getElementById('next')?.textContent"),'Internal navigation');assert.equal(await evaluate("location.href"),'http://127.0.0.1:14581/');
+ await evaluate("document.getElementById('html-reload').click();true");await delay(400);await frameContext();assert.equal(await inside("document.getElementById('value')?.textContent"),'1','localStorage must survive reload');
+ await inside("document.querySelector('form').requestSubmit();true");await delay(400);await frameContext();assert.equal(await inside("document.getElementById('next')?.textContent"),'Internal navigation');
+ await evaluate("document.getElementById('html-toggle').click();true");assert(await evaluate("document.querySelector('#preview-body pre code').textContent.includes('counter')"));await evaluate("document.getElementById('html-toggle').click();true");await delay(400);assert(await evaluate("!!document.querySelector('#preview-body iframe')"));
+ console.log('PASS HTML inline rendering, relative CSS/modules/fetch, buttons, storage, internal links/forms, source toggle and origin isolation');
+ }finally{socket?.close();try{execFileSync('taskkill',['/pid',String(child.pid),'/t','/f'],{stdio:'ignore'});}catch{}}
+})().catch(e=>{console.error(e.stack);if(process.env.GITHUB_ACTIONS)console.log('::error::'+String(e.stack).replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A'));process.exitCode=1;});

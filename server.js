@@ -49,7 +49,8 @@ const ARCHIVE_EXT = new Set(['zip', 'jar', 'tar', 'tgz', 'gz', 'bz2', 'xz', '7z'
 
 const MIME = {
   html: 'text/html; charset=utf-8', htm: 'text/html; charset=utf-8',
-  js: 'application/javascript; charset=utf-8', css: 'text/css; charset=utf-8',
+  js: 'application/javascript; charset=utf-8', mjs: 'application/javascript; charset=utf-8', css: 'text/css; charset=utf-8',
+  wasm: 'application/wasm',
   json: 'application/json; charset=utf-8', svg: 'image/svg+xml',
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif',
   webp: 'image/webp', bmp: 'image/bmp', ico: 'image/x-icon', avif: 'image/avif',
@@ -1369,7 +1370,7 @@ function serveRaw(req, res, filePath) {
 //    窄预览框只能露出左上角；脚本把页面自然宽度 postMessage 给前端，由前端整页等比缩放适配。
 // 2. 兜底样式——html/body 可滚动、图片视频不超宽（canvas/svg 不动，挤压它们会让动效 demo 变形）。
 // 3. viewport meta——桌面 iframe 用不上，但保留它，手机经局域网访问预览时有用。
-async function serveHtmlPreview(req, res, filePath) {
+async function serveHtmlPreview(req, res, filePath, interactive = false) {
   let file;
   try { file = resolvePath(filePath); } catch { res.writeHead(400); res.end('bad path'); return; }
   try {
@@ -1409,6 +1410,14 @@ async function serveHtmlPreview(req, res, filePath) {
     }
     if (!html.includes('data-fanbox-measure')) {
       injectHead(measureScript);
+    }
+    if (interactive) {
+      // Keep target=_blank and window.open inside the preview, with no external browser.
+      const script = '<script data-fanbox-interaction>window.open=function(url){if(url)location.assign(url);return window;};document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[target]");if(a)a.target="_self";},true);document.addEventListener("submit",function(e){e.target.target="_self";},true);</script>';
+      const head = html.match(/<head[^>]*>/i);
+      const doctype = html.match(/<!DOCTYPE[^>]*>/i);
+      const position = head ? head.index + head[0].length : doctype ? doctype.index + doctype[0].length : 0;
+      html = html.slice(0, position) + script + html.slice(position);
     }
     const buf = Buffer.from(html, 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': buf.length });
@@ -2045,7 +2054,7 @@ function hostAllowed(req) {
 function originAllowed(req) {
   const o = req.headers.origin;
   if (!o) return true;
-  try { return ALLOWED_HOSTS.has(new URL(o).hostname); } catch { return false; }
+  try { const source = new URL(o); return source.protocol === 'http:' && ALLOWED_HOSTS.has(source.hostname) && Number(source.port || 80) === PORT; } catch { return false; }
 }
 
 const CRON_FILE = path.join(CONFIG_DIR, 'cron.json');
@@ -2225,6 +2234,7 @@ async function cronAction(action, b = {}) {
   return { ok: false, error: 'unknown cron action' };
 }
 
+const htmlPreview = require('./html-preview')({ serveHtml: serveHtmlPreview, serveRaw });
 const server = http.createServer(async (req, res) => {
   if (!hostAllowed(req)) { res.writeHead(403); res.end('forbidden host'); return; }
   if (req.method === 'POST' && !originAllowed(req)) { res.writeHead(403); res.end('forbidden origin'); return; }
@@ -2233,6 +2243,11 @@ const server = http.createServer(async (req, res) => {
   const qp = url.searchParams;
 
   try {
+    if (p === '/api/html-preview' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (typeof body.path !== 'string' || !path.isAbsolute(body.path)) return sendJSON(res, 400, { error: '需要 HTML 文件的绝对路径' });
+      return sendJSON(res, 200, { url: await htmlPreview.open(body.path) });
+    }
     if (p === '/api/drives') {
       const drives = PLATFORM === 'win32' ? (await Promise.all(Array.from({length:26}, (_, i) => String.fromCharCode(65+i) + ':\\').map(async root => { try { await fsp.access(root); return {name:root.slice(0,2),path:root}; } catch { return null; } }))).filter(Boolean) : [{name:'/',path:'/'}];
       return sendJSON(res, 200, {drives});
@@ -2404,6 +2419,7 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
+server.on('close', () => htmlPreview.close());
 server.on('error', (err) => {
   if (err.code === 'EADDRINUSE') {
     console.error(`\n  ⚠️  端口 ${PORT} 已被占用——FanBox 很可能已经在运行了。`);
