@@ -6,7 +6,7 @@ const scratch=path.join(workspace,'dist','test-data');fs.mkdirSync(scratch,{recu
 const root=fs.mkdtempSync(path.join(scratch,'appearance-'));
 fs.writeFileSync(path.join(root,'sample.js'),"const message = 'editor test';\n");
 fs.writeFileSync(path.join(root,'定位 测试.sql'),'SELECT 1;');
-fs.writeFileSync(path.join(root,'npm-wrapper.ps1'),"Write-Output 'PS_WRAPPER_OK'; Write-Output ('POLICY:'+ (Get-ExecutionPolicy -Scope Process))");
+fs.writeFileSync(path.join(root,'npm-wrapper.ps1'),"Write-Output 'PS_WRAPPER_OK'; Write-Output ('POLICY:'+ $env:PSExecutionPolicyPreference)");
 const executable=process.argv[2] || path.join(workspace,'node_modules/electron/dist/electron.exe');
 const child=spawn(executable,[...(process.argv[2]?[]:['.']),'--remote-debugging-port=14574','--user-data-dir='+path.join(root,'electron')],{cwd:workspace,env:{...process.env,PSExecutionPolicyPreference:'Restricted',GITSYNC_PORT:'14573',GITSYNC_HOME:path.join(root,'data'),TEMP:root,TMP:root},windowsHide:true,stdio:['ignore','pipe','pipe']});
 let logs='',socket,seq=0;const pending=new Map();
