@@ -66,7 +66,7 @@ jobs:
           基于 alchaincyf/fanbox 的 Windows 衍生版本，增加多工作区 Git 仓库管理、自动同步及定时任务。
           包含主题配置、编辑器配色、盘符切换、文件选中框及资源管理器定位修复。
 
-          本次修订：修复 Mica 与图片模糊叠加的滚动拖影，后台刷新保留滚动位置；仓库右键支持在对应目录打开终端。
+          本次修订：修复 Mica 与图片模糊叠加的滚动拖影，后台刷新保留滚动位置；仓库右键支持在对应目录打开终端，修复仓库操作与新建文件菜单重叠。
 
           下载 fanbox-pro-$env:RELEASE_VERSION-x64.exe 并运行安装。Git 功能需要本机 Git；Agent 功能需要另行配置对应工具。
           原项目：https://github.com/alchaincyf/fanbox

@@ -330,6 +330,7 @@ async function gsRenderRepos(area, snapshot) {
     // 右键菜单
     tr.oncontextmenu = (ev) => {
       ev.preventDefault();
+      ev.stopPropagation();
       gsRepoContextMenu(id, ev.clientX, ev.clientY);
     };
   });
@@ -430,6 +431,7 @@ function gsRepoContextMenu(id, x, y) {
 }
 
 function gsPopup(x, y, items) {
+  closeContextMenu();
   const old = document.getElementById('gs-popup'); if (old) old.remove();
   const el = document.createElement('div');
   el.id = 'gs-popup';

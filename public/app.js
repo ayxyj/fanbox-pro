@@ -2072,6 +2072,7 @@ function bindEvents() {
   window.addEventListener('drop', (e) => e.preventDefault());
   // 文件区空白处双击/右键 → 新建菜单（#7：右键空白是更普遍的肌肉记忆）
   const blankMenu = (e) => {
+    if (state.gsMode || e.defaultPrevented) return;
     if (e.target.closest('.item') || e.target.closest('.row')) return; // 条目自身的菜单不抢
     e.preventDefault();
     popupMenu(e, [
