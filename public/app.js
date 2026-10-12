@@ -2030,6 +2030,7 @@ function bindEvents() {
   $('#btn-changes').onclick = () => toggleChangesPanel();
   $('#btn-terminal').onclick = () => term.toggle();
   $('#term-claude').onclick = () => term.launchAgent('claude --dangerously-skip-permissions');
+  $('#term-codebuddy').onclick = () => term.launchAgent('codebuddy');
   $('#term-codex').onclick = () => term.launchAgent('codex');
   usagePanel.bind();
   shotTray.init();
@@ -2274,14 +2275,14 @@ const term = {
     this.fitActive();
   },
   // 在指定目录开终端（新标签）；浏览器版降级到系统终端。返回新 session（spawn 完成后）
-  openInDir(dir) {
+  openInDir(dir, options = {}) {
     if (!this.available()) { openWith(dir, 'terminal'); return null; }
     $('#terminal-panel').classList.remove('hidden');
     $('#terminal-resizer').classList.remove('hidden');
     this.applyDock();
     $('#btn-terminal').classList.add('active');
     localStorage.setItem('fb_term_open', '1'); // 右键/一键开终端也记住开合，和 open/close 对称
-    return this.newTab(dir);
+    return this.newTab(dir, undefined, {repoDir:dir, ...options});
   },
   // 拖拽文件/文件夹进来：把 shell 转义后的路径插入活动终端（作为 agent 上下文）
   insertPath(p) {
@@ -2293,18 +2294,39 @@ const term = {
   },
   // 一键在终端启动 coding agent：当前标签是空闲 shell 就地启动；正跑着东西（claude/codex/任何前台程序）
   // 则新开标签，不打断也不把命令打进别的程序里
-  async launchAgent(cmd) {
-    if(window.fanboxEnv?.platform==='win32')cmd=cmd.replace(/^(claude|codex)(?=\s|$)/,'$1.cmd');
-    if (!this.available()) { openWith(state.cwd, 'terminal'); return; } // 网页版降级到系统终端
-    let sess = null;
-    if (this.sessions.length) {
-      if ($('#terminal-panel').classList.contains('hidden')) this.open();
-      const cur = this.sessions.find((x) => x.id === this.active);
-      if (cur && !cur.dead && await this.isPlainShell(cur)) sess = cur;
+  async launchAgent(command) {
+    if (!this.available()) { openWith(state.cwd, 'terminal'); return; }
+    const cur = this.sessions.find(s => s.id === this.active && !s.dead);
+    const dir = cur?.repoDir || cur?.cwd || cur?.startDir || state.cwd;
+    const key = (window.fanboxEnv?.platform === 'win32' ? dir.replaceAll('\\','/').toLowerCase() : dir) + '|' + command.split(' ')[0];
+    const pending = this._agentLaunches ||= new Map();
+    if (pending.has(key)) return pending.get(key);
+    const task = this.launchAgentInDir(command, dir, cur);
+    pending.set(key, task);
+    try { return await task; } finally { pending.delete(key); }
+  },
+  async launchAgentInDir(command, dir, cur) {
+    const agent = command.split(' ')[0];
+    const labels = {claude:'Claude',codebuddy:'CodeBuddy',codex:'Codex'};
+    const windows = window.fanboxEnv?.platform === 'win32';
+    const shell = windows ? (agent === 'codebuddy' ? 'cmd' : 'powershell') : undefined;
+    const sameDir = p => windows ? p?.replaceAll('\\','/').replace(/\/$/,'').toLowerCase() === dir.replaceAll('\\','/').replace(/\/$/,'').toLowerCase() : p === dir;
+    for (const s of this.sessions) {
+      if (s.dead || s.agent !== agent || !sameDir(s.repoDir || s.startDir)) continue;
+      if (s.agentStartingUntil > Date.now() || !await this.isPlainShell(s)) { this.open(); this.activate(s.id); return s; }
+      s.agent = null;
     }
-    if (!sess) sess = await this.openInDir(state.cwd); // 等 spawn 完，拿确切 session 写入
-    if (sess && !sess.dead) { this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast('已在终端启动 ' + cmd); }
-    else toast('终端启动失败', true);
+    let sess = cur && sameDir(cur.cwd || cur.startDir) && (!shell || cur.shell === shell) && await this.isPlainShell(cur) ? cur : null;
+    if (sess && (sess.dead || sess.agentStartingUntil > Date.now())) sess = null;
+    if (!sess) sess = await this.openInDir(dir, {shell});
+    if (!sess || sess.dead) { toast('终端启动失败', true); return; }
+    sess.repoDir = dir; sess.agent = agent; sess.agentStartingUntil = Date.now() + 3000;
+    sess.title = (baseOf(dir.replaceAll('\\','/')) || dir) + ' · ' + (labels[agent] || agent);
+    this.open(); this.activate(sess.id);
+    const cmd = windows ? command.replace(/^(claude|codebuddy|codex)(?=\s|$)/,'$1.cmd') : command;
+    this.input(sess.id, cmd + '\r'); sess.xterm.focus(); this.renderTabs();
+    toast('已在当前目录启动 ' + (labels[agent] || agent));
+    return sess;
   },
   // 在指定目录新开标签跑命令（续会话/发版等）：不复用别处的空闲 shell，目录必须对
   async runInDir(dir, cmd, msg) {
@@ -2319,8 +2341,9 @@ const term = {
     try {
       const r = await window.fanboxPty.proc(s.id);
       if (!r || !r.ok || !r.proc) return false;
-      const name = String(r.proc).split('/').pop().replace(/^-/, '').toLowerCase();
-      return ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', 'nu', 'pwsh', 'powershell.exe', 'cmd.exe'].includes(name);
+      if (r.busy === true || s.agentStartingUntil > Date.now()) return false;
+      const name = String(r.proc).replaceAll('\\','/').split('/').pop().replace(/^-/, '').toLowerCase();
+      return ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', 'nu', 'pwsh', 'pwsh.exe', 'powershell', 'powershell.exe', 'cmd', 'cmd.exe'].includes(name);
     } catch { return false; }
   },
   // 把预览里选中的文字作为「上下文」喂给终端 agent：带文件出处 + 围栏，bracketed paste 防逐行误提交
@@ -2431,12 +2454,12 @@ const term = {
     try {
       const r = await window.fanboxPty.cwd(s.id);
       if (r && r.ok && r.cwd && r.cwd !== s.cwd) {
-        s.cwd = r.cwd; s.title = baseOf(r.cwd) || s.title;
+        s.cwd = r.cwd; if (!s.agent) s.title = baseOf(r.cwd) || s.title;
         this.renderTabs(); renderBreadcrumb(); // 面包屑的项目配对色点也跟着换
       }
     } catch { /* 取不到就保持原标题 */ }
   },
-  async newTab(cwdOverride, autorun) {
+  async newTab(cwdOverride, autorun, options = {}) {
     const startDir = cwdOverride || state.cwd;
     const id = 't' + (++this.seq);
     const host = document.createElement('div');
@@ -2486,11 +2509,11 @@ const term = {
       } catch { /* 回退默认 DOM renderer */ }
     }
     if (fit) try { fit.fit(); } catch { /* */ }
-    const sess = { id, xterm, fit, host, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
+    const sess = { id, xterm, fit, host, shell: options.shell || (window.fanboxEnv?.platform === 'win32' ? 'powershell' : undefined), repoDir: options.repoDir, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
     this.sessions.push(sess);
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
-    const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows, autorun });
+    const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows, autorun, shell: options.shell });
     if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31m终端启动失败：' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || startDir; // 末尾 renderTabs 统一带上 cwd 重画
     xterm.onData((d) => {
@@ -2619,7 +2642,7 @@ const term = {
   async respawn(sess) {
     sess.dead = false;
     sess.xterm.reset(); // 清掉死亡残留，新 shell 提示符不和旧画面叠在一起
-    const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows });
+    const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows, shell: sess.shell });
     if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31m重开失败：' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || sess.startDir;
   },
@@ -2753,6 +2776,9 @@ const term = {
     } catch { /* 通知不可用就算了 */ }
   },
   renderTabs() {
+    const current = this.sessions.find(s=>s.id===this.active);
+    const target = $('#term-target');
+    if (target) { target.textContent = baseOf((current?.repoDir || current?.cwd || current?.startDir || state.cwd || '').replaceAll('\\','/')); target.title = current?.repoDir || current?.cwd || current?.startDir || state.cwd; }
     const bar = $('#term-tabs');
     bar.innerHTML = '';
     this.sessions.forEach((s) => {

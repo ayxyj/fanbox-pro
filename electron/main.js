@@ -346,9 +346,12 @@ app.on('window-all-closed', () => {
 });
 
 // ---------- 终端 IPC（node-pty）----------
-ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, autorun }) => {
+ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, autorun, shell: requestedShell }) => {
   if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
-  const shellPath = process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : (process.platform === 'linux' ? '/bin/bash' : '/bin/zsh'));
+  if (requestedShell && !['cmd', 'powershell'].includes(requestedShell)) return { ok: false, error: '未知终端类型' };
+  const shellPath = process.platform === 'win32' && requestedShell
+    ? requestedShell === 'cmd' ? (process.env.ComSpec || 'cmd.exe') : 'powershell.exe'
+    : process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : (process.platform === 'linux' ? '/bin/bash' : '/bin/zsh'));
   const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
   // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
   const env = { ...process.env, TERM: 'xterm-256color', FANBOX: '1' };
@@ -365,7 +368,9 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, autorun }) => {
     // including scheduled/autorun sessions; never change machine or user settings.
     const args = isPowerShell
       ? ['-NoLogo', '-ExecutionPolicy', 'Bypass', ...(autorun ? ['-NoProfile', '-NoExit', '-Command', String(autorun)] : [])]
-      : autorun ? (process.platform === 'win32' ? ['-NoLogo', '-NoProfile', '-NoExit', '-Command', String(autorun)] : ['-c', String(autorun)]) : [];
+      : process.platform === 'win32' && /^cmd(\.exe)?$/i.test(path.basename(shellPath))
+        ? ['/D', ...(autorun ? ['/K', String(autorun)] : [])]
+        : autorun ? ['-c', String(autorun)] : [];
     p = pty.spawn(shellPath, args, {
       name: 'xterm-256color',
       cols: cols || 80,
@@ -469,9 +474,19 @@ ipcMain.handle('pty:cwd', (e, { id }) => new Promise((resolve) => {
 }));
 
 // 取终端前台进程名（node-pty 维护）：判断当前是裸 shell 还是正跑着 claude/codex 等程序
-ipcMain.handle('pty:proc', (e, { id }) => {
+ipcMain.handle('pty:proc', async (e, { id }) => {
   const p = terminals.get(id);
-  return p ? { ok: true, proc: p.process || '' } : { ok: false };
+  if (!p) return { ok: false };
+  if (process.platform !== 'win32') return { ok: true, proc: p.process || '' };
+  // node-pty reports the shell name on Windows even while a CLI owns the terminal.
+  const pid = Number(p.pid);
+  if (!Number.isSafeInteger(pid) || pid <= 0) return { ok: false };
+  const script = `Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1"; @(Get-CimInstance Win32_Process -Filter 'ParentProcessId = ${pid}' | Where-Object { $_.Name -ne 'conhost.exe' } | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress`;
+  return new Promise(resolve => require('child_process').execFile('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
+    if (error) return resolve({ ok: false });
+    try { const names = stdout.trim() ? JSON.parse(stdout) : []; const children = Array.isArray(names) ? names : [names]; resolve({ ok: true, proc: children[0] || p.process || '', busy: children.length > 0 }); }
+    catch { resolve({ ok: false }); }
+  }));
 });
 
 // ---------- 文件监听（agent 改文件 → 自动刷新 + 跨项目变更收件箱）----------
