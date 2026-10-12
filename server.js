@@ -1414,7 +1414,13 @@ async function serveHtmlPreview(req, res, filePath, interactive = false) {
     }
     if (interactive) {
       // Keep target=_blank and window.open inside the preview, with no external browser.
-      const script = '<script data-fanbox-interaction>window.open=function(url){if(url)location.assign(url);return window;};document.addEventListener("click",function(e){var a=e.target.closest&&e.target.closest("a[target]");if(a)a.target="_self";},true);document.addEventListener("submit",function(e){e.target.target="_self";},true);</script>';
+      const script = `<script data-fanbox-interaction>
+window.open=function(url){if(url)location.assign(url);return window;};
+document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[target]');if(a)a.target='_self';},true);
+document.addEventListener('submit',function(e){e.target.target='_self';},true);
+addEventListener('message',function(e){var z=e.data&&e.data.fanboxPreviewZoom;if(e.source===parent&&typeof z==='number'&&isFinite(z)&&z>=.25&&z<=3)document.documentElement.style.zoom=String(z);});
+document.addEventListener('wheel',function(e){if(!e.ctrlKey||!e.deltaY)return;e.preventDefault();e.stopImmediatePropagation();var step=e.deltaY<0?1:-1;var z=Number(document.documentElement.style.zoom)||1;document.documentElement.style.zoom=String(Math.max(.25,Math.min(3,Math.round((z+step*.1)*100)/100)));parent.postMessage({fanboxPreviewZoomStep:step},'*');},{capture:true,passive:false});
+</script>`;
       const head = html.match(/<head[^>]*>/i);
       const doctype = html.match(/<!DOCTYPE[^>]*>/i);
       const position = head ? head.index + head[0].length : doctype ? doctype.index + doctype[0].length : 0;

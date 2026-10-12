@@ -666,7 +666,7 @@ async function renderHtmlPreview(data, meta) {
   body.innerHTML =
     `<div class="html-preview-host">
       ${meta}
-      <div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-reload" class="ghost-btn">重新加载</button></div>
+      <div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-reload" class="ghost-btn">重新加载</button><button id="html-zoom-out" class="ghost-btn" title="缩小（Ctrl + 滚轮向下）">−</button><button id="html-zoom-reset" class="ghost-btn" title="恢复 100%">100%</button><button id="html-zoom-in" class="ghost-btn" title="放大（Ctrl + 滚轮向上）">+</button></div>
       <div class="iframe-wrap"><iframe class="iframe-preview" title="HTML 交互预览" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads" scrolling="yes" src="${url}?v=${data.mtime || 0}"></iframe></div>
     </div>`;
   // Keep the iframe viewport at the actual panel size. Scaling from scrollWidth feeds
@@ -674,6 +674,29 @@ async function renderHtmlPreview(data, meta) {
   const wrap = body.querySelector('.iframe-wrap');
   const frame = wrap.firstElementChild;
   if (renderHtmlPreview._cleanup) renderHtmlPreview._cleanup();
+  const zooms = renderHtmlPreview._zooms ||= new Map();
+  let zoom = zooms.get(data.path) || 1;
+  const previewOrigin = new URL(url).origin;
+  const applyZoom = (next) => {
+    zoom = Math.max(.25, Math.min(3, Math.round(next * 100) / 100));
+    zooms.set(data.path, zoom);
+    $('#html-zoom-reset').textContent = Math.round(zoom * 100) + '%';
+    $('#html-zoom-out').disabled = zoom <= .25;
+    $('#html-zoom-in').disabled = zoom >= 3;
+    if (frame.isConnected) frame.contentWindow.postMessage({ fanboxPreviewZoom: zoom }, previewOrigin);
+  };
+  const onZoom = (event) => {
+    if (event.source !== frame.contentWindow || event.origin !== previewOrigin || !frame.isConnected) return;
+    const step = event.data?.fanboxPreviewZoomStep;
+    if (step === 1 || step === -1) applyZoom(zoom + step * .1);
+  };
+  window.addEventListener('message', onZoom);
+  frame.onload = () => applyZoom(zoom);
+  renderHtmlPreview._cleanup = () => { window.removeEventListener('message', onZoom); frame.onload = null; renderHtmlPreview._cleanup = null; };
+  $('#html-zoom-out').onclick = () => applyZoom(zoom - .1);
+  $('#html-zoom-in').onclick = () => applyZoom(zoom + .1);
+  $('#html-zoom-reset').onclick = () => applyZoom(1);
+  applyZoom(zoom);
   let src = false;
   $('#html-reload').onclick = () => { if (src) renderHtmlPreview(data, meta); else frame.src = url + '?v=' + Date.now(); };
   $('#html-toggle').onclick = () => {
