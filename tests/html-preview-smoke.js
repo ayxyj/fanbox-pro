@@ -24,7 +24,7 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  assert.equal(await inside("document.getElementById('counter').click();document.getElementById('value').textContent"),'1');
  assert(await inside("(()=>{try{parent.document.body;return false;}catch{return true;}})()"),'Preview must not access app DOM');
  const origin=new URL(frame.frame.url).origin;assert.notEqual(origin,'http://127.0.0.1:14581');assert.equal((await fetch('http://127.0.0.1:14581/api/html-preview',{method:'POST',headers:{Origin:origin,'Content-Type':'application/json'},body:JSON.stringify({path:file})})).status,403,'Preview must not invoke app write APIs');
- assert.equal((await fetch(origin+'/api/list')).status,404);assert.equal((await fetch(origin+'/%2e%2e%2foutside.txt')).status,403);
+ assert.equal((await fetch('http://127.0.0.1:14581/')).headers.get('x-frame-options'),'DENY','App UI must reject iframe embedding');assert.equal((await fetch(origin+'/api/list')).status,404);assert.equal((await fetch(origin+'/%2e%2e%2foutside.txt')).status,403);
  await inside("document.getElementById('link').click();true");await delay(400);await frameContext();assert.equal(await inside("document.getElementById('next')?.textContent"),'Internal navigation');assert.equal(await evaluate("location.href"),'http://127.0.0.1:14581/');
  await evaluate("document.getElementById('html-reload').click();true");await delay(400);await frameContext();assert.equal(await inside("document.getElementById('value')?.textContent"),'1','localStorage must survive reload');
  await inside("document.querySelector('form').requestSubmit();true");await delay(400);await frameContext();assert.equal(await inside("document.getElementById('next')?.textContent"),'Internal navigation');

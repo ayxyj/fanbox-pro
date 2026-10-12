@@ -1335,6 +1335,7 @@ function serveRaw(req, res, filePath) {
   fs.stat(file, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end('not found'); return; }
     const type = MIME[ext(file)] || 'application/octet-stream';
+    if (ext(file) === 'pdf') res.removeHeader('X-Frame-Options'); // Keep the built-in PDF viewer available.
     const onStreamErr = (rs) => rs.on('error', () => { try { res.destroy(); } catch { /* */ } });
     const range = req.headers.range;
     if (range) {
@@ -2236,6 +2237,7 @@ async function cronAction(action, b = {}) {
 
 const htmlPreview = require('./html-preview')({ serveHtml: serveHtmlPreview, serveRaw });
 const server = http.createServer(async (req, res) => {
+  res.setHeader('X-Frame-Options', 'DENY'); // Local HTML must not navigate a sandbox frame into the app's origin.
   if (!hostAllowed(req)) { res.writeHead(403); res.end('forbidden host'); return; }
   if (req.method === 'POST' && !originAllowed(req)) { res.writeHead(403); res.end('forbidden origin'); return; }
   const url = new URL(req.url, `http://localhost:${PORT}`);
