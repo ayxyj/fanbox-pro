@@ -666,39 +666,16 @@ async function renderHtmlPreview(data, meta) {
   body.innerHTML =
     `<div class="html-preview-host">
       ${meta}
-      <div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-fit" class="ghost-btn hidden"></button><button id="html-reload" class="ghost-btn">重新加载</button></div>
+      <div class="pv-toolbar"><button id="html-toggle" class="ghost-btn">查看源码</button><button id="html-reload" class="ghost-btn">重新加载</button></div>
       <div class="iframe-wrap"><iframe class="iframe-preview" title="HTML 交互预览" sandbox="allow-scripts allow-same-origin allow-forms allow-downloads" scrolling="yes" src="${url}?v=${data.mtime || 0}"></iframe></div>
     </div>`;
-  // 桌面 Chromium 的 iframe 不认 viewport meta，定宽桌面页在窄预览框里只露左上角。
-  // /fs/ 注入的测宽脚本会把页面自然宽度 postMessage 过来：超出容器就整页等比缩到适配，
-  // 工具栏按钮可在「适配宽度 ↔ 实际大小」间切换（实际大小时在 iframe 内部滚动看全页）
+  // Keep the iframe viewport at the actual panel size. Scaling from scrollWidth feeds
+  // viewport-relative page widths back into layout and can grow without bound.
   const wrap = body.querySelector('.iframe-wrap');
   const frame = wrap.firstElementChild;
-  const fitBtn = $('#html-fit');
-  let natW = 0, fitOn = true;
-  const applyFit = () => {
-    const cw = wrap.clientWidth;
-    if (!natW || natW <= cw + 8 || !cw) { frame.removeAttribute('style'); fitBtn.classList.add('hidden'); return; }
-    fitBtn.classList.remove('hidden');
-    if (!fitOn) { frame.removeAttribute('style'); fitBtn.textContent = '适配宽度'; return; }
-    const k = cw / natW;
-    frame.style.cssText = `width:${natW}px;height:${Math.round(wrap.clientHeight / k)}px;transform:scale(${k});transform-origin:0 0;`;
-    fitBtn.textContent = `实际大小（现 ${Math.round(k * 100)}%）`;
-  };
-  const onMsg = (ev) => {
-    if (!frame.isConnected || ev.source !== frame.contentWindow) return;
-    const w = ev.data && ev.data.fanboxPreviewWidth;
-    if (typeof w === 'number' && w > 0 && w !== natW) { natW = w; applyFit(); }
-  };
-  // 上一个 HTML 预览的监听先拆掉（切文件时旧 iframe 已 detach，监听只剩泄漏）
   if (renderHtmlPreview._cleanup) renderHtmlPreview._cleanup();
-  window.addEventListener('message', onMsg);
-  const ro = new ResizeObserver(applyFit);
-  ro.observe(wrap);
-  renderHtmlPreview._cleanup = () => { window.removeEventListener('message', onMsg); ro.disconnect(); renderHtmlPreview._cleanup = null; };
-  fitBtn.onclick = () => { fitOn = !fitOn; applyFit(); };
   let src = false;
-  $('#html-reload').onclick = () => { frame.src = url + '?v=' + Date.now(); };
+  $('#html-reload').onclick = () => { if (src) renderHtmlPreview(data, meta); else frame.src = url + '?v=' + Date.now(); };
   $('#html-toggle').onclick = () => {
     src = !src;
     if (src) {

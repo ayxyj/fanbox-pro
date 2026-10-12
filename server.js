@@ -1403,13 +1403,13 @@ async function serveHtmlPreview(req, res, filePath, interactive = false) {
         }
       }
     }
-    if (!viewportRe.test(html)) {
+    if (!interactive && !viewportRe.test(html)) {
       injectHead('<meta name="viewport" content="width=device-width, initial-scale=1">');
     }
-    if (!html.includes('data-fanbox-preview')) {
+    if (!interactive && !html.includes('data-fanbox-preview')) {
       injectHead(styleBlock);
     }
-    if (!html.includes('data-fanbox-measure')) {
+    if (!interactive && !html.includes('data-fanbox-measure')) {
       injectHead(measureScript);
     }
     if (interactive) {
