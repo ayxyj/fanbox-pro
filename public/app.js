@@ -2036,6 +2036,11 @@ function bindEvents() {
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
   $('#term-newtab').onclick = () => term.newTab();
+  for (const [id, direction] of [['term-tabs-left',-1],['term-tabs-right',1]]) $('#'+id).onclick=()=>$('#term-tabs').scrollBy({left:direction*Math.max(100,$('#term-tabs').clientWidth*.75),behavior:'smooth'});
+  $('#term-tabs-all').onclick=()=>term.showTabList();
+  if (window.ResizeObserver) new ResizeObserver(()=>{term.revealActiveTab();term.updateTabNav();}).observe($('#term-tabs'));
+  $('#term-tabs').addEventListener('wheel',e=>{const bar=$('#term-tabs');if(e.ctrlKey||bar.scrollWidth<=bar.clientWidth)return;e.preventDefault();bar.scrollLeft+=e.deltaY||e.deltaX;},{passive:false});
+
   $('#term-max').onclick = () => term.toggleMax();
   $('#term-dock').onclick = () => term.setDock(term.dock === 'bottom' ? 'right' : 'bottom');
   const muteBtn = $('#term-mute');
@@ -2775,11 +2780,39 @@ const term = {
       else if (Notification.permission !== 'denied') Notification.requestPermission().then((p) => { if (p === 'granted') fire(); });
     } catch { /* 通知不可用就算了 */ }
   },
+  tabLabel(s) {
+    const agent = {claude:'Claude',codebuddy:'CodeBuddy',codex:'Codex'}[s.agent];
+    if (agent) {
+      const peers = this.sessions.filter(x=>x.agent===s.agent);
+      return agent + (peers.length>1 ? ' '+(peers.indexOf(s)+1) : '');
+    }
+    const dir = baseOf((s.cwd || s.startDir || '').replaceAll('\\','/')) || s.title || '终端';
+    const chars=Array.from(dir);
+    return chars.length>12 ? chars.slice(0,7).join('')+'…'+chars.slice(-3).join('') : dir;
+  },
+  revealActiveTab() {
+    const bar=$('#term-tabs');
+    const active=[...bar.children].find(t=>t.dataset.sessionId===this.active);
+    if(active){const left=active.offsetLeft,right=left+active.offsetWidth;if(left<bar.scrollLeft)bar.scrollLeft=left;else if(right>bar.scrollLeft+bar.clientWidth)bar.scrollLeft=right-bar.clientWidth;}
+  },
+  updateTabNav() {
+    const bar=$('#term-tabs');
+    $('#term-tabs-left').disabled=bar.scrollLeft<=1;
+    $('#term-tabs-right').disabled=bar.scrollLeft+bar.clientWidth>=bar.scrollWidth-1;
+    $('#term-tabs-all').disabled=!this.sessions.length;
+    $('#term-tabs-all').title='全部终端标签（'+this.sessions.length+'）';
+  },
+  showTabList() {
+    const rect=$('#term-tabs-all').getBoundingClientRect();
+    popupMenu({clientX:rect.left,clientY:rect.bottom+4},this.sessions.map(s=>({label:(s.id===this.active?'✓ ':'')+this.tabLabel(s)+' · '+(s.repoDir || s.cwd || s.startDir || ''),fn:()=>this.activate(s.id)})));
+    $('#context-menu')?.classList.add('terminal-tab-menu');
+  },
   renderTabs() {
     const current = this.sessions.find(s=>s.id===this.active);
     const target = $('#term-target');
     if (target) { target.textContent = baseOf((current?.repoDir || current?.cwd || current?.startDir || state.cwd || '').replaceAll('\\','/')); target.title = current?.repoDir || current?.cwd || current?.startDir || state.cwd; }
     const bar = $('#term-tabs');
+    const scroll = bar.scrollLeft;
     bar.innerHTML = '';
     this.sessions.forEach((s) => {
       const t = document.createElement('div');
@@ -2788,11 +2821,21 @@ const term = {
       const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
       // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
       const hue = this.hueOf(s.cwd || s.startDir);
-      t.title = '双击：文件区跳到该终端所在目录';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span>${escapeHtml(s.title)}</span><span class="tab-x" title="关闭">✕</span>`;
+      t.dataset.sessionId=s.id;
+      t.title = (s.title || this.tabLabel(s))+'\n'+(s.repoDir || s.cwd || s.startDir || '')+'\n双击：文件区跳到该目录';
+      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span class="tab-label">${escapeHtml(this.tabLabel(s))}</span><span class="tab-x" title="关闭">✕</span>`;
       t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
       t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
       bar.appendChild(t);
+    });
+    bar.scrollLeft=scroll;
+    bar.onscroll=()=>this.updateTabNav();
+    requestAnimationFrame(()=>{
+      if(this._visibleTab!==this.active){
+        this.revealActiveTab();
+        this._visibleTab=this.active;
+      }
+      this.updateTabNav();
     });
   },
   retheme() { const th = this.theme(); this.sessions.forEach((s) => { s.xterm.options.theme = th; Object.assign(s.xterm.options,window.fbThemes.terminalOptions()); }); this.fitActive(); },
