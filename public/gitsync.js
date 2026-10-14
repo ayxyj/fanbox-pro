@@ -508,9 +508,7 @@ function gsStashShow(id) {
     `, (root) => {
       $('#gs-stash-new', root).onclick = () => gsPrompt('暂存当前改动', '备注（可空）：', '', async (msg) => {
         if (msg === null) return;
-        const r2 = await apiPost('/api/gs/repo/stash', { id, op: 'push', message: msg });
-        if (r2.error) { toast(r2.error, true); return; }
-        toast('已暂存');
+        await gsRunDirty(id, 'stash', { op: 'push', message: msg }, 'Stash 暂存');
         gsStashShow(id);
         // 关闭旧弹层，由上面的 gsStashShow 重新弹
         document.getElementById('gs-modal')?.remove();
@@ -518,9 +516,8 @@ function gsStashShow(id) {
       root.querySelectorAll('button[data-act]').forEach((b) => {
         b.onclick = async () => {
           const idx = +b.dataset.idx;
-          const r3 = await apiPost('/api/gs/repo/stash', { id, op: b.dataset.act, index: idx });
-          if (r3.error) { toast(r3.error, true); return; }
-          toast('完成');
+          b.disabled = true;
+          await gsRunDirty(id, 'stash', { op: b.dataset.act, index: idx }, '处理 Stash');
           document.getElementById('gs-modal')?.remove();
           gsStashShow(id);
         };
@@ -530,31 +527,58 @@ function gsStashShow(id) {
 }
 
 // ============== 脏状态处理 ==============
+const gsDirtyRunning = new Set();
+async function gsRunDirty(id, endpoint, body, label) {
+  if (gsDirtyRunning.has(id)) { toast('该仓库正在处理，请等待完成'); return; }
+  gsDirtyRunning.add(id);
+  const started = Date.now();
+  const panel = document.createElement('div'); panel.className = 'gs-operation';
+  panel.setAttribute('role', 'status'); panel.setAttribute('aria-live', 'polite');
+  const title = document.createElement('strong'); title.textContent = label;
+  const detail = document.createElement('div'); detail.textContent = '等待当前仓库操作完成 · 0 秒';
+  const progress = document.createElement('progress'); progress.setAttribute('aria-label', label);
+  panel.append(title, detail, progress); document.body.appendChild(panel);
+  let complete = false, polling = false, phase = '等待当前仓库操作完成';
+  const poll = async () => {
+    detail.textContent = phase + ' · ' + Math.floor((Date.now() - started) / 1000) + ' 秒';
+    if (polling || complete) return;
+    polling = true;
+    try {
+      const response = await api('/api/gs/repo/progress?id=' + encodeURIComponent(id));
+      if (!complete && response.operation) phase = response.operation.phase;
+    } catch { /* the POST remains authoritative */ }
+    finally { polling = false; }
+  };
+  const timer = setInterval(poll, 500);
+  try {
+    const result = await apiPost('/api/gs/repo/' + endpoint, { id, ...body });
+    if (result.error) throw Error(result.error);
+    if (result.refreshError) throw Error('操作已执行，但状态刷新失败：' + result.refreshError);
+    toast(label + '完成，当前仓库状态已刷新');
+  } catch (error) { toast(error.message, true); }
+  finally {
+    complete = true; clearInterval(timer); panel.remove(); gsDirtyRunning.delete(id);
+    // Use the state just refreshed by the mutation, without scanning every repository.
+    await gsReloadRepoSnapshot(true).catch(error => toast(error.message, true));
+    if (!state.gsMode && !state.skillsMode) await refresh().catch(() => {});
+  }
+}
 function gsDirtyCommit(id) {
   gsPrompt('提交当前改动', '提交信息：', 'gitsync: auto commit', async (msg) => {
     if (!msg) return;
-    const r = await apiPost('/api/gs/repo/commit', { id, message: msg });
-    if (r.error) { toast(r.error, true); return; }
-    toast('已提交');
-    gsShow('repos');
+    await gsRunDirty(id, 'commit', { message: msg }, '提交改动');
   });
 }
 function gsDirtyStash(id) {
   gsPrompt('暂存当前改动', '备注：', 'gitsync auto stash', async (msg) => {
     if (msg === null) return;
-    const r = await apiPost('/api/gs/repo/stash', { id, op: 'push', message: msg });
-    if (r.error) { toast(r.error, true); return; }
-    toast('已暂存');
-    gsShow('repos');
+    await gsRunDirty(id, 'stash', { op: 'push', message: msg }, 'Stash 暂存');
   });
 }
 function gsDirtyDiscard(id) {
   gsConfirm('放弃所有本地改动（reset --hard + clean -fd），不可恢复，确定？', async (ok) => {
     if (!ok) return;
-    const r = await apiPost('/api/gs/repo/discard', { id });
-    if (r.error) { toast(r.error, true); return; }
-    toast('已放弃');
-    gsShow('repos');
+    await gsRunDirty(id, 'discard', {}, '放弃改动');
   });
 }
 
@@ -564,13 +588,16 @@ function gsBranchSelect(repo) {
   const options = [...new Set([watched, ...(repo.availableBranches || []), ...(repo.remoteBranches || [])])];
   return '<select class="gs-branch-select" title="选择后保存关注分支并安全切换；未提交改动会阻止切换">' + options.map(branch => '<option value="' + escapeHtml(branch) + '"' + (branch === watched ? ' selected' : '') + '>' + escapeHtml(branch) + '</option>').join('') + '</select>';
 }
-async function gsReloadRepoSnapshot() {
-  if (!gsActive() || gs.view !== 'repos' || gs.branchChanging) return;
-  const refresh = Date.now() >= (gs.nextBackgroundRefresh || 0);
-  if (refresh) gs.nextBackgroundRefresh = Date.now() + 60000;
-  const r = await api('/api/gs/repo/list' + (refresh ? '' : '?cached=1'));
-  if (!gsActive() || gs.view !== 'repos' || gs.branchChanging || document.activeElement?.matches('.gs-branch-select')) return;
-  if (gs.repoSignature !== JSON.stringify(r.repos || [])) await gsRenderRepos($('#file-area'), [r, gs.repoSnapshot[1]]);
+async function gsReloadRepoSnapshot(cachedOnly = false) {
+  if (document.hidden || gs.snapshotLoading || !gsActive() || gs.view !== 'repos' || gs.branchChanging) return;
+  gs.snapshotLoading = true;
+  try {
+    const refresh = !cachedOnly && Date.now() >= (gs.nextBackgroundRefresh || 0);
+    if (refresh) gs.nextBackgroundRefresh = Date.now() + 60000;
+    const r = await api('/api/gs/repo/list' + (refresh ? '' : '?cached=1'));
+    if (!gsActive() || gs.view !== 'repos' || gs.branchChanging || document.activeElement?.matches('.gs-branch-select')) return;
+    if (gs.repoSignature !== JSON.stringify(r.repos || [])) await gsRenderRepos($('#file-area'), [r, gs.repoSnapshot[1]]);
+  } finally { gs.snapshotLoading = false; }
 }
 setInterval(() => { gsReloadRepoSnapshot().catch(() => {}); }, 2000);
 function gsDirtyGuide(id) {

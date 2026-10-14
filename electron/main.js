@@ -354,7 +354,10 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, autorun, shell: requested
     : process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : (process.platform === 'linux' ? '/bin/bash' : '/bin/zsh'));
   const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
   // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
-  const env = { ...process.env, TERM: 'xterm-256color', FANBOX: '1' };
+  const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', CLICOLOR: '1', FANBOX: '1' };
+  // A GUI terminal must not inherit the command runner's non-colour output policy.
+  delete env.NO_COLOR;
+  if (env.FORCE_COLOR === '0') delete env.FORCE_COLOR;
   // Development hosts may inject their own PowerShell modules. Those modules
   // belong to the host runtime and can block this terminal with trust prompts.
   if (process.platform === 'win32' && env.PSModulePath) {

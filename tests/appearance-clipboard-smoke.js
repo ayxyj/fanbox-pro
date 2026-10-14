@@ -12,7 +12,7 @@ const child=spawn(executable,[...(process.argv[2]?[]:['.']),'--remote-debugging-
 let logs='',socket,seq=0;const pending=new Map();
 child.stdout.on('data',d=>logs+=d);child.stderr.on('data',d=>logs+=d);
 const delay=ms=>new Promise(r=>setTimeout(r,ms));
-async function evaluate(expression){const id=++seq;const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('CDP timeout'));},60000);pending.set(id,m=>{clearTimeout(timer);resolve(m);});socket.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));});if(result.result?.exceptionDetails)throw Error(JSON.stringify(result.result.exceptionDetails));return result.result.result.value;}
+async function evaluate(expression){const id=++seq;const result=await new Promise((resolve,reject)=>{const timer=setTimeout(()=>{pending.delete(id);reject(Error('CDP timeout: '+expression.slice(0,180)+'\n'+logs.slice(-4000)));},60000);pending.set(id,m=>{clearTimeout(timer);resolve(m);});socket.send(JSON.stringify({id,method:'Runtime.evaluate',params:{expression,awaitPromise:true,returnByValue:true}}));});if(result.result?.exceptionDetails)throw Error(JSON.stringify(result.result.exceptionDetails));return result.result.result.value;}
 (async()=>{try{
  let target;for(let i=0;i<80;i++){await delay(500);try{target=(await(await fetch('http://127.0.0.1:14574/json')).json()).find(t=>t.url==='http://127.0.0.1:14573/');if(target)break;}catch{}}
  if(!target)throw Error('Page did not load '+logs);

@@ -138,40 +138,45 @@ function sendJSON(res, code, obj) {
 
 // ---------- 业务逻辑 ----------
 
-async function listDir(dirPath) {
+async function listDir(dirPath, treeOnly = false) {
   const dir = resolvePath(dirPath);
   const dirents = await fsp.readdir(dir, { withFileTypes: true });
   const entries = [];
-  for (const d of dirents) {
-    if (d.name === '.DS_Store') continue;
-    const full = path.join(dir, d.name);
-    let isDir = d.isDirectory();
-    let size = 0, mtime = 0;
-    // 处理符号链接
-    if (d.isSymbolicLink()) {
+  let nextEntry = 0;
+  await Promise.all(Array.from({length: Math.min(16, dirents.length)}, async () => {
+    while (nextEntry < dirents.length) {
+      const d = dirents[nextEntry++];
+      if (d.name === '.DS_Store') continue;
+      const full = path.join(dir, d.name);
+      let isDir = d.isDirectory();
+      let size = 0, mtime = 0;
+      // 处理符号链接
+      if (d.isSymbolicLink()) {
+        try {
+          const st = await fsp.stat(full);
+          isDir = st.isDirectory();
+        } catch { continue; }
+      }
+      let btime = 0;
       try {
-        const st = await fsp.stat(full);
-        isDir = st.isDirectory();
-      } catch { continue; }
+        const st = await fsp.lstat(full);
+        size = st.size;
+        mtime = st.mtimeMs;
+        btime = st.birthtimeMs || 0;
+      } catch { /* ignore */ }
+      entries.push({
+        name: d.name,
+        path: full,
+        isDir,
+        isSymlink: d.isSymbolicLink(),
+        kind: kindOf(d.name, isDir),
+        hidden: d.name.startsWith('.'),
+        size,
+        mtime,
+        btime,
+      });
     }
-    let btime = 0;
-    try {
-      const st = await fsp.lstat(full);
-      size = st.size;
-      mtime = st.mtimeMs;
-      btime = st.birthtimeMs || 0;
-    } catch { /* ignore */ }
-    entries.push({
-      name: d.name,
-      path: full,
-      isDir,
-      kind: kindOf(d.name, isDir),
-      hidden: d.name.startsWith('.'),
-      size,
-      mtime,
-      btime,
-    });
-  }
+  }));
   // 文件夹在前，按名称排序
   entries.sort((a, b) => {
     if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
@@ -184,7 +189,7 @@ async function listDir(dirPath) {
   // 给每个子目录浅探一次项目类型，文件卡片上标徽章——「一下午起的十个项目」一眼认出是 node/web/py
   // 成本受控：只探目录、且总数封顶；大目录（>80 个子目录）跳过，避免拖慢列表
   const subDirs = entries.filter((e) => e.isDir && !e.name.startsWith('.'));
-  if (subDirs.length <= 80) {
+  if (!treeOnly && subDirs.length <= 80) {
     await Promise.all(subDirs.map(async (e) => {
       try {
         const inner = await fsp.readdir(e.path);
@@ -2264,7 +2269,7 @@ const server = http.createServer(async (req, res) => {
       return sendJSON(res, 200, { home: HOME, platform: PLATFORM, sep: path.sep, roots: defaultRoots() });
     }
     if (p === '/api/list') {
-      return sendJSON(res, 200, await listDir(qp.get('path') || HOME));
+      return sendJSON(res, 200, await listDir(qp.get('path') || HOME, qp.get('tree') === '1'));
     }
     if (p === '/api/read') {
       return sendJSON(res, 200, await readFile(qp.get('path')));

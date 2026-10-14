@@ -88,9 +88,15 @@
             <button data-sort="size">大小</button>
           </div>
           <div class="seg" id="view-seg">
+            <button data-view="tree" title="目录树：单击展开，双击进入">⊞</button>
             <button data-view="grid" class="active" title="网格">▦</button>
             <button data-view="list" title="列表">☰</button>
           </div>
+          <div class="seg" id="tree-actions" style="display:none">
+            <button id="tree-collapse-all" title="折叠当前目录树的全部文件夹">全部折叠</button>
+            <button id="tree-expand-all" title="递归展开当前目录树的全部文件夹；符号链接可单独展开">全部展开</button>
+          </div>
+          <span id="tree-progress" class="tree-progress" role="status" aria-live="polite"></span>
           <div class="seg" id="gridsize-seg" title="缩略图大小">
             <button data-size="sm" title="小">·</button>
             <button data-size="md" class="active" title="中">▪</button>
@@ -113,6 +119,7 @@
           <header class="preview-head">
             <div class="preview-title" id="preview-title"></div>
             <div class="preview-actions" id="preview-actions"></div>
+            <button id="preview-max" title="预览全屏" aria-label="预览全屏" aria-pressed="false"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
             <button id="preview-close" title="关闭">✕</button>
           </header>
           <div class="preview-body" id="preview-body"></div>
@@ -178,6 +185,9 @@
   <script src="/themes/editor-palettes.js"></script>
   <script src="/themes.js"></script>
   <script src="/terminal-clipboard.js"></script>
+  <script src="/terminal-output.js"></script>
+  <script src="/terminal-scroll.js"></script>
+  <script src="/file-tree.js"></script>
   <script src="/app.js"></script>
 <script src="/schedule-editor.js"></script><script src="/gitsync.js"></script><script>gsBind();</script><script src="/scheduled-tasks.js"></script>
 </body>

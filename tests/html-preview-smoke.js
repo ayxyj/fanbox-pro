@@ -16,7 +16,7 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  socket=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>socket.addEventListener('open',r,{once:true}));socket.addEventListener('message',e=>{const m=JSON.parse(e.data);pending.get(m.id)?.(m);pending.delete(m.id);});
  for(let i=0;i<100;i++){try{if(await evaluate("typeof state!=='undefined' && document.readyState==='complete'"))break;}catch{}await delay(100);}
  await delay(2500);
- await evaluate(`(async()=>{await navigate(${JSON.stringify(fixtures)});const entry=state.entries.find(e=>e.name==='interactive page.html');applySelection(entry.path);await openPreview(entry);})()`);
+ await evaluate(`(async()=>{await navigate(${JSON.stringify(fixtures)});const entry=state.entries.find(e=>e.name==='interactive page.html');await onItemClick(entry);if(document.getElementById('ed-save'))throw Error('HTML should open in preview');})()`);
  let frame,context;
  async function frameContext(){for(let i=0;i<80;i++){const tree=await request('Page.getFrameTree',{});frame=tree.frameTree.childFrames?.find(f=>f.frame.url.startsWith('http://127.0.0.1:')&&!f.frame.url.includes(':14581/'));if(frame){context=(await request('Page.createIsolatedWorld',{frameId:frame.frame.id,worldName:'html-preview-test'})).executionContextId;return;}await delay(100);}throw Error('Interactive preview frame missing');}
  async function inside(expression){const r=await request('Runtime.evaluate',{expression,contextId:context,returnByValue:true,awaitPromise:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}

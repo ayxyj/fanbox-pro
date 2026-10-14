@@ -32,6 +32,40 @@ function repoMutation(body, fn) {
   return _engine._chain(repo.path, () => fn(body));
 }
 
+const repoOperations = new Map();
+async function dirtyMutation(body, fn) {
+  const id = str(body.id);
+  if (!_store.getRepo(id)) return err(404, 'repo 不存在');
+  if (repoOperations.get(id)?.running) return err(409, '该仓库正在处理改动，请等待完成');
+  const operation = { running: true, phase: '等待当前仓库操作完成', startedAt: Date.now() };
+  repoOperations.set(id, operation);
+  // Completed records are only diagnostics; keep the history bounded.
+  for (const [key, value] of repoOperations) {
+    if (repoOperations.size <= 100) break;
+    if (!value.running) repoOperations.delete(key);
+  }
+  try {
+    return await repoMutation(body, async () => {
+      const phase = text => { operation.phase = text; };
+      phase('检查仓库');
+      let result;
+      try { result = await fn(body, phase); }
+      catch (e) { result = err(500, e.message); }
+      phase('刷新当前仓库状态');
+      const refreshed = await repoRefresh(body);
+      // Even a failed stash apply may leave conflicts; always refresh after the command.
+      if (refreshed.code === 200) result.obj.repo = refreshed.obj.repo;
+      else result.obj.refreshError = refreshed.obj.error;
+      operation.error = result.code !== 200 ? result.obj.error : result.obj.refreshError;
+      operation.phase = operation.error ? '处理结束，请查看错误' : '已完成，仓库状态已刷新';
+      return result;
+    });
+  } catch (e) {
+    operation.error = e.message; operation.phase = '操作失败';
+    return err(500, e.message);
+  } finally { operation.running = false; operation.finishedAt = Date.now(); }
+}
+
 function overview() {
   const repos = _store.repos, tasks = _store.tasks;
   return ok({
@@ -187,10 +221,11 @@ async function repoRefresh(body) {
   if (!r) return err(404, 'repo 不存在');
 
   try {
-    const root = await git.repoRoot(r.path);
-    if (!root) throw new Error('目录不是可访问的 Git 仓库');
-    const status = await git.getStatus(root);
-    const [stashN, availableBranches] = await Promise.all([git.stashCount(root), readBranches(root)]);
+    // All three commands validate the repository themselves; avoid another Git process
+    // and overlap independent local reads. No network access is needed for this refresh.
+    const [status, stashN, availableBranches] = await Promise.all([
+      git.getStatus(r.path), git.stashCount(r.path), readBranches(r.path),
+    ]);
     return ok({
       repo: _store.updateRepo(id, { currentBranch: status.branch || '', dirty: status.dirty,
         ahead: status.ahead, behind: status.behind, stashCount: stashN, lost: false, availableBranches, branchesUpdatedAt: nowIso(), lastRefreshAt: nowIso(), refreshError: null }),
@@ -211,12 +246,13 @@ async function repoStashGet(qp) {
   try { return ok({ list: await git.stashList(await git.repoRoot(r.path)) }); }
   catch (e) { return err(500, e.message); }
 }
-async function repoStashPost(body) {
+async function repoStashPost(body, phase = () => {}) {
   const id = str(body.id), op = str(body.op), message = str(body.message, ''), index = int(body.index, -1);
   const r = _store.getRepo(id);
   if (!r) return err(404, 'repo 不存在');
   try {
     const root = await git.repoRoot(r.path);
+    phase(({push:'暂存已跟踪及未跟踪改动', apply:'应用 Stash', pop:'恢复 Stash', drop:'删除 Stash'})[op] || '处理 Stash');
     if (op === 'push') await git.stashPush(root, message);
     else if (op === 'apply') await git.stashApply(root, index);
     else if (op === 'pop') await git.stashPop(root, index);
@@ -225,19 +261,19 @@ async function repoStashPost(body) {
     return ok({ ok: true });
   } catch (e) { return err(500, e.message); }
 }
-async function repoDiscard(body) {
+async function repoDiscard(body, phase = () => {}) {
   const id = str(body.id);
   const r = _store.getRepo(id);
   if (!r) return err(404, 'repo 不存在');
-  try { await git.discardAll(await git.repoRoot(r.path)); return ok({ ok: true }); }
+  try { await git.discardAll(await git.repoRoot(r.path), phase); return ok({ ok: true }); }
   catch (e) { return err(500, e.message); }
 }
-async function repoCommit(body) {
+async function repoCommit(body, phase = () => {}) {
   const id = str(body.id), message = str(body.message).trim();
   if (!message) return err(400, 'message 必填');
   const r = _store.getRepo(id);
   if (!r) return err(404, 'repo 不存在');
-  try { await git.commitAll(await git.repoRoot(r.path), message); return ok({ ok: true }); }
+  try { await git.commitAll(await git.repoRoot(r.path), message, phase); return ok({ ok: true }); }
   catch (e) { return err(500, e.message); }
 }
 
@@ -375,6 +411,7 @@ const ROUTES = {
   'repo/list': ['GET'], 'repo/add': ['POST'], 'repo/delete': ['POST'],
   'repo/toggle': ['POST'], 'repo/branches': ['GET'], 'repo/branches/save': ['POST'],
   'repo/refresh': ['POST'], 'repo/sync': ['POST'], 'repo/stash': ['GET', 'POST'],
+  'repo/progress': ['GET'],
   'repo/discard': ['POST'], 'repo/commit': ['POST'],
   'tasks': ['GET'], 'task/save': ['POST'], 'task/delete': ['POST'],
   'scheduler/toggle': ['POST'],
@@ -402,9 +439,10 @@ async function handleApi(method, p, qp, body) {
     case 'repo/branches/save': return repoBranchesSave(body);
     case 'repo/refresh': return await repoMutation(body, repoRefresh);
     case 'repo/sync': return await repoSync(body);
-    case 'repo/stash': return method === 'GET' ? await repoStashGet(qp) : await repoMutation(body, repoStashPost);
-    case 'repo/discard': return await repoMutation(body, repoDiscard);
-    case 'repo/commit': return await repoMutation(body, repoCommit);
+    case 'repo/progress': return ok({ operation: repoOperations.get(str(qp.get('id'))) || null });
+    case 'repo/stash': return method === 'GET' ? await repoStashGet(qp) : await dirtyMutation(body, repoStashPost);
+    case 'repo/discard': return await dirtyMutation(body, repoDiscard);
+    case 'repo/commit': return await dirtyMutation(body, repoCommit);
     case 'tasks': return taskList();
     case 'scheduler/toggle': return schedulerToggle(body);
     case 'task/save': return taskSave(body);

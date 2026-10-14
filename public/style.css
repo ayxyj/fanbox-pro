@@ -326,6 +326,12 @@ kbd {
   display: flex; flex-direction: column; overflow: hidden; min-height: 0; min-width: 0;
 }
 #preview.hidden { display: none; }
+#preview.preview-fullscreen { position: fixed; inset: 0; z-index: 55; width: auto; height: auto; flex-basis: auto !important; border: none; animation: none; }
+#main-body:has(#preview.preview-fullscreen) #preview-resizer { display: none; }
+#preview-max { display: flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; background: none; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-dim); cursor: pointer; }
+#preview-max:hover { color: var(--text); border-color: var(--accent); }
+#preview-max.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+#preview:has(.imgedit-tools) #preview-max { display: none; }
 .dock-bottom #preview { border-left: 1px solid var(--border); }
 .dock-right #preview { border-top: 1px solid var(--border); }
 /* 标题 + 操作按钮 + 关闭 全部并到一行，省掉一整行高度 */
@@ -639,7 +645,7 @@ kbd {
 .editor-bar button.ghost-btn:hover { color: var(--text); border-color: var(--accent); }
 .editor-hint { font-size: 11px; color: var(--text-faint); margin-left: auto; }
 .editor-area {
-  width: 100%; box-sizing: border-box; min-height: 60vh; resize: vertical;
+  width: 100%; box-sizing: border-box; min-height: 0; resize: none;
   background: var(--bg); color: var(--text); border: 1px solid var(--border);
   border-radius: var(--radius); padding: 12px 14px; font-family: var(--font-mono);
   font-size: 13px; line-height: 1.7; tab-size: 2;
@@ -647,16 +653,19 @@ kbd {
 .editor-area:focus { outline: none; border-color: var(--accent); }
 /* Monaco 宿主：占满预览区可用高度，圆角裁掉内部直角 */
 .mona-host {
-  width: 100%; height: calc(100vh - 184px); min-height: 360px;
+  width: 100%; height: 100%; min-height: 0; box-sizing: border-box;
   border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
 }
 .mona-host .monaco-editor, .mona-host .monaco-editor .overflow-guard { border-radius: var(--radius); }
 
 /* Milkdown Crepe 所见即所得编辑器宿主：随皮肤变量呼吸 */
 .crepe-host {
-  height: calc(100vh - 184px); min-height: 360px; overflow: auto;
+  height: 100%; min-height: 0; box-sizing: border-box; overflow: auto;
   border: 1px solid var(--border); border-radius: var(--radius); background: var(--bg);
 }
+#preview-body:has(> #ed-host) { display: flex; flex-direction: column; overflow: hidden; }
+#preview-body:has(> #ed-host) > .editor-bar { flex: 0 0 auto; }
+#preview-body > #ed-host { flex: 1 1 0; min-height: 0; min-width: 0; height: auto; }
 .crepe-host .milkdown {
   --crepe-color-background: transparent;
   --crepe-color-on-background: var(--text);
@@ -1199,3 +1208,26 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 #content.is-scrolling .edit-ripple { display: none; }
 
 #content.is-scrolling .changed::after { animation: none; }
+/* Keep offscreen file rows out of layout/paint work while retaining all actions. */
+.list > .row:not(.list-head), .grid > .item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 44px;
+}
+.list.file-tree > .row { grid-template-columns:minmax(0, 1fr) 22px; grid-template-rows:22px 16px; height:48px; box-sizing:border-box; padding:5px 8px; column-gap:4px; row-gap:0; content-visibility:visible; contain-intrinsic-size:none; }
+.file-tree .row .fname { display:flex; align-items:center; gap:6px; min-width:0; padding-left:calc(var(--tree-depth, 0) * 18px); }
+.file-tree .row .fname { grid-column:1; grid-row:1; }
+.tree-details { grid-column:1; grid-row:2; display:flex; gap:10px; min-width:0; padding-left:calc(46px + var(--tree-depth, 0) * 18px); overflow:hidden; white-space:nowrap; }
+.tree-details .meta { min-width:0; overflow:hidden; text-overflow:ellipsis; font-size:10px !important; }
+.file-tree .row > .fav-btn { grid-column:2; grid-row:1 / 3; align-self:center; }
+.file-tree .row .icon { flex:0 0 18px; width:18px; height:18px; }
+.tree-label { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.file-tree.virtual-tree { position:relative; display:block; }
+.file-tree.virtual-tree > .row, .file-tree.virtual-tree > .tree-hint { position:absolute; top:0; left:0; width:100%; }
+.tree-toggle { flex:0 0 16px; width:16px; min-width:0; padding:0; border:0; background:transparent; color:var(--text-dim); cursor:pointer; font-size:14px; }
+.tree-toggle:disabled { visibility:hidden; }
+.tree-toggle:focus-visible { outline:1px solid var(--accent); }
+.tree-hint { font-size:12px; color:var(--text-dim); height:48px; box-sizing:border-box; line-height:48px; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
+.tree-progress { font-size:11px; color:var(--text-dim); white-space:nowrap; }
+.gs-operation { position:fixed; right:24px; bottom:44px; z-index:9999; width:320px; max-width:80vw; padding:16px; border:1px solid var(--border); border-radius:10px; background:var(--bg); color:var(--text); box-shadow:0 6px 24px #0003; }
+.gs-operation div { font-size:12px; margin:8px 0; }
+.gs-operation progress { width:100%; height:6px; }

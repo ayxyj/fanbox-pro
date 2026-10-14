@@ -1,6 +1,6 @@
 {
   "name": "fanbox-pro",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "fanbox-pro — Windows file browser, embedded terminal, Git repository management and scheduled tasks",
   "bin": {
     "fanbox-pro": "server.js"

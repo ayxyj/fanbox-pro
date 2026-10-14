@@ -31,16 +31,18 @@ jobs:
         run: |
           node --check electron/main.js
           node --check public/app.js
+          node --check public/terminal-scroll.js
+          node tests/terminal-output.js
           node tests/theme-menu-state.js
           npm test
       - name: Package Windows app
         shell: pwsh
         run: |
-          npm run dist:win -- --dir --config.electronDist=node_modules/electron/dist
+          npm run dist:win -- --dir --config.electronDist=node_modules/electron/dist --config.win.signAndEditExecutable=false
           if (!(Test-Path dist/win-unpacked/resources/app.asar) -or !(Test-Path dist/win-unpacked/fanbox-pro.exe)) { throw 'Windows app packaging failed' }
           node scripts/finalize-win.js dist/win-unpacked
           if ($LASTEXITCODE -ne 0) { throw 'Executable resources failed' }
-          npm run dist:win -- --prepackaged dist/win-unpacked
+          npm run dist:win -- --prepackaged dist/win-unpacked --config.win.signAndEditExecutable=false
           if ($LASTEXITCODE -ne 0) { throw 'Installer build failed' }
       - name: Verify packaged app
         run: node tests/appearance-clipboard-smoke.js dist/win-unpacked/fanbox-pro.exe
@@ -48,6 +50,8 @@ jobs:
         run: node tests/file-scroll-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify interactive HTML preview
         run: node tests/html-preview-smoke.js dist/win-unpacked/fanbox-pro.exe
+      - name: Verify terminal history and colours
+        run: node tests/terminal-scroll-color-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
@@ -68,8 +72,10 @@ jobs:
           基于 alchaincyf/fanbox 的 Windows 衍生版本，增加多工作区 Git 仓库管理、自动同步及定时任务。
           包含主题配置、编辑器配色、盘符切换、文件选中框及资源管理器定位修复。
 
-          本次修订：修复 Mica 与图片模糊叠加的滚动拖影，后台刷新保留滚动位置；仓库右键支持在对应目录打开终端，修复仓库操作与新建文件菜单重叠。
-          HTML/HTM 支持软件内直接渲染和交互、Ctrl + 鼠标滚轮缩放；修复 claude 等 npm 脚本入口被 PowerShell 执行策略拦截，仅影响软件内新建的终端会话。
+          本次修订：目录默认使用树视图，支持逐层缩进、按需加载、大目录窗口渲染、全部展开/折叠及文件夹右键操作；后续启动恢复用户选择的视图。
+          文件名与时间/大小分两行展示；文本和代码默认编辑，图片和 HTML 默认预览，预览支持全屏恢复，编辑器和终端分别占用独立区域。
+          终端输出批处理、标签状态局部更新和尺寸请求合并；修复历史滚动位置不同步与继承 NO_COLOR 导致的颜色缺失。
+          Git 脏状态处理显示真实操作阶段与耗时，操作完成或失败后刷新当前仓库状态，并发查询改善加载速度。
 
           下载 fanbox-pro-$env:RELEASE_VERSION-x64.exe 并运行安装。Git 功能需要本机 Git；Agent 功能需要另行配置对应工具。
           原项目：https://github.com/alchaincyf/fanbox

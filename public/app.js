@@ -181,7 +181,7 @@ const state = {
   cwd: null, home: null, platform: 'darwin', sep: '/',
   theme: localStorage.getItem('fb_theme') || 'terminal',
   entries: [], project: null, history: [],
-  view: localStorage.getItem('fb_view') || 'grid',
+  view: ['tree', 'grid', 'list'].includes(localStorage.getItem('fb_view')) ? localStorage.getItem('fb_view') : 'tree',
   gridSize: localStorage.getItem('fb_gridsize') || 'md',
   sort: localStorage.getItem('fb_sort') || 'name',
   showHidden: localStorage.getItem('fb_hidden') === '1',
@@ -252,11 +252,14 @@ async function guardDirty() {
 const isMdName = (n) => /\.(md|markdown)$/i.test(String(n || ''));
 
 // ---------- 导航 ----------
+let navigationRevision = 0;
 async function navigate(p, pushHistory = true) {
-  if (!await guardDirty()) return;
+  const revision = ++navigationRevision;
+  if (!await guardDirty() || revision !== navigationRevision) return;
   ensureFileAreaSize();
   try {
     const data = await api('/api/list?path=' + encodeURIComponent(p));
+    if (revision !== navigationRevision) return;
     if (data.error) { toast('无法打开：' + data.error, true); return; }
     if (pushHistory && state.cwd) state.history.push(state.cwd);
     state.cwd = data.path;
@@ -368,13 +371,15 @@ function renderStatusbar() {
   const rel = $('#sb-rel'); if (rel) rel.onclick = () => releasePanel();
 }
 function renderFiles() {
+  fileTree.updateControls();
   if (state.gsMode) return;
   if (state.skillsMode) return; // skills 视图自管 #file-area，文件渲染不要清掉它
   const area = $('#file-area');
   const viewport = $('#content');
   const scrollTop = viewport.scrollTop, scrollLeft = viewport.scrollLeft;
   const cursorPath = state.visible[state.cursor]?.path;
-  const list = visibleEntries();
+  const treeMode = state.view === 'tree' && !state.recentMode;
+  const list = treeMode ? fileTree.flatten() : visibleEntries();
   state.visible = list;
   if (cursorPath) state.cursor = list.findIndex(e => e.path === cursorPath);
   renderStatusbar();
@@ -382,6 +387,12 @@ function renderFiles() {
     const emptyMsg = state.recentMode ? '没找到最近修改的文件' : '这个文件夹是空的';
     const emptyIc = state.recentMode ? 'clock' : 'inbox';
     area.innerHTML = `<div class="empty-state"><div class="big">${ic(emptyIc, 'currentColor', 48)}</div>${emptyMsg}</div>`;
+    return;
+  }
+  if (treeMode) {
+    fileTree.render(area, list);
+    state.cols = 1; highlightCursor(false);
+    viewport.scrollTop = scrollTop; viewport.scrollLeft = scrollLeft;
     return;
   }
   // 最近修改是跨目录平铺列表，强制列表视图并显示来源目录
@@ -471,7 +482,7 @@ function gridItem(e, i) {
   bindItem(el, e);
   return el;
 }
-function listRow(e, i) {
+function listRow(e, i, tree = false) {
   const el = document.createElement('div');
   const chgR = state.changed && state.changed.get(e.name);
   el.className = 'row' + (e.isDir ? ' is-dir' : ' is-file') + (e.hidden ? ' hidden-file' : '') + (state.selected === e.path ? ' selected' : '') + (chgR ? ' changed' : '');
@@ -480,7 +491,7 @@ function listRow(e, i) {
   if (chgR) { el.dataset.changed = chgR.count > 1 ? '改·' + chgR.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chgR.count * 0.12).toFixed(2)); if (chgR.files.size) el.title = '刚变更：\n' + [...chgR.files].join('\n'); }
   // 最近修改是跨目录列表，名称后缀显示来源目录，方便区分同名文件
   const dirHint = state.recentMode ? ` <span class="row-dir">· ${escapeHtml(tilde(e.dir || dirOf(e.path)))}</span>` : '';
-  el.innerHTML = `<div class="icon">${(e.kind === 'image' || e.kind === 'video') ? `<img class="thumb-sm" loading="lazy" decoding="async" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=96&v=${e.mtime || 0}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'svg-icon',innerHTML:this.dataset.fb||''}))" data-fb='${escapeHtml(iconSvg(e, 18))}'>` : `<span class="svg-icon">${iconSvg(e, 18)}</span>`}</div>
+  el.innerHTML = `<div class="icon">${(!tree && (e.kind === 'image' || e.kind === 'video')) ? `<img class="thumb-sm" loading="lazy" decoding="async" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=96&v=${e.mtime || 0}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'svg-icon',innerHTML:this.dataset.fb||''}))" data-fb='${escapeHtml(iconSvg(e, 18))}'>` : `<span class="svg-icon">${tree ? fileTree.icon(e) : iconSvg(e, 18)}</span>`}</div>
     <div class="fname">${escapeHtml(e.name)}${projBadge(e)}${dirHint}</div>
     <div class="meta">${fmtTime(e.mtime)}</div>
     <div class="meta">${e.isDir ? '' : fmtSize(e.size)}</div>
@@ -527,12 +538,16 @@ function applySelection(path) {
   highlightCursor(false);
   if (path) { const el = area.querySelector(`[data-path="${CSS.escape(path)}"]`); if (el) el.classList.add('selected'); }
 }
-function onItemClick(e) {
+async function onItemClick(e) {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 目录分支由 navigate 内统一处理，这里管点文件
   if (e.isDir) { state.selected = e.path; navigate(e.path); return; }
   applySelection(e.path);
-  openPreview(e);
+  await openFileForEditing(e);
   recordRecent(e.path);
+}
+function openFileForEditing(e) {
+  if (e.kind === 'text' && !/\.html?$/i.test(e.name)) return enterEditMode(e);
+  return openPreview(e);
 }
 function onItemOpen(e) { if (e.isDir) navigate(e.path); else openWith(e.path, 'default'); }
 
@@ -541,6 +556,7 @@ function highlightCursor(scroll = true) {
   const area = $('#file-area');
   area.querySelectorAll('.cursor').forEach((x) => x.classList.remove('cursor'));
   if (state.cursor < 0) return;
+  if (scroll && state.view === 'tree' && !state.recentMode && !state.gsMode && !state.skillsMode) fileTree.reveal(state.cursor);
   const el = area.querySelector(`[data-idx="${state.cursor}"]`);
   if (el) { el.classList.add('cursor'); if (scroll) el.scrollIntoView({ block: 'nearest' }); }
 }
@@ -555,8 +571,11 @@ function cursorEnter(editor) {
   if (!e) return;
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   if (editor && !e.isDir) { openWith(e.path, 'editor'); return; }
-  if (e.isDir) { state.selected = e.path; navigate(e.path); }
-  else { applySelection(e.path); openPreview(e); recordRecent(e.path); }
+  if (e.isDir) {
+    if (state.view === 'tree' && !state.recentMode) fileTree.toggle(e);
+    else { state.selected = e.path; navigate(e.path); }
+  }
+  else { applySelection(e.path); openFileForEditing(e); recordRecent(e.path); }
 }
 
 // ---------- 预览 ----------
@@ -781,6 +800,7 @@ function fileManagerName() {
 async function copyFile(p) { const r = await window.fanboxClipboard.copyFile(p); toast(r.ok ? '已复制文件，可在' + fileManagerName() + '里粘贴' : '复制文件失败', !r.ok); }
 async function closePreview() {
   if (!await guardDirty()) return;
+  togglePreviewMax(false);
   mona.disposeIfAny(); crepe.disposeIfAny(); imgEditState = null;
   animateLayout();
   $('#preview').classList.add('hidden');
@@ -965,6 +985,24 @@ function showPreviewPanel() {
   applyPreviewSize();
 }
 function applyPreviewWidth() { applyPreviewSize(); } // 兼容旧调用名
+let previewMaximized = false;
+function togglePreviewMax(force) {
+  const preview = $('#preview');
+  const on = force === undefined ? !previewMaximized : force;
+  if (on && preview.classList.contains('hidden')) return;
+  if (on && term.maximized) term.toggleMax(false);
+  previewMaximized = on;
+  preview.classList.toggle('preview-fullscreen', on);
+  const button = $('#preview-max');
+  button.classList.toggle('on', on);
+  button.title = on ? '恢复预览大小' : '预览全屏';
+  button.setAttribute('aria-label', button.title);
+  button.setAttribute('aria-pressed', String(on));
+  button.innerHTML = on
+    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="21 9 15 9 15 3"/><polyline points="3 15 9 15 9 21"/><line x1="15" y1="9" x2="22" y2="2"/><line x1="9" y1="15" x2="2" y2="22"/></svg>'
+    : $('#term-max').innerHTML;
+  requestAnimationFrame(() => { mona.editor?.layout(); term.fitActive(); });
+}
 function toggleSidebar(force) {
   state.sidebarCollapsed = force === undefined ? !state.sidebarCollapsed : force;
   localStorage.setItem('fb_sidebar_collapsed', state.sidebarCollapsed ? '1' : '0');
@@ -976,8 +1014,9 @@ function toggleSidebar(force) {
 // ---------- 图片基础编辑（canvas：标注/打码/转格式/缩放/压缩，原生保存）----------
 let imgEditState = null;
 async function enterImageEdit(e) {
+  const revision = ++previewRevision;
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 编辑时绝不能被跟随抢屏
-  if (!await guardDirty()) return;
+  if (!await guardDirty() || revision !== previewRevision) return;
   recordRecent(e.path);
   mona.disposeIfAny(); crepe.disposeIfAny();
   showPreviewPanel();
@@ -989,11 +1028,12 @@ async function enterImageEdit(e) {
   body.innerHTML = '<div class="cmdk-loading">加载图片…</div>';
   const img = new Image();
   img.onload = () => {
+    if (revision !== previewRevision || state.selected !== e.path) return;
     // 大图 OOM 守卫：canvas 按 RGBA 估算，超 60MP（~240MB）拒绝编辑，回退预览
     if (img.naturalWidth * img.naturalHeight > 60e6) { toast('图片过大（>60MP），暂不支持编辑，请先压缩', true); openPreview(e); return; }
     buildImageEditor(e, img);
   };
-  img.onerror = () => { toast('图片加载失败', true); openPreview(e); };
+  img.onerror = () => { if (revision !== previewRevision || state.selected !== e.path) return; toast('图片加载失败', true); openPreview(e); };
   img.src = '/api/raw?path=' + encodeURIComponent(e.path) + '&v=' + (e.mtime || 0);
 }
 function ieSnapshot(st) { const c = document.createElement('canvas'); c.width = st.canvas.width; c.height = st.canvas.height; c.getContext('2d').drawImage(st.canvas, 0, 0); return c; }
@@ -1198,13 +1238,24 @@ async function toggleFav(e) {
 
 // ---------- 文件操作（编辑 / 重命名 / 废纸篓 / 新建）----------
 // 重拉当前目录但保留筛选词，操作后刷新视图
-async function refresh() {
+let directoryRefresh = null, directoryRefreshAgain = false;
+function refresh() {
+  directoryRefreshAgain = true;
+  if (directoryRefresh) return directoryRefresh;
+  directoryRefresh = (async () => {
+    do { directoryRefreshAgain = false; await refreshDirectory(); } while (directoryRefreshAgain);
+  })().finally(() => { directoryRefresh = null; });
+  return directoryRefresh;
+}
+async function refreshDirectory() {
   if (!state.cwd || state.recentMode) return;
   const cwd = state.cwd;
   const data = await api('/api/list?path=' + encodeURIComponent(cwd));
   if (state.cwd !== cwd || state.recentMode || state.gsMode || state.skillsMode) return;
   if (data.error) return;
   state.entries = data.entries;
+  if (state.view === 'tree') await fileTree.refresh(cwd);
+  if (state.cwd !== cwd || state.gsMode || state.skillsMode) return;
   state.project = data.project;
   state.breadcrumb = data.breadcrumb;
   renderBreadcrumb();
@@ -1212,10 +1263,12 @@ async function refresh() {
 }
 // 文本原地编辑：md → Milkdown Crepe 所见即所得；其它 → Monaco；都失败回退 textarea
 async function enterEditMode(e) {
+  const revision = ++previewRevision;
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停'); // 编辑时绝不能被跟随抢屏
-  if (!await guardDirty()) return;
+  if (!await guardDirty() || revision !== previewRevision) return;
   mona.disposeIfAny();
   crepe.disposeIfAny();
+  imgEditState = null;
   showPreviewPanel();
   state.selected = e.path;
   $('#preview-title').textContent = e.name;
@@ -1224,6 +1277,8 @@ async function enterEditMode(e) {
   const body = $('#preview-body');
   body.innerHTML = '<div class="cmdk-loading">加载中…</div>';
   const data = await api('/api/read?path=' + encodeURIComponent(e.path));
+  if (revision !== previewRevision || state.selected !== e.path) return;
+  if (data.error) { toast('读取失败：' + data.error, true); return; }
   if (data.tooLarge) {
     toast('文件太大，暂不支持原地编辑', true);
     if (isMdName(e.name)) { renderTextPreview(data); return; } // md 预览即编辑，回 openPreview 会循环
@@ -1257,7 +1312,9 @@ async function enterEditMode(e) {
   // 挂上未保存守卫：离开编辑器（切文件/跳目录/关预览）前比对当前值与已保存基准
   dirtyCheck = () => !!getValue && getValue() !== baseline;
 
-  if (await mona.load()) {
+  const loaded = await mona.load();
+  if (revision !== previewRevision || state.selected !== e.path) return;
+  if (loaded) {
     const monaco = window.monaco;
     body.innerHTML =
       `<div class="editor-bar"><button id="ed-save" class="primary">保存</button><button id="ed-cancel" class="ghost-btn">完成</button><span class="editor-hint">⌘S 保存 · ⌘F 查找 · Esc 完成</span></div>` +
@@ -1641,6 +1698,16 @@ function showContextMenu(ev, e) {
   closeContextMenu();
   const items = [];
   if (e.isDir) items.push({ label: '打开', fn: () => navigate(e.path) });
+  if (e.isDir) {
+    items.push({ label: '全部折叠', fn: () => fileTree.collapseAll(e.path) });
+    items.push({ label: '全部打开', fn: () => {
+      state.view = 'tree';
+      localStorage.setItem('fb_view', 'tree');
+      $('#view-seg').querySelectorAll('button').forEach(button => button.classList.toggle('active', button.dataset.view === 'tree'));
+      updateGridSizeVisibility(); renderFiles();
+      return fileTree.expandAll(e);
+    } });
+  }
   else items.push({ label: '预览', fn: () => { state.selected = e.path; openPreview(e); renderFiles(); } });
   if (e.isDir) items.push({ label: 'AI 整理…', fn: () => organizeLaunch(e.path) });
   if (e.isDir) items.push({ label: '磁盘占用透视', fn: () => diskPanel(e.path) });
@@ -1707,7 +1774,7 @@ async function toggleNavSub(li, dirPath, twirl) {
   ul.className = 'nav-list nav-sub';
   li.after(ul);
   try {
-    const data = await api('/api/list?path=' + encodeURIComponent(dirPath));
+    const data = await api('/api/list?tree=1&path=' + encodeURIComponent(dirPath));
     const dirs = (data.entries || []).filter((e) => e.isDir && !e.hidden);
     if (!dirs.length) { ul.innerHTML = '<div class="nav-empty">没有子文件夹</div>'; return; }
     dirs.forEach((e) => ul.appendChild(navDirLi(e.name, e.path)));
@@ -2025,6 +2092,7 @@ function bindEvents() {
   $('#btn-back').onclick = goBack;
   $('#btn-up').onclick = goUp;
   $('#preview-close').onclick = closePreview;
+  $('#preview-max').onclick = () => togglePreviewMax();
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-recent').onclick = showRecent;
   $('#btn-changes').onclick = () => toggleChangesPanel();
@@ -2122,6 +2190,10 @@ function bindEvents() {
     b.classList.toggle('active', b.dataset.view === state.view);
     b.onclick = () => { state.view = b.dataset.view; localStorage.setItem('fb_view', state.view); $('#view-seg').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b)); updateGridSizeVisibility(); renderFiles(); };
   });
+  $('#content').addEventListener('scroll', () => fileTree.schedulePaint(), {passive: true});
+  if (window.ResizeObserver) new ResizeObserver(() => fileTree.schedulePaint()).observe($('#content'));
+  $('#tree-collapse-all').onclick = () => fileTree.collapseAll();
+  $('#tree-expand-all').onclick = () => fileTree.expandAll();
   $('#gridsize-seg').querySelectorAll('button').forEach((b) => {
     b.classList.toggle('active', b.dataset.size === state.gridSize);
     b.onclick = () => { state.gridSize = b.dataset.size; localStorage.setItem('fb_gridsize', state.gridSize); $('#gridsize-seg').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b)); renderFiles(); };
@@ -2149,15 +2221,29 @@ function bindEvents() {
     const inInput = ['INPUT', 'TEXTAREA'].includes(document.activeElement.tagName) || document.activeElement.isContentEditable;
     // 输入框里按 Esc 先退出输入，别越级把预览关掉
     if (e.key === 'Escape' && inInput) { document.activeElement.blur(); return; }
-    if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) { closePreview(); return; }
+    if (e.key === 'Escape' && !$('#preview').classList.contains('hidden')) {
+      if (previewMaximized) togglePreviewMax(false);
+      else closePreview();
+      return;
+    }
     if ((e.metaKey || e.ctrlKey) && e.key === '[') { e.preventDefault(); goBack(); return; }
     if ((e.metaKey || e.ctrlKey) && (e.key === 'b' || e.key === 'B') && !inInput) { e.preventDefault(); toggleSidebar(); return; }
     if (inInput) return;
     // 主区键盘导航
     if (e.key === 'ArrowDown') { e.preventDefault(); moveCursor(state.cols); }
     else if (e.key === 'ArrowUp') { e.preventDefault(); moveCursor(-state.cols); }
-    else if (e.key === 'ArrowRight') { e.preventDefault(); moveCursor(1); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); moveCursor(-1); }
+    else if (e.key === 'ArrowRight') {
+      e.preventDefault(); const entry = state.visible[state.cursor];
+      if (state.view === 'tree' && entry?.isDir && !fileTree.current().expanded.has(entry.path)) fileTree.toggle(entry);
+      else moveCursor(1);
+    }
+    else if (e.key === 'ArrowLeft') {
+      e.preventDefault(); const entry = state.visible[state.cursor];
+      if (state.view === 'tree' && entry?.isDir && fileTree.current().expanded.has(entry.path)) fileTree.toggle(entry);
+      else if (state.view === 'tree' && entry?.treeDepth > 0) {
+        state.cursor = state.visible.findIndex(x => x.path === dirOf(entry.path)); highlightCursor();
+      } else moveCursor(-1);
+    }
     else if (e.key === 'Enter') { e.preventDefault(); cursorEnter(e.metaKey || e.ctrlKey); }
     else if ((e.metaKey || e.ctrlKey) && (e.key === 'Backspace' || e.key === 'Delete')) { e.preventDefault(); const it = state.visible[state.cursor]; if (it) doTrash(it); }
     else if (e.key === 'Backspace') { e.preventDefault(); goUp(); }
@@ -2278,6 +2364,7 @@ const term = {
   toggleMax(force) {
     animateLayout();
     this.maximized = force === undefined ? !this.maximized : force;
+    if (this.maximized && previewMaximized) togglePreviewMax(false);
     $('#main-body').classList.toggle('term-max', this.maximized);
     const b = $('#term-max');
     if (b) { b.classList.toggle('on', this.maximized); b.title = this.maximized ? '还原终端' : '终端铺满'; }
@@ -2379,6 +2466,8 @@ const term = {
       // 回车多半提交了条命令（cd 这类被回显过滤、不走 busy 周期），稍后把标题对齐真实目录
       if (d.indexOf('\r') !== -1) { clearTimeout(s._cwdT); s._cwdT = setTimeout(() => this.refreshCwd(s, true), 800); }
     }
+    const panel = $('#terminal-panel');
+    if (panel.classList.contains('term-awaiting')) panel.classList.remove('term-awaiting');
     window.fanboxPty.input(id, d);
   },
   // 点终端里的文件名/路径 → 结合 cwd + 回扫 scrollback + 搜索定位真实文件，在翻箱里打开
@@ -2493,21 +2582,7 @@ const term = {
     }
     xterm.open(host);
     window.fbTerminalClipboard.attach(xterm,host);
-    // 滚动失同步自愈：DOM 滚动条已到底但 buffer 没到底，是 5.5.0 旧 Viewport 的 bug 签名
-    //（正常跟随输出时两者同步在底、用户上翻时 DOM 不在底，都不会触发），重算滚动区并到底
-    const vpEl = host.querySelector('.xterm-viewport');
-    if (vpEl) host.addEventListener('wheel', (ev) => {
-      if (ev.deltaY <= 0) return; // 只管「向下滚卡住」
-      requestAnimationFrame(() => { try {
-        const b = xterm.buffer.active;
-        if (b.type !== 'normal') return; // vim/htop 的 alt-screen 没有滚动条语义
-        const atDomBottom = vpEl.scrollTop + vpEl.clientHeight >= vpEl.scrollHeight - 2;
-        if (atDomBottom && b.viewportY < b.baseY) {
-          xterm._core.viewport?.syncScrollArea?.(true);
-          xterm.scrollToBottom();
-        }
-      } catch { /* 滚动中关标签：xterm 已 dispose，忽略 */ } });
-    }, { passive: true });
+    attachTerminalScrolling(xterm, host);
     // WebGL 渲染加速（大输出/TUI 不掉帧），失败或上下文丢失回退 DOM
     if (!window.__noWebgl && window.WebglAddon) {
       try {
@@ -2519,6 +2594,7 @@ const term = {
     }
     if (fit) try { fit.fit(); } catch { /* */ }
     const sess = { id, xterm, fit, host, shell: options.shell || (window.fanboxEnv?.platform === 'win32' ? 'powershell' : undefined), repoDir: options.repoDir, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
+    sess.output = createTerminalOutput((data, done) => xterm.write(data, done));
     this.sessions.push(sess);
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
@@ -2529,7 +2605,17 @@ const term = {
       if (sess.dead) { if (d === '\r' || d === '\n') this.respawn(sess); return; } // 进程退出后回车真重开
       this.input(id, d);
     });
-    xterm.onResize(({ cols, rows }) => { sess.lastInput = Date.now(); window.fanboxPty.resize(id, cols, rows); }); // resize 引发的 TUI 重绘不算 agent 干活
+    xterm.onResize(({ cols, rows }) => {
+      sess.lastInput = Date.now();
+      clearTimeout(sess.resizeTimer);
+      sess.resizeTimer = setTimeout(() => {
+        if (sess.dead || !sess.host.isConnected) return;
+        if (sess.ptySize?.cols === cols && sess.ptySize?.rows === rows) return;
+        window.fanboxPty.resize(id, cols, rows);
+        sess.ptySize = { cols, rows };
+      }, 80);
+    }); // resize 引发的 TUI 重绘不算 agent 干活
+    sess.ptySize = { cols: xterm.cols, rows: xterm.rows };
     window.fanboxPty.resize(id, xterm.cols, xterm.rows); // spawn 等待期间 fit 过的 resize 事件无人监听会丢：补发一次对齐 PTY
     // 识别终端输出里的文件路径 → hover 高亮 + 点击在翻箱打开
     // 三层匹配：引号串（边界最可靠，文件名可含空格）> 斜杠路径 > 带已知扩展名的裸文件名；
@@ -2677,6 +2763,8 @@ const term = {
     if (i < 0) return;
     const s = this.sessions[i];
     try { window.fanboxPty.kill(id); } catch { /* */ }
+    s.output?.dispose();
+    clearTimeout(s.resizeTimer); clearTimeout(s._cwdT);
     try { s.xterm.dispose(); } catch { /* */ }
     s.host.remove();
     this.sessions.splice(i, 1);
@@ -2688,20 +2776,33 @@ const term = {
   fitActive() {
     const s = this.sessions.find((x) => x.id === this.active);
     if (!s || !s.fit) return;
-    requestAnimationFrame(() => { try { s.fit.fit(); } catch { /* */ } });
+    if (this._fitFrame) return;
+    this._fitFrame = requestAnimationFrame(() => {
+      this._fitFrame = null;
+      const current = this.sessions.find(x => x.id === this.active);
+      if (!current || !current.host.isConnected || !current.host.clientWidth || !current.host.clientHeight) return;
+      try {
+        const dimensions = current.fit?.proposeDimensions?.();
+        if (dimensions && dimensions.cols === current.xterm.cols && dimensions.rows === current.xterm.rows) return;
+        current.fit?.fit();
+      } catch { /* disposed */ }
+    });
   },
   // agent 态势感知：终端有输出→busy；静默 >2.5s→idle；进程退出→dead。
   // 非活动标签产生输出标记未读小点；长任务（busy>4s）完成且窗口失焦/非当前标签时发系统通知。
   markBusy(s) {
     const now = Date.now();
-    $('#terminal-panel').classList.remove('term-awaiting'); // 又有动静了，撤掉「轮到你」呼吸
+    const panel = $('#terminal-panel');
+    if (panel.classList.contains('term-awaiting')) panel.classList.remove('term-awaiting'); // 不为每个回显重复写 class
     // 回显过滤：距上次用户输入 <400ms 的输出多半是回显/TUI 重绘，不算 agent 自主干活：
     // 不进入 busy、不推 busyStart；已在 busy 则只续命（agent 干活时排队打字不打断）。
     // 续命只刷新 lastData（推迟评估时机），不刷新 lastReal（任务时长只数自发输出，打字不算工时）
     if (now - (s.lastInput || 0) < 400) { if (s.status === 'busy') s.lastData = now; return; }
     s.lastData = now; s.lastReal = now;
-    if (s.status !== 'busy') { s.status = 'busy'; s.busyStart = now; this.renderTabs(); }
-    if (s.id !== this.active) { if (!s.unread) { s.unread = true; this.renderTabs(); } }
+    let changed = false;
+    if (s.status !== 'busy') { s.status = 'busy'; s.busyStart = now; changed = true; }
+    if (s.id !== this.active && !s.unread) { s.unread = true; changed = true; }
+    if (changed) this.renderTabs();
     this.ensureStatusTick();
   },
   // 取缓冲区末尾 n 行纯文本：确认对话框和忙碌页脚都画在底部
@@ -2815,23 +2916,46 @@ const term = {
   renderTabs() {
     const current = this.sessions.find(s=>s.id===this.active);
     const target = $('#term-target');
-    if (target) { target.textContent = baseOf((current?.repoDir || current?.cwd || current?.startDir || state.cwd || '').replaceAll('\\','/')); target.title = current?.repoDir || current?.cwd || current?.startDir || state.cwd; }
+    if (target) {
+      const directory = current?.repoDir || current?.cwd || current?.startDir || state.cwd || '';
+      const label = baseOf(directory.replaceAll('\\','/'));
+      if (target.textContent !== label) target.textContent = label;
+      if (target.title !== directory) target.title = directory;
+    }
     const bar = $('#term-tabs');
+    const signature = JSON.stringify([this.active, state.theme, this.sessions.map(s =>
+      [s.id, s.dead, s.status, s.unread, s.cwd, s.startDir, s.repoDir, s.title, s.agent])]);
+    if (bar.dataset.signature === signature) { this.updateTabNav(); return; }
+    bar.dataset.signature = signature;
     const scroll = bar.scrollLeft;
-    bar.innerHTML = '';
+    const nodes = new Map([...bar.children].map(node => [node.dataset.sessionId, node]));
+    const wanted = new Set(this.sessions.map(session => session.id));
+    for (const [id, node] of nodes) if (!wanted.has(id)) node.remove();
+    let position = bar.firstChild;
     this.sessions.forEach((s) => {
-      const t = document.createElement('div');
-      const dotState = s.dead ? 'dead' : (s.status === 'busy' ? 'busy' : 'idle');
-      t.className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '');
-      const dotTitle = s.dead ? '进程已退出' : (s.status === 'busy' ? 'agent 运行中' : '空闲');
-      // 终端图标按项目路径染色：同项目同色，和面包屑的配对色点呼应
-      const hue = this.hueOf(s.cwd || s.startDir);
-      t.dataset.sessionId=s.id;
-      t.title = (s.title || this.tabLabel(s))+'\n'+(s.repoDir || s.cwd || s.startDir || '')+'\n双击：文件区跳到该目录';
-      t.innerHTML = `<span class="tab-dot ${dotState}" title="${dotTitle}"></span>${ic('term', `hsl(${hue} 62% 48%)`, 12)}<span class="tab-label">${escapeHtml(this.tabLabel(s))}</span><span class="tab-x" title="关闭">✕</span>`;
-      t.onclick = (e) => { if (e.target.classList.contains('tab-x')) { this.closeTab(s.id); return; } this.activate(s.id); };
-      t.ondblclick = (e) => { if (e.target.classList.contains('tab-x')) return; this.locateCwd(); };
-      bar.appendChild(t);
+      let tab = nodes.get(s.id);
+      if (!tab) {
+        tab = document.createElement('div'); tab.dataset.sessionId = s.id;
+        tab.innerHTML = `<span class="tab-dot"></span>${ic('term', 'currentColor', 12)}<span class="tab-label"></span><span class="tab-x" title="关闭">✕</span>`;
+        tab.onclick = event => { if (event.target.classList.contains('tab-x')) this.closeTab(s.id); else this.activate(s.id); };
+        tab.ondblclick = event => { if (!event.target.classList.contains('tab-x')) this.locateCwd(); };
+      }
+      const className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '');
+      if (tab.className !== className) tab.className = className;
+      const label = this.tabLabel(s), title = (s.title || label)+'\n'+(s.repoDir || s.cwd || s.startDir || '')+'\n双击：文件区跳到该目录';
+      if (tab.title !== title) tab.title = title;
+      const text = tab.querySelector('.tab-label');
+      if (text.textContent !== label) text.textContent = label;
+      const dot = tab.querySelector('.tab-dot');
+      const dotClass = 'tab-dot ' + (s.dead ? 'dead' : s.status === 'busy' ? 'busy' : 'idle');
+      if (dot.className !== dotClass) dot.className = dotClass;
+      const dotTitle = s.dead ? '进程已退出' : s.status === 'busy' ? 'agent 运行中' : '空闲';
+      if (dot.title !== dotTitle) dot.title = dotTitle;
+      const color = `hsl(${this.hueOf(s.cwd || s.startDir)} 62% 48%)`;
+      if (tab.dataset.iconColor !== color) { tab.querySelector('svg').style.color = color; tab.dataset.iconColor = color; }
+      // A status change updates only the dot; no empty header or detached active tab.
+      if (tab === position) position = position.nextSibling;
+      else bar.insertBefore(tab, position);
     });
     bar.scrollLeft=scroll;
     bar.onscroll=()=>this.updateTabNav();
@@ -3235,7 +3359,7 @@ const crepe = {
 const CHANGE_IGNORE = new Set(['.git', 'node_modules', '.next', 'dist', 'build', '.cache', '.venv', 'venv', '__pycache__', '.DS_Store', 'target', '.turbo', '.expo', 'Library', 'Caches', '.Trash', 'CloudStorage', '.cocoapods', 'DerivedData']);
 // 这次变更是不是该被忽略的系统/构建噪声（高亮、刷新、收件箱共用一套判断）
 function isNoisyChange(filename) {
-  const segs = String(filename).split('/');
+  const segs = String(filename).split(/[\\/]/);
   // 隐藏文件/目录一律算噪声：agent 写 .git、各种 .config 时用户什么都没的看（.DS_Store/.com.apple. 也被这条覆盖）
   if (segs.some((s) => CHANGE_IGNORE.has(s) || s.startsWith('.'))) return true;
   const name = segs[segs.length - 1];
@@ -3660,12 +3784,15 @@ function igniteCard(top, count) {
 
 // pty 数据回流（全局一次）
 if (window.fanboxPty) {
-  window.fanboxPty.onData(({ id, data }) => { const s = term.sessions.find((x) => x.id === id); if (s) { s.xterm.write(data); term.markBusy(s); } });
+  window.fanboxPty.onData(({ id, data, generation }) => {
+    const s = term.sessions.find(x => x.id === id);
+    if (s) { s.output.receive(data, generation); term.markBusy(s); }
+  });
   window.fanboxPty.onExit(({ id }) => {
     const s = term.sessions.find((x) => x.id === id);
     if (s) {
       s.dead = true; s.status = 'dead';
-      s.xterm.write('\r\n\x1b[90m[进程已退出 — 回车重开，或 ✕ 关闭]\x1b[0m\r\n');
+      s.output.receive('\r\n\x1b[90m[进程已退出 — 回车重开，或 ✕ 关闭]\x1b[0m\r\n');
       term.renderTabs();
       term.notify(s, '终端已退出', (s.title || 'shell') + ' 的进程结束了');
     }
@@ -3708,7 +3835,7 @@ if (window.fanboxFs) {
     // 高亮被 agent 改动的项：递归监听下 src/foo.js 归到顶层 src，并累计计数 + 记子路径供 tooltip 定位
     if (filename) {
       const sub = String(filename);
-      const top = sub.split('/')[0];
+      const top = sub.split(/[\\/]/)[0];
       let rec = state.changed.get(top);
       if (!rec) { rec = { count: 0, files: new Set(), ts: 0 }; state.changed.set(top, rec); }
       rec.count++; rec.ts = Date.now();
@@ -3724,7 +3851,7 @@ if (window.fanboxFs) {
       await refresh();
       if (follow.on && follow.path && state.selected === follow.path) return; // 跟随有自己的实时渲染，别用 openPreview 顶掉（md 会被转进编辑器）
       if (state.selected && !$('#preview').classList.contains('hidden') && !$('#ed-host') && !imgEditState) {
-        const e = state.entries.find((x) => x.path === state.selected);
+        const e = state.visible.find((x) => x.path === state.selected);
         if (e && changed.has(normalizedPath(e.path)) && (e.kind === 'text' || e.kind === 'image')) openPreview(e, true);
       }
     }, 250);

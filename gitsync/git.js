@@ -17,6 +17,7 @@ const { execFile } = require('child_process');
 const path = require('path');
 
 const DEFAULT_TIMEOUT_MS = 15000;
+const WRITE_TIMEOUT_MS = 120000; // large working trees and commit hooks
 const NETWORK_TIMEOUT_MS = 120000; // fetch/pull 走网络，放宽
 
 class GitError extends Error {
@@ -36,7 +37,7 @@ function git(repoPath, args, timeoutMs) {
       timeout: timeoutMs || DEFAULT_TIMEOUT_MS,
       maxBuffer: 16 * 1024 * 1024,
       windowsHide: true,
-      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', LC_ALL: 'C.UTF-8' },
+      env: { ...process.env, GIT_TERMINAL_PROMPT: '0', GIT_PAGER: 'cat', ...(args[0] === 'status' ? { GIT_OPTIONAL_LOCKS: '0' } : {}), LC_ALL: 'C.UTF-8' },
     }, (err, stdout, stderr) => {
       if (err) {
         const tail = String(stderr || '').trim().slice(-300);
@@ -185,27 +186,31 @@ async function stashCount(repoPath) {
 async function stashPush(repoPath, message) {
   const args = ['stash', 'push', '-u'];
   if (message) args.push('-m', message);
-  await git(repoPath, args);
+  await git(repoPath, args, WRITE_TIMEOUT_MS);
 }
 async function stashApply(repoPath, idx) {
-  await git(repoPath, ['stash', 'apply', 'stash@{' + idx + '}']);
+  await git(repoPath, ['stash', 'apply', 'stash@{' + idx + '}'], WRITE_TIMEOUT_MS);
 }
 async function stashPop(repoPath, idx) {
-  await git(repoPath, ['stash', 'pop', 'stash@{' + idx + '}']);
+  await git(repoPath, ['stash', 'pop', 'stash@{' + idx + '}'], WRITE_TIMEOUT_MS);
 }
 async function stashDrop(repoPath, idx) {
-  await git(repoPath, ['stash', 'drop', 'stash@{' + idx + '}']);
+  await git(repoPath, ['stash', 'drop', 'stash@{' + idx + '}'], WRITE_TIMEOUT_MS);
 }
 
 // 危险操作：放弃全部本地改动（reset --hard + clean -fd），API 层必须二次确认
-async function discardAll(repoPath) {
-  await git(repoPath, ['reset', '--hard']);
-  await git(repoPath, ['clean', '-fd']);
+async function discardAll(repoPath, phase = () => {}) {
+  phase('还原已跟踪文件');
+  await git(repoPath, ['reset', '--hard'], WRITE_TIMEOUT_MS);
+  phase('清理未跟踪文件');
+  await git(repoPath, ['clean', '-fd'], WRITE_TIMEOUT_MS);
 }
 
-async function commitAll(repoPath, message) {
-  await git(repoPath, ['add', '-A']);
-  await git(repoPath, ['commit', '-m', message || 'gitsync: auto commit']);
+async function commitAll(repoPath, message, phase = () => {}) {
+  phase('暂存改动（git add）');
+  await git(repoPath, ['add', '-A'], WRITE_TIMEOUT_MS);
+  phase('创建提交（含 Git hooks）');
+  await git(repoPath, ['commit', '-m', message || 'gitsync: auto commit'], WRITE_TIMEOUT_MS);
 }
 
 module.exports = {

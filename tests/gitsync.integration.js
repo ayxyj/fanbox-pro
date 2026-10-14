@@ -46,6 +46,31 @@ let store;
   assert.equal((await api.handleApi('POST', 'repo/branches/save', qp, { id: repo.id, branches: ['feature', 'master'] })).code, 400);
   await api.handleApi('POST', 'repo/branches/save', qp, { id: repo.id, branches: ['feature'] });
   const scan1 = await api.handleApi('POST', 'workspace/scan', qp, { id: ws.id }); assert.equal(scan1.obj.added, 0); assert.deepEqual(repo.branches, ['feature']);
+  console.log('Checking dirty operations refresh the current repository');
+  fs.writeFileSync(path.join(local, 'dirty.txt'), 'stash me');
+  const dirtyId = {id:repo.id};
+  let mutation = await api.handleApi('POST', 'repo/stash', qp, {...dirtyId,op:'push',message:'test stash'});
+  assert.equal(mutation.code,200); assert.equal(mutation.obj.repo.dirty,false); assert.equal(repo.stashCount,2);
+  mutation = await api.handleApi('POST', 'repo/stash', qp, {...dirtyId,op:'pop',index:0});
+  assert.equal(mutation.code,200); assert.equal(repo.dirty,true); assert.equal(repo.stashCount,1);
+  mutation = await api.handleApi('POST', 'repo/commit', qp, {...dirtyId,message:'test dirty commit'});
+  assert.equal(mutation.code,200); assert.equal(repo.dirty,false);
+  fs.writeFileSync(path.join(local,'discard.txt'),'remove');
+  mutation = await api.handleApi('POST','repo/discard',qp,dirtyId);
+  assert.equal(mutation.code,200); assert.equal(repo.dirty,false); assert.equal(fs.existsSync(path.join(local,'discard.txt')),false);
+  let releaseStatus; const realStatus=gitOps.getStatus, realCommit=gitOps.commitAll;
+  gitOps.commitAll=async()=>{throw Error('test commit hook failed');};
+  gitOps.getStatus = async (...args) => { await new Promise(resolve => {releaseStatus=resolve;}); return realStatus(...args); };
+  const failedCommit=api.handleApi('POST','repo/commit',qp,{...dirtyId,message:'nothing changed'});
+  for(let i=0;i<500 && !releaseStatus;i++) await new Promise(r=>setTimeout(r,20));
+  try {
+    assert.ok(releaseStatus,'Refresh should follow a failed commit');
+    const progress=(await api.handleApi('GET','repo/progress',qp,{})).obj.operation;
+    assert.equal(progress.running,true); assert.equal(progress.phase,'刷新当前仓库状态');
+    assert.equal((await api.handleApi('POST','repo/discard',qp,dirtyId)).code,409);
+  } finally {gitOps.getStatus=realStatus; gitOps.commitAll=realCommit; releaseStatus?.();}
+  assert.equal((await failedCommit).code,500); assert.equal(repo.dirty,false);
+  assert.equal((await api.handleApi('GET','repo/progress',qp,{})).obj.operation.running,false);
   console.log('Checking shared schedule presets and 10-run previews');
   const future=new Date(Date.now()+3600000).toISOString();
   for(const trigger of [{type:'interval',sec:300},{type:'cron',expr:'0 9 * * *'},{type:'cron',expr:'30 8 * * 1'},{type:'cron',expr:'15 * * * *'},{type:'at',time:future}]) {
@@ -64,5 +89,6 @@ let store;
   assert.equal(task.lastStatus, 'success'); assert.ok(task.lastRunAt);
   const once=store.saveTask({name:'once',enabled:true,trigger:{type:'at',time:future},action:{type:'git_sync',repoIds:[second.id]}}); await scheduler.triggerNow(once.id);assert.equal(once.enabled,false);assert.equal(once.nextRun,null);
   const taskRows=(await api.handleApi('GET','tasks',new URLSearchParams(),{})).obj.tasks;assert.ok(taskRows.find(t=>t.id===task.id).history.length);assert.ok(taskRows.every(t=>t.history.length<=10));
+  await persisted.flush(); await reloaded.flush();
   console.log('PASS: default master, fast-forward, dirty blocking, tracking branch, stash count, switch-only, divergence, missing branch, API configuration, scanning, batch isolation, scheduler');
 })().catch(e => { console.error(e); process.exitCode = 1; }).finally(async () => { if(store) await store.flush(); fs.rmSync(root, { recursive: true, force: true }); });
