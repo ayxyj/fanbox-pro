@@ -1,0 +1,7 @@
+'use strict';
+const assert=require('assert/strict');const {ShellAI}=require('../electron/shell-ai');
+(async()=>{const original=global.fetch;let count=0,delivered=0;
+ const config={model:'fixture',baseUrl:'http://fixture.invalid',mode:'auto',interactive:true};const target={identity:{},environment:{host:'test',os:'windows',shell:'cmd',cwd:process.cwd()},policy:{mode:'auto',interactive:true}};
+ global.fetch=async(url,options)=>{const body=JSON.parse(options.body);assert(body.tools.some(t=>t.function.name==='send_file_to_wecom'));count++;const message=count===1?{role:'assistant',content:null,tool_calls:[{id:'file-1',type:'function',function:{name:'send_file_to_wecom',arguments:JSON.stringify({path:'D:\\fixture\\report.md'})}}]}:{role:'assistant',content:'报告已发送'};return new Response(JSON.stringify({choices:[{message,finish_reason:'stop'}]}),{headers:{'content-type':'application/json'}});};
+ try{const ai=new ShellAI({store:{aiConfig:()=>config},target:()=>target,emit:()=>{},confirm:async()=>true});const result=await ai.run({sessionId:'one',prompt:'请把报告发给我',authorized:()=>true,sendFile:async(file,authorized)=>{assert(authorized());assert.equal(file,'D:\\fixture\\report.md');delivered++;return{sent:true,filename:'report.md'};}});assert(result.ok);assert.equal(delivered,1);assert.equal(count,2);console.log('PASS: built-in AI discovers file tool, delivers to bound callback and continues with result');}finally{global.fetch=original;}
+})().catch(e=>{console.error(e);process.exitCode=1;});

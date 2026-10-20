@@ -186,14 +186,12 @@ const state = {
   sort: localStorage.getItem('fb_sort') || 'name',
   showHidden: localStorage.getItem('fb_hidden') === '1',
   filter: '', selected: null, cursor: -1, cols: 1, visible: [],
-  favorites: [], recentOpened: [], recentMode: false, skillsMode: false, gsMode: false,
+  favorites: [], recentOpened: [], skillsMode: false, gsMode: false,
   previewW: Number(localStorage.getItem('fb_preview_w')) || 480,
   previewH: Number(localStorage.getItem('fb_preview_h')) || 340,
   sidebarCollapsed: localStorage.getItem('fb_sidebar_collapsed') === '1',
   sidebarW: Math.min(420, Math.max(190, Number(localStorage.getItem('fb_sidebar_w')) || 248)),
   muted: localStorage.getItem('fb_muted') === '1', // WOW4 提示音静音开关
-  changeLog: [], // 本会话 agent 改过的文件（跨所有监听目录，按文件去重、最新置顶），供「变更」面板回看
-  changeTimeline: [], // 每一次写入事件（不去重，带时间戳），供「会话回放」拖时间轴重现
 };
 
 // ---------- 工具 ----------
@@ -267,7 +265,6 @@ async function navigate(p, pushHistory = true) {
     state.project = data.project;
     state.breadcrumb = data.breadcrumb;
     state.parent = data.parent;
-    state.recentMode = false;
     state.skillsMode = false; state.gsMode = false;
     state.cursor = -1;
     render();
@@ -283,7 +280,7 @@ function updateWatches() {
   if (!window.fanboxFs) return;
   const dirs = new Set();
   if (state.cwd) dirs.add(state.cwd);
-  if (typeof term !== 'undefined') term.sessions.forEach((s) => { if (s.startDir) dirs.add(s.startDir); });
+  if (typeof term !== 'undefined') term.sessions.forEach((s) => { if (s.startDir && !s.sshProfile) dirs.add(s.startDir); });
   if (window.fanboxFs.watchSet) window.fanboxFs.watchSet([...dirs]);
   else window.fanboxFs.watch(state.cwd); // 旧版主进程兜底
 }
@@ -301,12 +298,11 @@ function render() {
 function renderBreadcrumb() {
   const bc = $('#breadcrumb');
   if (state.gsMode) { bc.textContent = 'Git 同步'; return; }
-  const breadcrumbKey = JSON.stringify([state.breadcrumb, state.skillsMode, state.recentMode]);
+  const breadcrumbKey = JSON.stringify([state.breadcrumb, state.skillsMode]);
   if (bc.dataset.breadcrumbKey === breadcrumbKey && bc.querySelector('.drive-select')) return;
   bc.dataset.breadcrumbKey = breadcrumbKey;
   bc.innerHTML = '';
   if (state.skillsMode) { bc.innerHTML = `<span class="crumb last">Skills 透视</span>`; return; }
-  if (state.recentMode) { bc.innerHTML = `<span class="crumb last">${ic('clock', 'currentColor', 15)} 最近修改的文件</span>`; return; }
   (state.breadcrumb || []).forEach((c, i, arr) => {
     if (i > 0) { const s = document.createElement('span'); s.className = 'sep'; s.textContent = '›'; bc.appendChild(s); }
     const el = document.createElement('span');
@@ -349,9 +345,7 @@ function visibleEntries() {
   let list = state.entries.slice();
   if (!state.showHidden) list = list.filter((e) => !e.hidden);
   const dirFirst = (a, b) => (a.isDir !== b.isDir ? (a.isDir ? -1 : 1) : 0);
-  // 最近修改视图：以时间为本义，默认按 mtime 倒序（用户可显式切到大小/名称）
-  if (state.recentMode && state.sort === 'name') list.sort((a, b) => b.mtime - a.mtime);
-  else if (state.sort === 'mtime') list.sort((a, b) => dirFirst(a, b) || b.mtime - a.mtime);
+  if (state.sort === 'mtime') list.sort((a, b) => dirFirst(a, b) || b.mtime - a.mtime);
   else if (state.sort === 'size') list.sort((a, b) => dirFirst(a, b) || b.size - a.size);
   else list.sort((a, b) => dirFirst(a, b) || a.name.localeCompare(b.name, 'zh', { numeric: true }));
   return list;
@@ -359,7 +353,7 @@ function visibleEntries() {
 // 底部状态条：当前文件夹的基础信息小字常驻，「占用透视」入口也安在这
 function renderStatusbar() {
   const sb = $('#statusbar'); if (!sb) return;
-  if (state.skillsMode || state.gsMode || state.recentMode || !state.cwd) { sb.classList.add('hidden'); return; }
+  if (state.skillsMode || state.gsMode || !state.cwd) { sb.classList.add('hidden'); return; }
   const list = state.visible || [];
   const dirs = list.filter((e) => e.isDir).length;
   const files = list.length - dirs;
@@ -378,14 +372,14 @@ function renderFiles() {
   const viewport = $('#content');
   const scrollTop = viewport.scrollTop, scrollLeft = viewport.scrollLeft;
   const cursorPath = state.visible[state.cursor]?.path;
-  const treeMode = state.view === 'tree' && !state.recentMode;
+  const treeMode = state.view === 'tree';
   const list = treeMode ? fileTree.flatten() : visibleEntries();
   state.visible = list;
   if (cursorPath) state.cursor = list.findIndex(e => e.path === cursorPath);
   renderStatusbar();
   if (!list.length) {
-    const emptyMsg = state.recentMode ? '没找到最近修改的文件' : '这个文件夹是空的';
-    const emptyIc = state.recentMode ? 'clock' : 'inbox';
+    const emptyMsg = '这个文件夹是空的';
+    const emptyIc = 'inbox';
     area.innerHTML = `<div class="empty-state"><div class="big">${ic(emptyIc, 'currentColor', 48)}</div>${emptyMsg}</div>`;
     return;
   }
@@ -395,8 +389,7 @@ function renderFiles() {
     viewport.scrollTop = scrollTop; viewport.scrollLeft = scrollLeft;
     return;
   }
-  // 最近修改是跨目录平铺列表，强制列表视图并显示来源目录
-  if (state.recentMode || state.view === 'list') {
+  if (state.view === 'list') {
     const wrap = document.createElement('div');
     wrap.className = 'list';
     const head = document.createElement('div');
@@ -406,7 +399,6 @@ function renderFiles() {
     list.forEach((e, i) => wrap.appendChild(listRow(e, i)));
     area.innerHTML = '';
     area.appendChild(wrap);
-    if (state.recentMode && state.recentTruncated) area.insertAdjacentHTML('beforeend', truncNote());
     state.cols = 1;
     highlightCursor(false);
     viewport.scrollTop = scrollTop; viewport.scrollLeft = scrollLeft;
@@ -489,10 +481,8 @@ function listRow(e, i, tree = false) {
   el.dataset.idx = i;
   el.dataset.path = e.path;
   if (chgR) { el.dataset.changed = chgR.count > 1 ? '改·' + chgR.count : '改'; el.style.setProperty('--heat', Math.min(1, 0.4 + chgR.count * 0.12).toFixed(2)); if (chgR.files.size) el.title = '刚变更：\n' + [...chgR.files].join('\n'); }
-  // 最近修改是跨目录列表，名称后缀显示来源目录，方便区分同名文件
-  const dirHint = state.recentMode ? ` <span class="row-dir">· ${escapeHtml(tilde(e.dir || dirOf(e.path)))}</span>` : '';
   el.innerHTML = `<div class="icon">${(!tree && (e.kind === 'image' || e.kind === 'video')) ? `<img class="thumb-sm" loading="lazy" decoding="async" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=96&v=${e.mtime || 0}" onerror="this.replaceWith(Object.assign(document.createElement('span'),{className:'svg-icon',innerHTML:this.dataset.fb||''}))" data-fb='${escapeHtml(iconSvg(e, 18))}'>` : `<span class="svg-icon">${tree ? fileTree.icon(e) : iconSvg(e, 18)}</span>`}</div>
-    <div class="fname">${escapeHtml(e.name)}${projBadge(e)}${dirHint}</div>
+    <div class="fname">${escapeHtml(e.name)}${projBadge(e)}</div>
     <div class="meta">${fmtTime(e.mtime)}</div>
     <div class="meta">${e.isDir ? '' : fmtSize(e.size)}</div>
     ${favBtn(e)}`;
@@ -556,7 +546,7 @@ function highlightCursor(scroll = true) {
   const area = $('#file-area');
   area.querySelectorAll('.cursor').forEach((x) => x.classList.remove('cursor'));
   if (state.cursor < 0) return;
-  if (scroll && state.view === 'tree' && !state.recentMode && !state.gsMode && !state.skillsMode) fileTree.reveal(state.cursor);
+  if (scroll && state.view === 'tree' && !state.gsMode && !state.skillsMode) fileTree.reveal(state.cursor);
   const el = area.querySelector(`[data-idx="${state.cursor}"]`);
   if (el) { el.classList.add('cursor'); if (scroll) el.scrollIntoView({ block: 'nearest' }); }
 }
@@ -572,7 +562,7 @@ function cursorEnter(editor) {
   if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
   if (editor && !e.isDir) { openWith(e.path, 'editor'); return; }
   if (e.isDir) {
-    if (state.view === 'tree' && !state.recentMode) fileTree.toggle(e);
+    if (state.view === 'tree') fileTree.toggle(e);
     else { state.selected = e.path; navigate(e.path); }
   }
   else { applySelection(e.path); openFileForEditing(e); recordRecent(e.path); }
@@ -706,6 +696,7 @@ async function renderHtmlPreview(data, meta) {
   };
   const onZoom = (event) => {
     if (event.source !== frame.contentWindow || event.origin !== previewOrigin || !frame.isConnected) return;
+    if (event.data?.fanboxPreviewReady) applyZoom(zoom);
     const step = event.data?.fanboxPreviewZoomStep;
     if (step === 1 || step === -1) applyZoom(zoom + step * .1);
   };
@@ -1248,10 +1239,10 @@ function refresh() {
   return directoryRefresh;
 }
 async function refreshDirectory() {
-  if (!state.cwd || state.recentMode) return;
+  if (!state.cwd) return;
   const cwd = state.cwd;
   const data = await api('/api/list?path=' + encodeURIComponent(cwd));
-  if (state.cwd !== cwd || state.recentMode || state.gsMode || state.skillsMode) return;
+  if (state.cwd !== cwd || state.gsMode || state.skillsMode) return;
   if (data.error) return;
   state.entries = data.entries;
   if (state.view === 'tree') await fileTree.refresh(cwd);
@@ -1475,7 +1466,7 @@ function inputDialog(title, value = '', placeholder = '') {
   return new Promise((resolve) => {
     const ov = document.createElement('div');
     ov.className = 'input-overlay';
-    ov.innerHTML = `<div class="input-dialog"><div class="input-title">${escapeHtml(title)}</div>
+    ov.innerHTML = `<div class="input-dialog"><div class="input-title">${escapeHtml(title)}${fanboxUI.closeButton('data-dialog-dismiss')}</div>
       <input class="input-field" value="${escapeHtml(value)}" placeholder="${escapeHtml(placeholder)}" spellcheck="false">
       <div class="input-actions"><button class="ghost-btn" data-act="cancel">取消</button><button class="primary" data-act="ok">确定</button></div></div>`;
     document.body.appendChild(ov);
@@ -1485,6 +1476,8 @@ function inputDialog(title, value = '', placeholder = '') {
     const done = (v) => { ov.remove(); resolve(v); };
     ov.querySelector('[data-act=ok]').onclick = () => done(inp.value.trim());
     ov.querySelector('[data-act=cancel]').onclick = () => done(null);
+    ov.querySelector('[data-dialog-dismiss]').onclick = () => done(null);
+    ov.addEventListener('keydown', ev => { if (ev.key === 'Escape') { ev.preventDefault(); ev.stopPropagation(); done(null); } });
     ov.onclick = (ev) => { if (ev.target === ov) done(null); };
     inp.addEventListener('keydown', (ev) => {
       ev.stopPropagation();
@@ -1498,12 +1491,13 @@ function confirmDialog(msg) {
   return new Promise((resolve) => {
     const ov = document.createElement('div');
     ov.className = 'input-overlay';
-    ov.innerHTML = `<div class="input-dialog"><div class="input-title">${escapeHtml(msg)}</div><div class="input-actions"><button class="ghost-btn" data-act="no">取消</button><button class="primary" data-act="yes">确定</button></div></div>`;
+    ov.innerHTML = `<div class="input-dialog"><div class="input-title">${escapeHtml(msg)}${fanboxUI.closeButton('data-dialog-dismiss')}</div><div class="input-actions"><button class="ghost-btn" data-act="no">取消</button><button class="primary" data-act="yes">确定</button></div></div>`;
     document.body.appendChild(ov);
     const done = (v) => { ov.remove(); document.removeEventListener('keydown', onKey, true); resolve(v); };
-    function onKey(ev) { if (ev.key === 'Escape') { ev.preventDefault(); done(false); } else if (ev.key === 'Enter') { ev.preventDefault(); done(true); } }
+    function onKey(ev) { if (ev.key === 'Escape') { ev.preventDefault(); done(false); } else if (ev.key === 'Enter' && !ev.target.closest('button')) { ev.preventDefault(); done(true); } }
     ov.querySelector('[data-act=yes]').onclick = () => done(true);
     ov.querySelector('[data-act=no]').onclick = () => done(false);
+    ov.querySelector('[data-dialog-dismiss]').onclick = () => done(false);
     ov.onclick = (ev) => { if (ev.target === ov) done(false); };
     document.addEventListener('keydown', onKey, true);
     ov.querySelector('[data-act=yes]').focus();
@@ -1561,6 +1555,8 @@ async function memoryPanel(dirPath) {
   document.body.appendChild(ov);
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  ov.querySelector(".input-title").insertAdjacentHTML("beforeend", fanboxUI.closeButton("data-dialog-dismiss"));
+  ov.querySelector("[data-dialog-dismiss]").onclick = close;
   ov.onclick = (ev) => { if (ev.target === ov) close(); };
   document.addEventListener('keydown', onKey, true);
   const d = await api('/api/project-memory?path=' + encodeURIComponent(dirPath));
@@ -1624,6 +1620,8 @@ async function releasePanel() {
   document.body.appendChild(ov);
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  ov.querySelector(".input-title").insertAdjacentHTML("beforeend", fanboxUI.closeButton("data-dialog-dismiss"));
+  ov.querySelector("[data-dialog-dismiss]").onclick = close;
   ov.onclick = (ev) => { if (ev.target === ov) close(); };
   document.addEventListener('keydown', onKey, true);
   const d = await api('/api/release/inspect?path=' + encodeURIComponent(dirPath));
@@ -1665,11 +1663,13 @@ async function diskPanel(dirPath) {
   const ov = document.createElement('div');
   ov.className = 'input-overlay disk-overlay';
   ov.innerHTML = `<div class="input-dialog disk-dialog">
-    <div class="input-title disk-title"></div>
+    <div class="input-title"><span class="disk-title"></span></div>
     <div class="disk-body"><div class="cmdk-loading">计算中…（大目录会慢几秒）</div></div></div>`;
   document.body.appendChild(ov);
   const onKey = (ev) => { if (ev.key === 'Escape') { ev.preventDefault(); close(); } };
   const close = () => { ov.remove(); document.removeEventListener('keydown', onKey, true); };
+  ov.querySelector(".input-title").insertAdjacentHTML("beforeend", fanboxUI.closeButton("data-dialog-dismiss"));
+  ov.querySelector("[data-dialog-dismiss]").onclick = close;
   ov.onclick = (ev) => { if (ev.target === ov) close(); };
   document.addEventListener('keydown', onKey, true);
   const load = async (p) => {
@@ -1857,24 +1857,6 @@ async function loadAgentProjects() {
     li.appendChild(when);
     ul.appendChild(li);
   });
-}
-
-// ---------- 最近修改 ----------
-// 结果写进统一数据源 state.entries，交给 renderFiles 渲染——这样筛选 / 排序 / 隐藏开关
-// 都能直接作用在最近列表上，不会把视图无声切回上一个目录
-async function showRecent() {
-  if (follow.on) setFileFollow(false, '手动接管，文件跟随已停');
-  state.recentMode = true;
-  state.cursor = -1;
-  $('#file-area').innerHTML = '<div class="cmdk-loading">扫描最近修改的文件…</div>';
-  renderBreadcrumb();
-  const data = await api('/api/recent?root=' + encodeURIComponent(state.cwd || state.home));
-  state.entries = (data.results || []).map((e) => ({ ...e, hidden: false }));
-  state.recentTruncated = !!data.truncated;
-  renderFiles();
-}
-function truncNote() {
-  return `<div class="trunc-note">⚠ 文件太多，结果可能不完整。进入更具体的子目录可看到全部。</div>`;
 }
 
 // ---------- 命令面板 ----------
@@ -2094,8 +2076,6 @@ function bindEvents() {
   $('#preview-close').onclick = closePreview;
   $('#preview-max').onclick = () => togglePreviewMax();
   $('#cmdk-trigger').onclick = () => cmdk.open();
-  $('#btn-recent').onclick = showRecent;
-  $('#btn-changes').onclick = () => toggleChangesPanel();
   $('#btn-terminal').onclick = () => term.toggle();
   $('#term-claude').onclick = () => term.launchAgent('claude --dangerously-skip-permissions');
   $('#term-codebuddy').onclick = () => term.launchAgent('codebuddy');
@@ -2192,8 +2172,6 @@ function bindEvents() {
   });
   $('#content').addEventListener('scroll', () => fileTree.schedulePaint(), {passive: true});
   if (window.ResizeObserver) new ResizeObserver(() => fileTree.schedulePaint()).observe($('#content'));
-  $('#tree-collapse-all').onclick = () => fileTree.collapseAll();
-  $('#tree-expand-all').onclick = () => fileTree.expandAll();
   $('#gridsize-seg').querySelectorAll('button').forEach((b) => {
     b.classList.toggle('active', b.dataset.size === state.gridSize);
     b.onclick = () => { state.gridSize = b.dataset.size; localStorage.setItem('fb_gridsize', state.gridSize); $('#gridsize-seg').querySelectorAll('button').forEach((x) => x.classList.toggle('active', x === b)); renderFiles(); };
@@ -2393,6 +2371,7 @@ const term = {
   async launchAgent(command) {
     if (!this.available()) { openWith(state.cwd, 'terminal'); return; }
     const cur = this.sessions.find(s => s.id === this.active && !s.dead);
+    if (cur?.sshProfile) { toast('远端会话请直接输入命令，或通过 AI 面板操作'); return; }
     const dir = cur?.repoDir || cur?.cwd || cur?.startDir || state.cwd;
     const key = (window.fanboxEnv?.platform === 'win32' ? dir.replaceAll('\\','/').toLowerCase() : dir) + '|' + command.split(' ')[0];
     const pending = this._agentLaunches ||= new Map();
@@ -2534,6 +2513,7 @@ const term = {
   // 定位文件区到活动终端的真实目录
   async locateCwd() {
     if (!this.active) return;
+    if (this.sessions.find(s => s.id === this.active)?.sshProfile) { window.remoteUI?.open('files'); return; }
     const r = await window.fanboxPty.cwd(this.active);
     if (r && r.ok && r.cwd) navigate(r.cwd);
     else toast('取终端目录失败', true);
@@ -2543,7 +2523,7 @@ const term = {
   // 标签标题跟着终端「现在」的目录走（lsof 查真实 cwd），不再停留在创建时的快照；
   // 多标签跑不同项目的 agent 时，标题才认得出谁是谁
   async refreshCwd(s, force) {
-    if (!s || s.dead) return;
+    if (!s || s.dead || s.sshProfile) return;
     const now = Date.now();
     // 轻节流：避免每 3-5 秒打一条日志的后台会话（dev server）在 busy→idle 间无限循环里反复 spawn lsof。
     // cd / 用户主动场景传 force 跳过节流，标题立刻对齐
@@ -2593,18 +2573,20 @@ const term = {
       } catch { /* 回退默认 DOM renderer */ }
     }
     if (fit) try { fit.fit(); } catch { /* */ }
-    const sess = { id, xterm, fit, host, shell: options.shell || (window.fanboxEnv?.platform === 'win32' ? 'powershell' : undefined), repoDir: options.repoDir, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
+    const sess = { id, xterm, fit, host, sshProfile: options.sshProfile, shell: options.shell || (window.fanboxEnv?.platform === 'win32' ? 'powershell' : undefined), repoDir: options.sshProfile ? undefined : options.repoDir, dead: false, status: 'idle', unread: false, startDir, title: baseOf(startDir || '') || 'shell' };
     sess.output = createTerminalOutput((data, done) => xterm.write(data, done));
     this.sessions.push(sess);
     this.activate(id);
     updateWatches(); // 新终端的项目目录也纳入监听
-    const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows, autorun, shell: options.shell });
-    if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31m终端启动失败：' + (r.error || '') + '\x1b[0m\r\n'); }
-    else sess.cwd = r.cwd || startDir; // 末尾 renderTabs 统一带上 cwd 重画
     xterm.onData((d) => {
       if (sess.dead) { if (d === '\r' || d === '\n') this.respawn(sess); return; } // 进程退出后回车真重开
       this.input(id, d);
     });
+    const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows, autorun, shell: options.shell, sshProfile: options.sshProfile });
+    if (r.environment) sess.environment = r.environment;
+    if (r.title) sess.title = r.title;
+    if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31m终端启动失败：' + (r.error || '') + '\x1b[0m\r\n'); }
+    else sess.cwd = r.cwd || startDir; // 末尾 renderTabs 统一带上 cwd 重画
     xterm.onResize(({ cols, rows }) => {
       sess.lastInput = Date.now();
       clearTimeout(sess.resizeTimer);
@@ -2617,6 +2599,7 @@ const term = {
     }); // resize 引发的 TUI 重绘不算 agent 干活
     sess.ptySize = { cols: xterm.cols, rows: xterm.rows };
     window.fanboxPty.resize(id, xterm.cols, xterm.rows); // spawn 等待期间 fit 过的 resize 事件无人监听会丢：补发一次对齐 PTY
+    if (sess.sshProfile) { this.renderTabs(); return sess; }
     // 识别终端输出里的文件路径 → hover 高亮 + 点击在翻箱打开
     // 三层匹配：引号串（边界最可靠，文件名可含空格）> 斜杠路径 > 带已知扩展名的裸文件名；
     // 长路径折行用逐 cell 拼回逻辑行（CJK 宽字符占两列，下标→坐标必须按 cell 算才不偏移）
@@ -2737,12 +2720,14 @@ const term = {
   async respawn(sess) {
     sess.dead = false;
     sess.xterm.reset(); // 清掉死亡残留，新 shell 提示符不和旧画面叠在一起
-    const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows, shell: sess.shell });
+    const r = await window.fanboxPty.spawn({ id: sess.id, cwd: sess.startDir || state.cwd, cols: sess.xterm.cols, rows: sess.xterm.rows, shell: sess.shell, sshProfile: sess.sshProfile });
+    if (r.environment) sess.environment = r.environment;
     if (!r.ok) { sess.dead = true; sess.xterm.write('\x1b[31m重开失败：' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || sess.startDir;
   },
   activate(id) {
     this.active = id;
+    window.dispatchEvent(new CustomEvent('terminal-active', { detail: id }));
     this.sessions.forEach((s) => s.host.classList.toggle('show', s.id === id));
     const cur = this.sessions.find((x) => x.id === id);
     if (cur) cur.unread = false; // 切到该标签即清未读
@@ -2886,6 +2871,7 @@ const term = {
     } catch { /* 通知不可用就算了 */ }
   },
   tabLabel(s) {
+    if (s.sshProfile) return s.title || 'SSH';
     const agent = {claude:'Claude',codebuddy:'CodeBuddy',codex:'Codex'}[s.agent];
     if (agent) {
       const peers = this.sessions.filter(x=>x.agent===s.agent);
@@ -3038,7 +3024,8 @@ const usagePanel = {
     try { this.render(await api('/api/agent-usage')); }
     catch { this.render(null); }
   },
-  open() { return localStorage.getItem('fb_usage_open') === '1'; },
+  expanded: false,
+  open() { return this.expanded; },
   apply() {
     const on = this.open();
     $('#usage-body').classList.toggle('hidden', !on);
@@ -3048,7 +3035,7 @@ const usagePanel = {
   },
   bind() {
     $('#usage-toggle').onclick = () => {
-      localStorage.setItem('fb_usage_open', this.open() ? '0' : '1');
+      this.expanded = !this.expanded;
       this.apply();
     };
     this.apply();
@@ -3059,7 +3046,7 @@ const usagePanel = {
 const skillsView = {
   data: null, filter: 'all', sort: 'hits', open: new Set(),
   async show() {
-    state.gsMode = false; state.skillsMode = true; state.recentMode = false; state.cursor = -1;
+    state.gsMode = false; state.skillsMode = true; state.cursor = -1;
     renderBreadcrumb();
     $('#file-area').innerHTML = '<div class="cmdk-loading">扫描本机 skills…</div>';
     try { this.data = await api('/api/skills'); } catch { $('#file-area').innerHTML = '<div class="nav-empty">扫描失败</div>'; return; }
@@ -3354,10 +3341,10 @@ const crepe = {
   disposeIfAny() { if (this.editor) { try { this.editor.destroy(); } catch { /* */ } this.editor = null; } },
 };
 
-// ---------- 变更收件箱（本会话 agent 改了哪些文件，可回看 / 看 diff）----------
+// ---------- 文件监听噪声过滤（刷新、高亮与文件跟随共用）----------
 // 构建/依赖目录 + macOS 系统噪声目录（Library/缓存/废纸篓 后台无时无刻在写，不是 agent 干活，必须过滤）
 const CHANGE_IGNORE = new Set(['.git', 'node_modules', '.next', 'dist', 'build', '.cache', '.venv', 'venv', '__pycache__', '.DS_Store', 'target', '.turbo', '.expo', 'Library', 'Caches', '.Trash', 'CloudStorage', '.cocoapods', 'DerivedData']);
-// 这次变更是不是该被忽略的系统/构建噪声（高亮、刷新、收件箱共用一套判断）
+// 这次变更是不是该被忽略的系统/构建噪声（高亮、刷新、文件跟随共用一套判断）
 function isNoisyChange(filename) {
   const segs = String(filename).split(/[\\/]/);
   // 隐藏文件/目录一律算噪声：agent 写 .git、各种 .config 时用户什么都没的看（.DS_Store/.com.apple. 也被这条覆盖）
@@ -3366,132 +3353,6 @@ function isNoisyChange(filename) {
   return !name || name.endsWith('~') || name.endsWith('.swp')
     || /\.(tmp|part|crdownload|lock)$|-(journal|shm|wal)$/i.test(name); // sqlite 等后台 App 的临时 sidecar
 }
-function recordChange(dir, filename) {
-  if (isNoisyChange(filename)) return; // 过滤构建/依赖/系统噪声
-  const segs = filename.split('/');
-  const name = segs[segs.length - 1];
-  const full = dir.replace(/\/$/, '') + '/' + filename;
-  const now = Date.now();
-  state.changeTimeline.push({ path: full, name, ts: now }); // 每次写入都记一笔，供会话回放
-  if (state.changeTimeline.length > 3000) state.changeTimeline.shift();
-  const existing = state.changeLog.find((c) => c.path === full);
-  if (existing) { existing.ts = now; existing.count++; }
-  else state.changeLog.unshift({ path: full, name, dir, ts: now, count: 1 });
-  // 最新置顶；已存在的移到队首
-  state.changeLog.sort((a, b) => b.ts - a.ts);
-  if (state.changeLog.length > 100) state.changeLog.length = 100;
-  renderChangesBadge();
-}
-function renderChangesBadge() {
-  const b = $('#changes-badge'); if (!b) return;
-  b.classList.toggle('hidden', state.changeLog.length === 0);
-}
-function fmtClock(ms) { const d = new Date(ms); const p = (x) => String(x).padStart(2, '0'); return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`; }
-function toggleChangesPanel() {
-  const existing = $('#changes-pop');
-  if (existing) { existing.remove(); return; }
-  const pop = document.createElement('div');
-  pop.id = 'changes-pop';
-  pop.className = 'changes-pop';
-  if (!state.changeLog.length) {
-    pop.innerHTML = '<div class="cp-head">本会话变更</div><div class="cp-empty">还没有捕捉到文件变更。<br>跑起 agent，它改的文件会实时出现在这里。</div>';
-  } else {
-    const rows = state.changeLog.slice(0, 60).map((c) => {
-      const inRepoHint = '';
-      return `<div class="cp-row" data-path="${escapeHtml(c.path)}">
-        <span class="cp-name">${escapeHtml(c.name)}${c.count > 1 ? ` <em>×${c.count}</em>` : ''}</span>
-        <span class="cp-dir">${escapeHtml(c.dir.replace(state.home, '~'))}</span>
-        <span class="cp-time">${fmtClock(c.ts)}</span>
-      </div>`;
-    }).join('');
-    pop.innerHTML = `<div class="cp-head">本会话变更 · ${state.changeLog.length}<span class="cp-head-btns"><button id="cp-replay" class="ghost-btn">▶ 回放</button><button id="cp-clear" class="ghost-btn">清空</button></span></div><div class="cp-list">${rows}</div>`;
-  }
-  document.body.appendChild(pop);
-  const btn = $('#btn-changes'); const r = btn.getBoundingClientRect();
-  pop.style.top = (r.bottom + 6) + 'px';
-  pop.style.right = (window.innerWidth - r.right) + 'px';
-  const clear = $('#cp-clear'); if (clear) clear.onclick = (ev) => { ev.stopPropagation(); state.changeLog = []; state.changeTimeline = []; renderChangesBadge(); pop.remove(); };
-  const rep = $('#cp-replay'); if (rep) rep.onclick = (ev) => { ev.stopPropagation(); pop.remove(); openReplay(); };
-  pop.querySelectorAll('.cp-row').forEach((row) => {
-    row.onclick = async () => {
-      const p = row.dataset.path;
-      pop.remove();
-      await navigate(dirOf(p));
-      const e = state.entries.find((x) => x.path === p) || { path: p, name: baseOf(p), kind: kindFromName(p), isDir: false };
-      applySelection(p); openPreview(e); recordRecent(p);
-    };
-  });
-  // 点其它地方关闭
-  setTimeout(() => {
-    const close = (ev) => { if (!ev.target.closest('#changes-pop') && !ev.target.closest('#btn-changes')) { pop.remove(); document.removeEventListener('click', close); } };
-    document.addEventListener('click', close);
-  }, 0);
-}
-// WOW2 会话回放：像刷视频一样拖时间轴，重现这段时间 agent 一步步改了哪些文件
-function openReplay() {
-  const tl = state.changeTimeline.slice();
-  if (tl.length < 2) { toast('变更太少，先让 agent 多改几下再回放', true); return; }
-  const t0 = tl[0].ts, t1 = tl[tl.length - 1].ts;
-  const span = Math.max(1000, t1 - t0);
-  const ov = document.createElement('div');
-  ov.className = 'replay-ov';
-  ov.innerHTML =
-    `<div class="replay-panel">
-      <div class="replay-head"><span>会话回放 · ${tl.length} 次写入 · 跨 ${fmtDur(span)}</span><button class="replay-close ghost-btn">关闭 (Esc)</button></div>
-      <div class="replay-now"><span class="rn-label">此刻 agent 正在改</span><span class="rn-file" id="replay-now">—</span></div>
-      <div class="replay-track" id="replay-track"><div class="replay-fill" id="replay-fill"></div><div class="replay-playhead" id="replay-playhead"></div></div>
-      <div class="replay-ctl"><button id="replay-play" class="primary">▶ 播放</button><input type="range" id="replay-range" min="0" max="1000" value="1000"><span id="replay-count" class="replay-count"></span></div>
-      <div class="replay-list" id="replay-list"></div>
-    </div>`;
-  document.body.appendChild(ov);
-  const track = ov.querySelector('#replay-track');
-  tl.forEach((e) => { const t = document.createElement('i'); t.className = 'replay-tick'; t.style.left = ((e.ts - t0) / span * 100) + '%'; track.appendChild(t); });
-  const range = ov.querySelector('#replay-range');
-  const playBtn = ov.querySelector('#replay-play');
-  let raf = null, playing = false, startWall = 0, startFrac = 0;
-  const DURATION = Math.min(20000, Math.max(6000, span / 3)); // 把真实时长压缩到 6–20 秒
-  const render = (frac) => {
-    const at = t0 + span * frac;
-    let lastIdx = -1;
-    for (let i = 0; i < tl.length; i++) { if (tl[i].ts <= at) lastIdx = i; else break; }
-    const done = lastIdx + 1;
-    ov.querySelector('#replay-fill').style.width = (frac * 100) + '%';
-    ov.querySelector('#replay-playhead').style.left = (frac * 100) + '%';
-    ov.querySelector('#replay-now').textContent = lastIdx >= 0 ? tl[lastIdx].name : '—';
-    ov.querySelector('#replay-count').textContent = `${done}/${tl.length}`;
-    const recent = tl.slice(Math.max(0, lastIdx - 5), lastIdx + 1).reverse();
-    ov.querySelector('#replay-list').innerHTML = recent.map((e, i) => `<div class="rl-row${i === 0 ? ' rl-now' : ''}"><span>${escapeHtml(e.name)}</span><span class="rl-t">${fmtClock(e.ts)}</span></div>`).join('');
-  };
-  const stop = () => { playing = false; if (raf) cancelAnimationFrame(raf); raf = null; playBtn.textContent = '▶ 播放'; };
-  const step = () => {
-    const elapsed = perfNow() - startWall;
-    let frac = startFrac + elapsed / DURATION;
-    if (frac >= 1) { frac = 1; render(frac); range.value = 1000; stop(); playBtn.textContent = '↻ 重播'; return; }
-    range.value = String(Math.round(frac * 1000));
-    render(frac);
-    raf = requestAnimationFrame(step);
-  };
-  playBtn.onclick = () => {
-    if (playing) { stop(); return; }
-    let frac = Number(range.value) / 1000; if (frac >= 1) frac = 0;
-    startFrac = frac; startWall = perfNow(); playing = true; playBtn.textContent = '⏸ 暂停';
-    raf = requestAnimationFrame(step);
-  };
-  range.oninput = () => { stop(); render(Number(range.value) / 1000); };
-  const close = () => { stop(); ov.remove(); document.removeEventListener('keydown', onKey); };
-  const onKey = (e) => { if (e.key === 'Escape') { e.stopPropagation(); close(); } };
-  document.addEventListener('keydown', onKey, true);
-  ov.querySelector('.replay-close').onclick = close;
-  ov.onclick = (e) => { if (e.target === ov) close(); };
-  render(1); // 默认停在最终态
-}
-function fmtDur(ms) {
-  const s = Math.round(ms / 1000);
-  if (s < 60) return s + ' 秒';
-  const m = Math.round(s / 60);
-  return m < 60 ? m + ' 分钟' : (m / 60).toFixed(1) + ' 小时';
-}
-function perfNow() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
 // 从文件名粗判类型（变更项可能不在当前 entries 里）
 function kindFromName(p) {
   const e = (p.split('.').pop() || '').toLowerCase();
@@ -3529,11 +3390,7 @@ function setFileFollow(on, offMsg) {
   follow.swapping = false; follow.swapDirty = false;
   if (!on) $('#preview-title')?.querySelector('.live-badge')?.remove(); // 留住最后画面，只摘掉「跟随中」
   toast(on ? '文件跟随已开：agent 改哪个文件就看哪个' : (offMsg || '文件跟随已停'));
-  // 一开就有得看：5 分钟内有过范围内的变更就直接跟上，不用干等 agent 下一笔
-  if (on) {
-    const recent = state.changeLog.find((c) => Date.now() - c.ts < 300000 && inFollowScope(c.path));
-    if (recent) followSwitch(recent.path);
-  }
+
 }
 // 跟随范围 = 绑定终端「现在」所在的项目目录（cwd 随 agent cd 走）；没绑终端则保持旧口径全跟
 function followScopeRoot() {
@@ -3580,7 +3437,7 @@ async function followSwitch(full) {
   follow.swapping = false; follow.swapDirty = false;
   try {
     const dir = dirOf(full);
-    if (dir !== state.cwd || state.recentMode) {
+    if (dir !== state.cwd) {
       follow.navving = true;
       try { await navigate(dir, false); } finally { follow.navving = false; }
       if (!follow.on || state.cwd !== dir) { follow.path = null; return; } // 目录打不开/期间被停掉
@@ -3816,9 +3673,9 @@ if (window.fanboxFs) {
   };
   window.fanboxFs.onChanged(({ dir, filename }) => {
     // 系统/构建噪声（~/Library 缓存、node_modules 等 macOS 后台不停写）直接丢弃：
-    // 既不点亮卡片、不进收件箱，也不触发列表刷新——否则 Library 会永远显示「被修改」
+    // 既不点亮卡片，也不触发列表刷新——否则 Library 会永远显示「被修改」
     if (filename && isNoisyChange(filename)) return;
-    // 自己刚打开的文件：macOS 写 lastuseddate 扩展属性触发的假变更，整条丢弃（不点卡、不进收件箱、不刷新）
+    // 自己刚打开的文件：macOS 写 lastuseddate 扩展属性触发的假变更，整条丢弃（不点卡、不刷新）
     if (filename) {
       const abs = dir.replace(/\/$/, '') + '/' + String(filename);
       const t = selfOpened.get(abs);
@@ -3827,11 +3684,9 @@ if (window.fanboxFs) {
         selfOpened.delete(abs); // 过期条目顺手清掉，Map 不积垃圾
       }
     }
-    // 记进会话级收件箱（跨所有监听目录，不止当前目录），供「变更」面板回看
-    if (filename) recordChange(dir, String(filename));
     // 文件跟随：必须在「不是当前目录就 return」之前喂，跨目录改动才跟得上
     if (filename) followChange(dir, String(filename));
-    if (dir !== state.cwd || state.recentMode) return;
+    if (dir !== state.cwd) return;
     // 高亮被 agent 改动的项：递归监听下 src/foo.js 归到顶层 src，并累计计数 + 记子路径供 tooltip 定位
     if (filename) {
       const sub = String(filename);

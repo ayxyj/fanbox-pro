@@ -13,6 +13,7 @@ const fsp = require('fs/promises');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { deferFontStyles } = require('./html-preview-fonts');
 const { exec, spawn, execFile } = require('child_process');
 const { URL } = require('url');
 
@@ -451,18 +452,6 @@ async function contentSearch(query, rootPath) {
   // 桌面索引不可用或无命中 → grep 兜底
   const fb = await grepFiles(q, rootPath);
   return { ...fb, engine: 'grep' };
-}
-
-async function recentFiles(rootPath) {
-  const root = resolvePath(rootPath);
-  const all = [];
-  const { truncated } = await walk(root, {
-    limit: 30000,
-    deadline: Date.now() + 3500,
-    onFile: (f) => { if (!f.name.startsWith('.')) all.push(f); },
-  });
-  all.sort((a, b) => b.mtime - a.mtime);
-  return { results: all.slice(0, 60), truncated };
 }
 
 // ---------- 文件操作（编辑 / 废纸篓 / 重命名 / 新建）----------
@@ -1418,9 +1407,12 @@ async function serveHtmlPreview(req, res, filePath, interactive = false) {
       injectHead(measureScript);
     }
     if (interactive) {
+      html = deferFontStyles(html);
       // Keep target=_blank and window.open inside the preview, with no external browser.
       const script = `<script data-fanbox-interaction>
 window.open=function(url){if(url)location.assign(url);return window;};
+document.addEventListener('load',function(e){var l=e.target;if(l.tagName==='LINK'&&l.hasAttribute('data-fanbox-font-media')){l.media=l.getAttribute('data-fanbox-font-media');l.removeAttribute('data-fanbox-font-media');}},true);
+document.addEventListener('DOMContentLoaded',function(){parent.postMessage({fanboxPreviewReady:true},'*');});
 document.addEventListener('click',function(e){var a=e.target.closest&&e.target.closest('a[target]');if(a)a.target='_self';},true);
 document.addEventListener('submit',function(e){e.target.target='_self';},true);
 addEventListener('message',function(e){var z=e.data&&e.data.fanboxPreviewZoom;if(e.source===parent&&typeof z==='number'&&isFinite(z)&&z>=.25&&z<=3)document.documentElement.style.zoom=String(z);});
@@ -2301,9 +2293,6 @@ const server = http.createServer(async (req, res) => {
     }
     if (p === '/api/content') {
       return sendJSON(res, 200, await contentSearch(qp.get('q'), qp.get('root') || HOME));
-    }
-    if (p === '/api/recent') {
-      return sendJSON(res, 200, await recentFiles(qp.get('root') || HOME));
     }
     if (p === '/api/term-verify' && req.method === 'POST') {
       return sendJSON(res, 200, await termVerify(await readBody(req)));

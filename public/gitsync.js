@@ -23,7 +23,6 @@ function setGsMode(on) {
   if (on) {
     state.gsMode = true;
     state.skillsMode = false;
-    state.recentMode = false;
     state.cursor = -1;
     // 关掉面包屑/状态栏的常规渲染
     if (typeof renderBreadcrumb === 'function') renderBreadcrumb();
@@ -616,11 +615,13 @@ function gsModal(title, bodyHtml, onMount) {
   el.id = 'gs-modal';
   el.className = 'input-overlay';
   el.innerHTML = `<div class="input-dialog" style="width:min(720px,92vw);max-height:80vh;display:flex;flex-direction:column">
-    <div class="input-title">${escapeHtml(title)}<button id="gs-modal-x" style="float:right;background:none;border:none;color:var(--text-dim);font-size:16px;cursor:pointer">✕</button></div>
+    <div class="input-title">${escapeHtml(title)}${fanboxUI.closeButton('id="gs-modal-x"')}</div>
     <div class="gs-modal-body" style="overflow:auto;flex:1;min-height:0;margin-top:8px">${bodyHtml}</div>
   </div>`;
   document.body.appendChild(el);
   $('#gs-modal-x', el).onclick = () => el.remove();
+  el.tabIndex = -1; el.focus();
+  el.addEventListener('keydown', event => { if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); el.remove(); } });
   el.addEventListener('click', (ev) => { if (ev.target === el) el.remove(); });
   if (onMount) onMount(el);
 }

@@ -5,7 +5,7 @@
  * 复用零依赖后端 server.js（文件能力），叠加 node-pty 内嵌终端，
  * 让 TUI coding agent（Claude Code / Codex / Aider…）在界面里直接跑起来。
  */
-const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, safeStorage } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -30,6 +30,7 @@ catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）�
 const terminals = new Map();
 const terminalCwds = new Map(); // id -> cwd（Windows 无 /proc/pid/cwd / lsof，直接缓存）
 let win = null;
+const remoteWorkspace = require('./remote-workspace').installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow: () => win, terminals, terminalCwds, port: PORT });
 
 // ---------- 窗口尺寸/位置记忆 ----------
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -303,6 +304,7 @@ function buildMenu() {
       { type: 'separator' }, { role: 'togglefullscreen', label: M('全屏', 'Full Screen') },
     ] },
     { role: 'window', label: M('窗口', 'Window'), submenu: [{ role: 'minimize', label: M('最小化', 'Minimize') }, { role: 'zoom' }] },
+    { label: M('设置', 'Settings'), submenu: [{ label: M('AI 配置…', 'AI Configuration…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:settings'); } }, { label: M('IM 远程干预与通知…', 'IM Remote Control…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:im-settings'); } }] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
@@ -346,7 +348,16 @@ app.on('window-all-closed', () => {
 });
 
 // ---------- 终端 IPC（node-pty）----------
-ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, autorun, shell: requestedShell }) => {
+ipcMain.handle('pty:spawn', async (e, { id, cwd, cols, rows, autorun, shell: requestedShell, sshProfile }) => {
+  remoteWorkspace.guard(e);
+  if (terminals.has(id) || remoteWorkspace.ssh.sessions.has(id)) return { ok: false, error: '会话 ID 已存在' };
+  if (sshProfile) {
+    try {
+      const result = await remoteWorkspace.ssh.connect(id, sshProfile, cols || 80, rows || 24);
+      terminals.set(id, { remote: true, write: data => remoteWorkspace.ssh.input(id, data), resize: (cols, rows) => remoteWorkspace.ssh.resize(id, cols, rows), kill: () => remoteWorkspace.ssh.disconnect(id) });
+      return result;
+    } catch (error) { return { ok: false, error: error.message }; }
+  }
   if (!pty) return { ok: false, error: 'node-pty 未编译，跑：npm run rebuild' };
   if (requestedShell && !['cmd', 'powershell'].includes(requestedShell)) return { ok: false, error: '未知终端类型' };
   const shellPath = process.platform === 'win32' && requestedShell
@@ -384,8 +395,10 @@ ipcMain.handle('pty:spawn', (e, { id, cwd, cols, rows, autorun, shell: requested
   } catch (err) { return { ok: false, error: err.message }; }
   terminals.set(id, p);
   terminalCwds.set(id, startCwd);
-  p.onData((data) => { if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data }); });
+  remoteWorkspace.localStarted(id, shellPath, startCwd);
+  p.onData((data) => { remoteWorkspace.localOutput(id, data); if (win && !win.isDestroyed()) win.webContents.send('pty:data', { id, data }); });
   p.onExit(({ exitCode }) => {
+    remoteWorkspace.localClosed(id);
     terminals.delete(id);
     terminalCwds.delete(id);
     if (win && !win.isDestroyed()) win.webContents.send('pty:exit', { id, exitCode });
@@ -433,9 +446,9 @@ ipcMain.handle('drop:save', (e, { name, buf }) => {
   } catch (err) { return { ok: false, error: err.message }; }
 });
 
-ipcMain.on('pty:input', (e, { id, data }) => { const p = terminals.get(id); if (p) p.write(data); });
-ipcMain.on('pty:resize', (e, { id, cols, rows }) => { const p = terminals.get(id); if (p) { try { p.resize(cols, rows); } catch { /* */ } } });
-ipcMain.on('pty:kill', (e, { id }) => { const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); terminalCwds.delete(id); } });
+ipcMain.on('pty:input', (e, { id, data }) => { try { remoteWorkspace.guard(e); if (remoteWorkspace.authInput(id, data)) return; const p = terminals.get(id); if (p) { if (!p.remote) remoteWorkspace.noteInput(id, data); p.write(data); } } catch {} });
+ipcMain.on('pty:resize', (e, { id, cols, rows }) => { try { remoteWorkspace.guard(e); } catch { return; } const p = terminals.get(id); if (p) { try { p.resize(cols, rows); } catch { /* */ } } });
+ipcMain.on('pty:kill', (e, { id }) => { try { remoteWorkspace.guard(e); } catch { return; } remoteWorkspace.localClosed(id); if (remoteWorkspace.ssh.sessions.has(id)) remoteWorkspace.ssh.disconnect(id); const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); terminalCwds.delete(id); } });
 
 // lsof 在非 UTF-8 locale 下会把中文路径按字节转义成 \xe8 字面量（GUI 启动的 app 不继承 shell 的 locale，
 // 正中这个坑：标签标题乱码、双击定位失效）。调 lsof 时显式给 UTF-8 locale，这里再留一层 \xNN 解码兜底
@@ -479,7 +492,7 @@ ipcMain.handle('pty:cwd', (e, { id }) => new Promise((resolve) => {
 // 取终端前台进程名（node-pty 维护）：判断当前是裸 shell 还是正跑着 claude/codex 等程序
 ipcMain.handle('pty:proc', async (e, { id }) => {
   const p = terminals.get(id);
-  if (!p) return { ok: false };
+  if (!p || p.remote) return { ok: false };
   if (process.platform !== 'win32') return { ok: true, proc: p.process || '' };
   // node-pty reports the shell name on Windows even while a CLI owns the terminal.
   const pid = Number(p.pid);

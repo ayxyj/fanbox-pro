@@ -41,24 +41,18 @@ window.FANBOX_DICT = {
   '小': 'Small',
   '中': 'Medium',
   '大': 'Large',
-  '本会话 agent 改过的文件（点击回看 / diff）': 'Files agents changed this session (click to review / diff)',
-  '此处最近修改的文件': 'Recently modified files here',
   '在当前目录打开系统终端': 'Open system terminal in current folder',
-  '最近修改的文件': 'Recently modified',
   '修改时间': 'Modified',
   '创建时间': 'Created',
 
   // ---------- 文件区 / 状态栏 ----------
   '这个文件夹是空的': 'This folder is empty',
-  '没找到最近修改的文件': 'No recently modified files',
   '发版': 'Release',
   '版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑': 'Version bump → CHANGELOG → build → push → Release, end to end in the terminal',
   '项目记忆': 'Project memory',
   '这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上': 'What AI has done in this folder: past sessions, changed files, one-click resume',
   '占用透视': 'Disk usage',
   '算上子目录的真实磁盘占用': 'True disk usage including subfolders',
-  '⚠ 文件太多，结果可能不完整。进入更具体的子目录可看到全部。': '⚠ Too many files — results may be incomplete. Open a more specific subfolder to see everything.',
-  '扫描最近修改的文件…': 'Scanning recently modified files…',
   '改': 'edited',
 
   // ---------- 右键菜单 ----------
@@ -349,18 +343,9 @@ window.FANBOX_DICT = {
   '先开一个终端并启动 agent': 'Open a terminal and start an agent first',
   '终端里还没启动 agent——先点 Claude / Codex 启动按钮': 'No agent running in this terminal yet — hit the Claude / Codex launch button first',
 
-  // ---------- 变更收件箱 / 会话回放 ----------
-  '本会话变更': 'Changes this session',
-  '还没有捕捉到文件变更。': 'No file changes captured yet.',
-  '跑起 agent，它改的文件会实时出现在这里。': 'Run an agent and its edits will show up here live.',
-  '▶ 回放': '▶ Replay',
+  // ---------- 通用操作 ----------
   '清空': 'Clear',
   '关闭 (Esc)': 'Close (Esc)',
-  '此刻 agent 正在改': 'Agent editing right now',
-  '▶ 播放': '▶ Play',
-  '⏸ 暂停': '⏸ Pause',
-  '↻ 重播': '↻ Replay',
-  '变更太少，先让 agent 多改几下再回放': 'Not enough changes yet — let the agent edit a bit more before replaying',
 
   // ---------- 更新提示 ----------
   '去下载': 'Download',
@@ -389,7 +374,7 @@ window.FANBOX_DICT_RULES = [
   [/^(\d+) 分$/, (m) => `${m[1]}m`],
   [/^(\d+) 时$/, (m) => `${m[1]}h`],
   [/^(\d+) 天$/, (m) => `${m[1]}d`],
-  // 时长（fmtDur：会话回放）
+  // 时长
   [/^(\d+) 秒$/, (m) => `${m[1]} s`],
   [/^(\d+) 分钟$/, (m) => `${m[1]} min`],
   [/^([\d.]+) 小时$/, (m) => `${m[1]} hr`],
@@ -468,12 +453,6 @@ window.FANBOX_DICT_RULES = [
   [/^已启用 (.+)$/, (m) => `Enabled ${m[1]}`],
   [/^已停用 (.+)（文件还在，随时可启用）$/, (m) => `Disabled ${m[1]} (files kept — re-enable anytime)`],
   [/^已注入 ([/$]\S+)，接着补一句话回车$/, (m) => `Injected ${m[1]} — add a sentence and press Enter`],
-  // 变更收件箱 / 回放
-  [/^本会话变更 · (\d+)$/, (m) => `Changes this session · ${m[1]}`],
-  [/^会话回放 · (\d+) 次写入 · 跨 (.+)$/, (m) => {
-    const t = m[2].replace(/^(\d+) 秒$/, '$1 s').replace(/^(\d+) 分钟$/, '$1 min').replace(/^([\d.]+) 小时$/, '$1 hr');
-    return `Session replay · ${m[1]} writes · over ${t}`;
-  }],
   // 更新提示
   [/^新版本 v(.+) 已发布$/, (m) => `v${m[1]} is out`],
 ];

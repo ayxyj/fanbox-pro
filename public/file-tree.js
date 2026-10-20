@@ -13,16 +13,11 @@ const fileTree = {
   },
   bulk: null,
   updateControls() {
-    const visible = state.view === 'tree' && !!state.cwd && !state.recentMode && !state.gsMode && !state.skillsMode;
+    const visible = state.view === 'tree' && !!state.cwd && !state.gsMode && !state.skillsMode;
     if (this.bulk && (!visible || this.bulk.root !== state.cwd)) this.cancelBulk();
-    document.getElementById('tree-actions').style.display = visible ? '' : 'none';
     const progress = document.getElementById('tree-progress');
     progress.style.display = visible ? '' : 'none';
     progress.textContent = this.bulk ? `已展开 ${this.bulk.count} 个 · 待读取 ${this.bulk.remaining} 个` : '';
-    const expand = document.getElementById('tree-expand-all');
-    expand.textContent = this.bulk ? '停止展开' : '全部展开';
-    expand.setAttribute('aria-busy', String(!!this.bulk));
-    document.getElementById('tree-collapse-all').disabled = !visible || !this.current().expanded.size;
   },
   cancelBulk() {
     if (this.bulk) this.bulk.cancelled = true;
@@ -51,7 +46,7 @@ const fileTree = {
     const seen = new Set();
     let next = 0;
     const active = () => this.bulk === operation && !operation.cancelled && state.cwd === root
-      && state.view === 'tree' && !state.recentMode && !state.gsMode && !state.skillsMode;
+      && state.view === 'tree' && !state.gsMode && !state.skillsMode;
     let failed = 0, lastPaint = 0;
     try {
       while (next < queue.length && active()) {
@@ -149,7 +144,7 @@ const fileTree = {
   rowHeight: 48,
   overscan: 24,
   schedulePaint() {
-    if (this.paintFrame || state.view !== 'tree' || state.gsMode || state.skillsMode || state.recentMode) return;
+    if (this.paintFrame || state.view !== 'tree' || state.gsMode || state.skillsMode) return;
     this.paintFrame = requestAnimationFrame(() => { this.paintFrame = null; this.paint(); });
   },
   offset() {
@@ -190,7 +185,7 @@ const fileTree = {
     this.paint();
   },
   paint() {
-    if (!this.wrap?.isConnected || this.root !== state.cwd || state.view !== 'tree' || state.gsMode || state.skillsMode || state.recentMode) return;
+    if (!this.wrap?.isConnected || this.root !== state.cwd || state.view !== 'tree' || state.gsMode || state.skillsMode) return;
     const tree = this.current(), viewport = document.getElementById('content');
     const top = this.virtual ? Math.max(0, viewport.scrollTop - this.offset()) : 0;
     const start = this.virtual ? Math.max(0, Math.floor(top / this.rowHeight) - this.overscan) : 0;

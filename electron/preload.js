@@ -72,3 +72,16 @@ contextBridge.exposeInMainWorld('fanboxTheme', {
   vibrancy: enabled => ipcRenderer.invoke('theme:vibrancy',enabled),
 });
 
+
+contextBridge.exposeInMainWorld('fanboxRemote', {
+  call: (action, args) => {
+    const allowed = ['state','save-profile','save-shortcut','delete-shortcut','rename-shortcut-group','run-shortcut','delete-profile','save-ai','list-ai-models','pick-key','list','read','write','transfer','cancel-transfer','ai-run','ai-stop','ai-takeover','ai-resume','history-list','history-open','history-read','history-delete','target','auth-reply','activate-ai','deactivate-ai','delete-ai','policy','ai-clear','im-state','im-save','im-qr-start','im-qr-cancel','im-bind','im-unbind','im-terminal-created'];
+    if (!allowed.includes(action)) return Promise.reject(new Error('Unknown remote action'));
+    return ipcRenderer.invoke('remote:' + action, args);
+  },
+  on: (event, callback) => {
+    if (!['status','transfer','ai','auth','auth-close','settings','im-settings','im','im-create-terminal','im-task','im-task-done'].includes(event)) throw new Error('Unknown remote event');
+    const channel = 'remote:' + event, listener = (_, data) => callback(data);
+    ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener);
+  },
+});
