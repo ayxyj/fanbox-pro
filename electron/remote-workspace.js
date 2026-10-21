@@ -100,14 +100,19 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     }
     const p = terminals.get(id), s = local.get(id);
     if (!p || !s) throw Error('终端已关闭，请重新选择');
-    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id), identity: p, environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
+    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id), identity: p, size: () => ({cols:p.cols,rows:p.rows}), environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
   };
   const sendFile = async (id, file, options = {}) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
     if (!route || !im.valid(route)) throw Error('文件发送仅适用于当前已授权的企业微信会话');
     return require('./wecom-files').sendFile(im, route, file, options);
   };
-  const cli = new (require('./cli-session').CLISessions)({ target, sendFile, confirmTrust: async (id, directory, signal, name) => {
+  const cli = new (require('./cli-session').CLISessions)({ target, sendFile,
+    askNative: async (id, question, signal) => {
+      const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
+      if (!route || !im.valid(route)) return null;
+      return im.askCLIQuestion(route, question, signal, Date.now()+240000);
+    }, confirmTrust: async (id, directory, signal, name) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
     if (!route || !im.valid(route)) return false;
     if (name === 'codebuddy') {
@@ -290,6 +295,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
       }
       local.set(id, { output: '', environment: { host: os.hostname(), os: system, shell, cwd } });
     },
+    resized(id, cols, rows) { cli.resize(id, cols, rows); },
     localOutput(id, text) { publishOutput(id, text); const s = local.get(id); if (s) s.output = (s.output + text).slice(-32000); },
     localClosed(id) { cli.close(id); im?.closed(id); imScopes.delete(id); local.delete(id); history.release(id); activeHistories.delete(id); for (const [runId, controller] of ai.runs) if (controller.sessionId === id) ai.stop(runId, 'disconnected'); },
   };

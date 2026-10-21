@@ -473,7 +473,7 @@ ipcMain.handle('drop:save', (e, { name, buf }) => {
 });
 
 ipcMain.on('pty:input', (e, { id, data }) => { try { remoteWorkspace.guard(e); if (remoteWorkspace.authInput(id, data)) return; const p = terminals.get(id); if (p) { if (!p.remote) remoteWorkspace.noteInput(id, data); p.write(data); } } catch {} });
-ipcMain.on('pty:resize', (e, { id, cols, rows }) => { try { remoteWorkspace.guard(e); } catch { return; } const p = terminals.get(id); if (p) { try { p.resize(cols, rows); } catch { /* */ } } });
+ipcMain.on('pty:resize', (e, { id, cols, rows }) => { try { remoteWorkspace.guard(e); } catch { return; } const p = terminals.get(id); if (p) { try { p.resize(cols, rows); remoteWorkspace.resized(id, cols, rows); } catch { /* */ } } });
 ipcMain.on('pty:kill', (e, { id }) => { try { remoteWorkspace.guard(e); } catch { return; } remoteWorkspace.localClosed(id); if (remoteWorkspace.ssh.sessions.has(id)) remoteWorkspace.ssh.disconnect(id); const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); terminalCwds.delete(id); } });
 
 // lsof 在非 UTF-8 locale 下会把中文路径按字节转义成 \xe8 字面量（GUI 启动的 app 不继承 shell 的 locale，

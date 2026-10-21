@@ -2,6 +2,7 @@
 // Runs only as a CLI notification hook. Never writes to the terminal or invokes a model.
 const fs = require('fs'), path = require('path'), crypto = require('crypto');
 function normalize(event) {
+  if(event?.hook_event_name === 'SessionStart') return {kind:'session', key:crypto.randomUUID(), createdAt:Date.now(), sessionId:String(event.session_id||''), source:String(event.source||'')};
   if (event?.hook_event_name === 'PreToolUse' && event.tool_name === 'AskUserQuestion') return { kind: 'question', key: crypto.randomUUID(), createdAt: Date.now(), input: event.tool_input || {}, cwd: String(event.cwd || '') };
   if (event?.hook_event_name === 'PermissionRequest') return { kind: 'permission', key: crypto.randomUUID(), createdAt: Date.now(), tool: String(event.tool_name || '未知工具'), input: event.tool_input || {}, cwd: String(event.cwd || ''), agent: String(event.agent_id || '') };
   if (['PreToolUse', 'PostToolUse', 'PostToolUseFailure'].includes(event?.hook_event_name)) return { kind: 'progress', key: crypto.randomUUID(), createdAt: Date.now(), phase: event.hook_event_name, tool: String(event.tool_name || '') };

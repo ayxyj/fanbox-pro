@@ -4,6 +4,7 @@ const fs = require('fs'), path = require('path');
 const { createResultChannel } = require('./cli-result-channel');
 const { CLIProgress } = require('./cli-progress');
 const { watchPermissionStatus } = require('./cli-permission-status');
+const { NativeInteraction } = require('./cli-native-interaction');
 const { randomUUID } = require('crypto');
 const NAMES = ['claude', 'codex', 'codebuddy'];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -17,8 +18,8 @@ function commandFor(name) {
   throw Error(`未找到 ${name}，请先安装 CLI 并重启软件`);
 }
 class CLISessions {
-  constructor({ target, notify = async () => {}, inspect = inspectProcess, command = commandFor, wait = delay, resultChannel = createResultChannel, confirmTrust = async () => false, confirmPermission = async () => false, askQuestion = async () => null, sendFile = async () => { throw Error('附件通道不可用'); } }) {
-    Object.assign(this, { target, notify, inspect, command, wait, resultChannel, confirmTrust, confirmPermission, askQuestion, sendFile }); this.sessions = new Map(); this.locks = new Set();
+  constructor({ target, askNative = null, notify = async () => {}, inspect = inspectProcess, command = commandFor, wait = delay, resultChannel = createResultChannel, confirmTrust = async () => false, confirmPermission = async () => false, askQuestion = async () => null, sendFile = async () => { throw Error('附件通道不可用'); } }) {
+    Object.assign(this, { target, askNative, notify, inspect, command, wait, resultChannel, confirmTrust, confirmPermission, askQuestion, sendFile }); this.sessions = new Map(); this.locks = new Set();
   }
   active(id) { return this.sessions.has(id); }
   async exclusive(id, fn) {
@@ -36,9 +37,18 @@ class CLISessions {
       const s = { name, identity: t.identity, tail: '', sending: Promise.resolve(), seen: new Set(), pending: false, startup: true, startupOutput: '', permissions: new Map(), permissionSeen: new Set() };
       s.channel = this.resultChannel(name, event => this.result(id, s, event));
       this.sessions.set(id, s);
+      if (name === 'claude' && this.askNative) s.native = new NativeInteraction({
+        target: { ...t, validate: async () => this.sessions.get(id) === s && this.target(id).identity === s.identity && (await this.inspect(t)).name === s.name },
+        ask: (question, signal) => this.askNative(id, question, signal),
+        notify: text => this.deliver(id,s,text),
+        onMenu: () => { s.nativeMenu = true; if(s.progress)s.progress.paused=true; },
+        onDismiss: () => { s.nativeMenu=false; if(s.progress)s.progress.paused=false; },
+        onIdle: () => { if(s.nativeMenu || s.slashCommand){ const resume=s.slashCommand?.startsWith('/resume'); s.nativeMenu=false;s.slashCommand=null;s.pending=false;this.finishProgress(s);if(resume)this.deliver(id,s,'Claude 会话选择已结束，终端已返回输入状态。'); } }
+      });
       // PTY bytes are only inspected for a bounded error notice, never forwarded.
       s.unsubscribe = t.subscribeOutput(text => {
-        if (s.startup && ['claude', 'codebuddy'].includes(s.name) && !s.trustRequested) {
+        s.native?.output(text);
+        if (!s.native && s.startup && ['claude', 'codebuddy'].includes(s.name) && !s.trustRequested) {
           s.startupOutput = (s.startupOutput + text).slice(-16000);
           const visible = s.startupOutput.replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Math.min(Number(n) || 1, 1000))).replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
           const clean = visible.replace(/[│┃]/g, '');
@@ -118,6 +128,7 @@ class CLISessions {
     // Match only complete protocol responses; ordinary keys/pastes still cancel.
     if (typeof text === 'string' && /^(?:\x1b\[[IO]|\x1b\[[?>=]?[\d;]*[cRn]|\x1b\[\??\d+;\d+\$y|\x1b\[\d+(?:;\d+)*t|\x1bP[01]\$r[ -~]*?\x1b\\|\x1b\][^\x07]*(?:\x07|\x1b\\))+$/.test(text)) return;
     const s = this.sessions.get(id); if (!s) return;
+    s.native?.input(text);
     s.interactionsCancelledAt = Date.now(); s.startup = false; s.trustPending = false; s.trustController?.abort(); this.cancelPermissions(s);
   }
   deliver(id, s, text, metadata) {
@@ -125,6 +136,7 @@ class CLISessions {
     s.sending = s.sending.catch(() => {}).then(() => this.sessions.get(id) === s ? this.notify(id, text, metadata) : undefined).catch(() => {});
   }
   result(id, s, event) {
+    if(event.kind === 'session') { if(this.sessions.get(id)===s && event.source==='resume'){s.nativeMenu=false;s.pending=false;s.slashCommand=null;this.finishProgress(s);this.deliver(id,s,'Claude 已恢复历史会话：'+event.sessionId);} return; }
     if (event.kind === 'attachment') {
       const taskId = s.taskId;
       const authorized = () => this.sessions.get(id) === s && s.pending && s.taskId === taskId && event.createdAt >= s.started && s.channel.hasRequest(event.key);
@@ -140,7 +152,7 @@ class CLISessions {
     if (this.sessions.get(id) !== s || !s.pending || event.createdAt < s.started || !event.key || s.seen.has(event.key)) return;
     s.seen.add(event.key); if (s.seen.size > 200) s.seen.delete(s.seen.values().next().value);
     if (!['result', 'error', 'missing'].includes(event.kind)) return;
-    s.pending = false; this.finishProgress(s);
+    s.nativeMenu=false; s.pending = false; this.finishProgress(s);
     if (event.kind === 'result' && typeof event.text === 'string' && event.text.trim()) this.deliver(id, s, event.text);
     else if (event.kind === 'missing') this.deliver(id, s, 'CLI 已结束本轮，但当前版本未提供最终回复。请查看本机 CLI 并检查版本；未转发终端界面内容。');
     else if (!s.errorNotified) this.deliver(id, s, s.name + ' 本轮未完成：' + String(event.text || 'CLI 返回错误').slice(0, 2000));
@@ -148,7 +160,7 @@ class CLISessions {
   async cyclePermission(id) {
     return this.exclusive(id, async () => {
       const t = this.target(id), s = this.sessions.get(id);
-      if (s?.trustPending || s?.permissions.size) throw Error('请先处理当前信任或操作确认，再切换权限模式');
+      if (s?.nativeMenu || s?.trustPending || s?.permissions.size) throw Error('请先处理当前信任或操作确认，再切换权限模式');
       const state = await this.inspect(t);
       if (this.target(id).identity !== t.identity || this.sessions.get(id) !== s || state.name !== 'claude') throw Error('当前终端不是 Claude CLI，未发送权限切换快捷键');
       if (s?.trustPending || s?.permissions.size) throw Error('请先处理当前确认');
@@ -171,11 +183,13 @@ class CLISessions {
       const s = this.sessions.get(id); if (!s) throw Error('CLI 会话已退出');
       const t = this.target(id), state = await this.inspect(t);
       if (this.sessions.get(id) !== s || t.identity !== s.identity || state.name !== s.name) throw Error('CLI 未运行或已退出，消息未发送。请 /aiquit 返回 AI，或重新进入 CLI');
+      if (s.nativeMenu) throw Error('终端正在等待选择，请处理当前问题或在本机操作');
       if (s.permissions.size) throw Error('Claude 正在等待操作审批，请先点击企微卡片中的按钮');
       if (s.trustPending) throw Error('请先在企微信任卡片中选择“信任目录”或“不信任，退出”');
       if (t.pendingInput) throw Error('终端有未提交的本地输入，请先清空');
       if (s.pending) throw Error('CLI 正在处理上一条消息，请等待结果，或先 /stop 中断');
       if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(prompt)) throw Error('消息为空、过长或包含终端控制字符');
+      s.slashCommand = prompt.trim().startsWith('/') ? prompt.trim().split(/\s/)[0] : null;
       s.startup = false; s.pending = true; s.started = Date.now(); s.errorNotified = false; s.tail = ''; s.seen.clear();
       s.taskId = randomUUID();
       s.progress = new CLIProgress({ send: text => this.deliver(id, s, text, { taskId: s.taskId, progress: true }) });
@@ -210,6 +224,7 @@ class CLISessions {
       throw Error('已发送 Ctrl+C，但程序尚未退出。仍保留 CLI 模式，请查看终端或再次 /aiquit');
     });
   }
-  close(id) { const s = this.sessions.get(id); if (!s) return; this.finishProgress(s); s.trustController?.abort(); this.cancelPermissions(s); s.unsubscribe?.(); s.channel?.close(); this.sessions.delete(id); }
+  resize(id, cols, rows) { this.sessions.get(id)?.native?.resize(cols,rows); }
+  close(id) { const s = this.sessions.get(id); if (!s) return; s.native?.close(); this.finishProgress(s); s.trustController?.abort(); this.cancelPermissions(s); s.unsubscribe?.(); s.channel?.close(); this.sessions.delete(id); }
 }
 module.exports = { CLISessions, commandFor, inspectProcess };

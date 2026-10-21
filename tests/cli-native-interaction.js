@@ -1,0 +1,35 @@
+'use strict';
+const assert=require('assert/strict');const {NativeInteraction,parseMenu}=require('../electron/cli-native-interaction');const questions=require('../electron/wecom-questions');
+const delay=ms=>new Promise(r=>setTimeout(r,ms));
+const menu='Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\nEnter to confirm · Esc to cancel';
+(async()=>{
+ const writes=[],cards=[];let valid=true;
+ const watcher=new NativeInteraction({target:{size:()=>({cols:100,rows:30}),input:t=>writes.push(t),validate:async()=>valid},settle:10,ask:(q,signal)=>new Promise(resolve=>cards.push({q,signal,resolve}))});
+ watcher.output('\x1b[2J\x1b[H'+menu.slice(0,30));watcher.output(menu.slice(30));await delay(60);assert.equal(cards.length,1);assert.equal(cards[0].q.options[1].label,'No');
+ watcher.output('\x1b[H'+menu);await delay(40);assert.equal(cards.length,1,'identical redraw must not spam');
+ watcher.input('\x1b[?2026;2$y');assert(!cards[0].signal.aborted,'terminal report is not user interaction');
+ cards[0].resolve({indices:[1]});await delay(30);assert.equal(writes[0],'\x1b[B\r');
+ watcher.output('\x1b[2J\x1b[H'+menu);await delay(30);const old=cards.at(-1);watcher.input('\x1b[B');assert(old.signal.aborted);old.resolve({indices:[0]});await delay(30);assert.equal(writes.length,1);
+ watcher.output('\x1b[2J\x1b[H'+menu.replace('❯ 1. Yes','  1. Yes').replace('  2. No','❯ 2. No'));await delay(30);cards.at(-1).resolve({indices:[0]});await delay(30);assert.equal(writes.at(-1),'\x1b[A\r');
+ watcher.output('\x1b[2J\x1b[H'+menu);await delay(30);const before=writes.length;valid=false;cards.at(-1).resolve({indices:[0]});await delay(30);assert.equal(writes.length,before);valid=true;
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HResume Session\r\nSearch sessions\r\n❯ First session\r\n  1 minute ago · 800 bytes\r\n  Second session\r\n  2 minutes ago · 900 bytes\r\nEnter to select · Esc to cancel');await delay(30);assert(cards.at(-1).q.searchable);cards.at(-1).resolve({search:'test'});await delay(30);assert.equal(writes.at(-1),'\x15test');
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HChoose features\r\n❯ 1. [ ] A\r\n  2. [x] B\r\nSpace to select · Enter to submit · Esc to cancel');await delay(30);assert(cards.at(-1).q.multiSelect);cards.at(-1).resolve({indices:[0]});await delay(30);assert.equal(writes.at(-1),' '+'\x1b[B'+' '+'\r');
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HYour answer?\r\n❯ 1. Type something.\r\nEnter to submit · Esc to cancel');await delay(30);assert(cards.at(-1).q.nativeText);cards.at(-1).resolve({text:'中文回答'});await delay(30);assert.equal(writes.at(-1),'\x1b[200~中文回答\x1b[201~\r');
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HResume session\r\nNo conversations found in this project.\r\nType to search · Esc to cancel');await delay(30);assert(cards.at(-1).q.searchable);cards.at(-1).resolve({cancel:true});await delay(30);assert.equal(writes.at(-1),'\x1b');
+ watcher.close();assert(cards.at(-1).signal.aborted);
+ const realResume=parseMenu(['> /resume','','───','  Resume session','  │ ⌕ Search… │','    fanbox-pro-win','','  > Fixture session 2','    15 seconds ago · 817 bytes','','    Fixture session 0','    15 seconds ago · 817 bytes','','    Fixture session 1','    15 seconds ago · 817 bytes','','    Ctrl+A to show all projects · Type to','    search · Esc to cancel']);assert.equal(realResume.options.length,3);assert.equal(realResume.selected,0);assert.equal(realResume.options[1].label,'Fixture session 0');
+ assert.equal(parseMenu(['Printed prose','1. Yes','2. No','Enter to confirm']),null);
+ const route={userid:'u',number:1,project:'fixture'},sent=[];const service={...questions,valid:r=>r===route,say:async(r,t)=>sent.push(t),send:async()=>{},client:{sendMessage:async()=>{},updateTemplateCard:async()=>{}}};
+ const controller=new AbortController(),q={nativeMenu:true,fixedOptions:true,question:'Choose',title:'CLI',options:Array.from({length:10},(_,i)=>({label:'Choice '+i})),multiSelect:true};
+ const promise=service.askCLIQuestion(route,q,controller.signal,Date.now()+10000);await delay(1);const entry=[...service.questions.values()][0];assert(service.questionCard(entry).button_list.length<=6);
+ const event=action=>({event_key:'question:'+entry.token+':'+action,task_id:'question_'+entry.token});await service.questionEvent({},event('next'),'u');assert.equal(entry.page,1);assert(service.questionCard(entry).button_list.length<=6);
+ await service.questionEvent({},event('2'),'wrong');assert.equal(entry.selected.size,0);await service.questionEvent({},event('2'),'u');await service.questionEvent({},event('done'),'u');assert.deepEqual(await promise,{indices:[2]});
+ await service.questionEvent({},event('1'),'u');assert.equal(service.questions.size,0);
+ const channel=require('../electron/cli-result-channel').createResultChannel('claude',()=>{},{runtime:process.execPath});try{const cfg=require('fs').readFileSync(require('path').join(channel.directory,'settings.json'),'utf8');assert(!cfg.includes('PermissionRequest'));assert(!cfg.includes('AskUserQuestion'));}finally{channel.close();}
+ const {CLISessions}=require('../electron/cli-session');let emit,answerNative;const identity={};const t={identity,size:()=>({cols:100,rows:30}),input:()=>{},subscribeOutput:fn=>{emit=fn;return()=>{};}};
+ const manager=new CLISessions({target:()=>t,inspect:async()=>({name:'claude',idle:true}),command:()=> 'claude',wait:async()=>{},resultChannel:()=>({args:'',close(){},respond(){}}),askNative:async(id,q,signal)=>new Promise(r=>answerNative=r)});
+ await manager.start('one','claude');const session=manager.sessions.get('one');session.native.settle=10;
+ await manager.run('one','/resume');emit('\x1b[2J\x1b[H'+menu);await delay(40);assert(session.nativeMenu);manager.result('one',session,{kind:'session',source:'resume',sessionId:'fixture-resumed',createdAt:Date.now()});assert(!session.nativeMenu);assert(!session.pending);
+ emit('\x1b[2J\x1b[H> ');await delay(40);await manager.run('one','next');manager.close('one');answerNative?.({indices:[0]});await delay(1);
+ console.log('PASS native screen, split data, redraw deduplication, native input invalidates cards, focus replies, correct keys, identity validation, resume search, paged cards and preserved native hooks');
+})().catch(e=>{console.error(e);process.exitCode=1;});
