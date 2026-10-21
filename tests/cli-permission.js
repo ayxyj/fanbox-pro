@@ -1,0 +1,28 @@
+'use strict';
+const assert=require('assert/strict');
+const {CLISessions}=require('../electron/cli-session');
+const chat=require('../electron/wecom-chat');
+(async()=>{
+ const listeners=new Set(),emit=text=>{for(const fn of listeners)fn(text);};
+ const writes=[];let state={name:'claude'},t={identity:{},subscribeOutput:fn=>{listeners.add(fn);return()=>listeners.delete(fn);},input:v=>{writes.push(v);emit('⏵⏵ accept edits on (shift+tab to cycle) · esc to interrupt');}};
+ const cli=new CLISessions({target:()=>t,inspect:async()=>state});
+ assert.match(await cli.cyclePermission('a'),/当前权限：自动接受编辑/);assert.deepEqual(writes,['\x1b[Z']);
+ state={name:'codebuddy'};await assert.rejects(cli.cyclePermission('a'),/不是 Claude/);assert.equal(writes.length,1);
+ state={name:'claude'};cli.sessions.set('a',{trustPending:true});await assert.rejects(cli.cyclePermission('a'),/确认/);cli.sessions.clear();
+ cli.inspect=async()=>{t={...t,identity:{}};return state;};await assert.rejects(cli.cyclePermission('a'),/不是 Claude/);assert.equal(writes.length,1);
+ const {permissionStatus,watchPermissionStatus}=require('../electron/cli-permission-status');
+ assert.equal(permissionStatus('accept edits on'),null);
+ assert.equal(permissionStatus('ordinary output'),null);
+ assert.equal(permissionStatus('\x1b[32mplan mode on\x1b[0m (shift+tab to cycle)').label,'计划模式');
+ assert.equal(permissionStatus('bypass permissions on (shift+tab to cycle)').label,'跳过权限确认');
+ let watcher=watchPermissionStatus(t,{timeout:80,settle:10});emit('accept edits on (shift+');emit('tab to cycle)');assert.equal((await watcher.promise).label,'自动接受编辑');assert.equal(listeners.size,0);
+ watcher=watchPermissionStatus(t,{timeout:80,settle:10});emit('accept edits on (shift+tab to cycle)');emit('\rplan mode on (shift+tab to cycle)');assert.equal((await watcher.promise).label,'计划模式');
+ watcher=watchPermissionStatus(t,{timeout:20,settle:10});assert.equal(await watcher.promise,null,'Never reuse preceding footer');assert.equal(listeners.size,0);
+ watcher=watchPermissionStatus(t,{timeout:80});watcher.cancel();assert.equal(await watcher.promise,null);assert.equal(listeners.size,0);
+ const route={sessionId:'a',mode:'claude'},sent=[];let authorized=true,count=0;
+ const service={...chat,focused:()=>route,valid:()=>authorized,cycleCLIPermission:async id=>{assert.equal(id,'a');count++;return 'switched';},say:async(r,text)=>sent.push(text)};
+ assert.equal(await service.bridgeCommand('u','/permiss'),true);assert.equal(count,1);assert.equal(sent[0],'switched');
+ await service.bridgeCommand('u','/permiss');assert.equal(count,2);
+ authorized=false;await assert.rejects(service.bridgeCommand('u','/permiss'),/授权/);authorized=true;route.mode='codex';await assert.rejects(service.bridgeCommand('u','/permiss'),/Claude/);assert.equal(count,2);
+ console.log('PASS: Shift+Tab only, foreground and identity guards, pending confirmation, WeCom routing and authorization');
+})().catch(e=>{console.error(e);process.exitCode=1;});

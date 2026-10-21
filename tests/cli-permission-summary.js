@@ -1,0 +1,18 @@
+'use strict';
+const assert = require('assert/strict');
+const { permissionSummary } = require('../electron/cli-permission-summary');
+const content = 'SECRET_FILE_BODY\n'.repeat(10000);
+const write = permissionSummary('Write', { file_path: 'C:\\project\\quicksort.py', content });
+assert(write.includes('C:\\project\\quicksort.py'));
+assert(write.includes('170,000 字节'));
+assert(write.includes('覆盖'));
+assert(!write.includes('SECRET_FILE_BODY'));
+assert(write.length < 300);
+const edit = permissionSummary('Edit', { file_path: '/home/test.py', old_string: 'SECRET_OLD', new_string: 'SECRET_NEW', replace_all: true });
+assert(!edit.includes('SECRET_'));
+assert(edit.includes('全部匹配'));
+const multi = permissionSummary('MultiEdit', { file_path: '/home/test.py', edits: [{new_string:'甲'}, {new_string:'乙'}] });
+assert(multi.includes('2 处'));
+assert(multi.includes('6 字节'));
+assert.equal(permissionSummary('Bash', { command: 'rm important.txt' }), JSON.stringify({ command: 'rm important.txt' }, null, 2));
+console.log('PASS: file bodies omitted, path/size/scope retained, other approvals unchanged');

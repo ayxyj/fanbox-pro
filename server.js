@@ -2430,7 +2430,8 @@ server.on('error', (err) => {
   } else {
     console.error('\n  启动失败：', err.message, '\n');
   }
-  process.exit(1);
+  if (global.__fanboxStartupError) global.__fanboxStartupError(err);
+  else process.exit(1);
 });
 
 server.listen(PORT, '127.0.0.1', async () => {

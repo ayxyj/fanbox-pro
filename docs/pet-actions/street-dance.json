@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "name": "街舞摇摆",
+  "duration": 2400,
+  "iterations": 2,
+  "keyframes": [
+    { "offset": 0, "x": 0, "y": 0, "rotate": 0, "scale": 1 },
+    { "offset": 0.15, "x": -10, "y": -6, "rotate": -18, "scale": 1 },
+    { "offset": 0.3, "x": 10, "y": -2, "rotate": 18, "scale": 0.95 },
+    { "offset": 0.5, "x": 0, "y": -15, "rotate": 0, "scale": 1.1 },
+    { "offset": 0.7, "x": -8, "y": 0, "rotate": -12, "scale": 0.9 },
+    { "offset": 0.85, "x": 8, "y": -4, "rotate": 12, "scale": 1 },
+    { "offset": 1, "x": 0, "y": 0, "rotate": 0, "scale": 1 }
+  ]
+}

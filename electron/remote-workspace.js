@@ -9,7 +9,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { noteInput } = require('./shell-context');
 
-function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, terminals, terminalCwds, port }) {
+function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, terminals, terminalCwds, port, onIMState = () => {} }) {
   const directory = process.env.GITSYNC_HOME || path.join(os.homedir(), '.fanbox-pro-win');
   const store = new RemoteStore(directory, safeStorage);
   const history = new ChatHistory(directory), historyRuns = new Map(), historySessions = new Map(), activeHistories = new Map();
@@ -19,6 +19,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   const publishOutput = (id, text) => { for (const fn of outputListeners.get(id) || []) fn(text); };
   const subscribeOutput = (id, fn) => { if (!outputListeners.has(id)) outputListeners.set(id, new Set()); outputListeners.get(id).add(fn); return () => { const listeners = outputListeners.get(id); listeners?.delete(fn); if (!listeners?.size) outputListeners.delete(id); }; };
   const emit = (channel, data) => {
+    if(channel==='remote:im')onIMState(data);
     if (channel === 'remote:ai') runEvents.get(data.id)?.(data);
     if (channel === 'remote:ai' && historyRuns.has(data.id)) history.event(historyRuns.get(data.id), data);
     if (channel === 'pty:data') publishOutput(data.id, data.data);
@@ -31,6 +32,26 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   };
   const confirm = async (message, detail) => (await dialog.showMessageBox(getWindow(), { type: 'warning', message, detail, buttons: ['取消', '确认'], defaultId: 0, cancelId: 0 })).response === 1;
   const challenges = new Map();
+  const approvals = new Map();
+  const confirmAI = (message, detail, { signal, ...context } = {}) => new Promise(resolve => {
+    const win = getWindow();
+    if (!win || win.isDestroyed() || signal?.aborted) return resolve(false);
+    const token = crypto.randomUUID(), contents = win.webContents;
+    const finish = approved => {
+      if (!approvals.delete(token)) return;
+      clearTimeout(timer); signal?.removeEventListener('abort', cancel);
+      contents.removeListener('destroyed', cancel);
+      contents.removeListener('did-start-navigation', navigate);
+      emit('remote:approval-close', { token }); resolve(approved === true);
+    };
+    const cancel = () => finish(false);
+    const navigate = (_event, _url, _inPlace, mainFrame) => { if (mainFrame) cancel(); };
+    const timer = setTimeout(cancel, 300000);
+    approvals.set(token, finish);
+    signal?.addEventListener('abort', cancel, { once: true });
+    contents.once('destroyed', cancel); contents.on('did-start-navigation', navigate);
+    emit('remote:approval', { token, message, ...context });
+  });
   const ask = (challenge, signal) => new Promise((resolve, reject) => {
     const token = crypto.randomUUID();
     const finish = (answers, error) => { if (!challenges.has(token)) return; challenges.delete(token); clearTimeout(timer); signal?.removeEventListener('abort', abort); emit('remote:auth-close', { token, sessionId: challenge.sessionId }); error ? reject(error) : resolve(answers); };
@@ -68,11 +89,14 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     return true;
   }
   const policies = new Map();
-  const ssh = new SSHService({ store, confirm, emit, ask });
+  const ssh = new SSHService({ store, confirm, emit, ask,
+    chooseUpload: async () => { const result = await dialog.showOpenDialog(getWindow(), { title: 'ZMODEM：选择上传到 SSH 的文件', properties: ['openFile', 'multiSelections'] }); return result.canceled ? [] : result.filePaths; },
+    chooseDownload: async name => { const result = await dialog.showSaveDialog(getWindow(), { title: 'ZMODEM：保存 SSH 下载文件', defaultPath: name }); return result.canceled ? null : result.filePath; }
+  });
   const local = new Map();
   const target = id => {
     if (ssh.sessions.has(id)) {
-      const s = ssh.get(id); return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id), identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => ssh.input(id, text), output: () => s.output };
+      const s = ssh.get(id); return { detectEnvironment: signal => ssh.detectEnvironment(id,signal), pendingInput: s.zmodem?.job ? '文件传输中' : s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id), identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => ssh.input(id, text), output: () => s.output };
     }
     const p = terminals.get(id), s = local.get(id);
     if (!p || !s) throw Error('终端已关闭，请重新选择');
@@ -83,14 +107,21 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     if (!route || !im.valid(route)) throw Error('文件发送仅适用于当前已授权的企业微信会话');
     return require('./wecom-files').sendFile(im, route, file, options);
   };
-  const cli = new (require('./cli-session').CLISessions)({ target, sendFile, confirmTrust: async (id, directory, signal) => {
+  const cli = new (require('./cli-session').CLISessions)({ target, sendFile, confirmTrust: async (id, directory, signal, name) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
     if (!route || !im.valid(route)) return false;
+    if (name === 'codebuddy') {
+      const question = 'CodeBuddy 请求信任目录：' + directory + '\n信任后可读取、修改和执行文件。请选择信任范围；取消或超时将退出。';
+      const labels = ['仅信任当前目录', '信任父目录', '信任当前目录及子目录', '不信任并退出'];
+      const answer = await im.askCLIQuestions(route, [{ title: 'CodeBuddy 目录信任', question, fixedOptions: true, options: labels.map(label => ({label})) }], signal);
+      const index = labels.indexOf(answer?.[question]);
+      return index < 0 ? 3 : index;
+    }
     return im.confirm(route, 'Claude 请求确认工作目录是否可信', '目录：' + directory + '\n信任后，Claude 可在此目录读取、编辑文件及执行命令，具体操作仍受 CLI 自身权限设置控制。\n选择“不信任，退出”或超时将请求退出。', { title: 'Claude 目录信任', approveLabel: '信任目录', rejectLabel: '不信任，退出', signal });
   }, confirmPermission: async (id, request, signal) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
     if (!route || !im.valid(route)) return false;
-    const parameters = JSON.stringify(request.input, null, 2);
+    const parameters = require('./cli-permission-summary').permissionSummary(request.tool, request.input);
     if (parameters.length > 24000) { await im.say(route, 'Claude 操作参数过长，无法完整展示，本次未批准。请在本机核对。'); return false; }
     return im.confirm(route, 'Claude 请求执行操作：' + request.tool, '目录：' + request.cwd + '\n\n' + parameters + '\n\n仅针对本次操作，不设置永久允许。', { title: 'Claude 操作确认', approveLabel: '仅允许本次', rejectLabel: '拒绝本次', signal, timeout: 240000 });
   }, askQuestion: async (id, request, signal) => {
@@ -101,7 +132,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
     if (route && im.valid(route)) { if (metadata?.progress) await im.cliProgress(route, text, metadata.taskId); else await im.say(route, text); }
   } });
-  const ai = new ShellAI({ store, ssh, target, confirm, emit, auditFile: path.join(directory, 'shell-ai-audit.jsonl') });
+  const ai = new ShellAI({ store, ssh, target, confirm: confirmAI, emit, auditFile: path.join(directory, 'shell-ai-audit.jsonl') });
   const historyTarget = id => {
     const t = target(id), e = t.environment;
     const profile = t.profileId ? store.data.profiles.find(p => p.id === t.profileId) : null;
@@ -113,6 +144,12 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     if (!win || e.sender !== win.webContents || e.senderFrame !== win.webContents.mainFrame || new URL(e.senderFrame.url).origin !== `http://127.0.0.1:${port}`) throw Error('不允许此页面访问 SSH / AI 功能');
   }
   const handle = (name, fn) => ipcMain.handle('remote:' + name, async (e, args = {}) => { guard(e); try { return { ok: true, value: await fn(args) }; } catch (error) { return { ok: false, error: error.message }; } });
+  handle('cli-permission', ({sessionId}) => cli.cyclePermission(sessionId));
+  handle('approval-reply', ({ token, approved }) => {
+    const finish = approvals.get(token);
+    if (!finish) throw Error('此授权请求已结束');
+    finish(approved === true);
+  });
   handle('state', () => ({ profiles: store.list(), ai: store.aiConfig(), aiConfigs: store.aiList(), sessions: [...ssh.sessions.values()].map(s => ({ id: s.id, profileId: s.profileId, status: s.status, environment: s.environment })) }));
   handle('save-profile', p => store.save(p)); handle('delete-profile', ({ id }) => store.remove(id));
   handle('save-shortcut', p => store.saveShortcut(p));
@@ -133,6 +170,9 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     pending.finish(answers);
   });
   handle('save-ai', p => store.saveAI(p));
+  handle('reveal-ai-key', ({ id }) => { const config=store.aiList().find(c=>c.id===id); if(!config)throw Error('AI 配置不存在'); return store.modelConnection(config).apiKey; });
+  handle('reveal-im-secret', () => { const secret=im.config().secret;if(!secret)return '';try{return store.vault.decryptString(Buffer.from(secret,'base64'));}catch{throw Error('机器人凭据无法解密，请在此重新填写 Secret 并保存，或重新扫码');} });
+  handle('test-ai-model', p => require('./model-settings').testModel(store.modelConnection(p), p.modelSettings));
   handle('list-ai-models', p => require('./model-catalog').listModels(store.modelConnection(p)));
   handle('activate-ai', ({ id }) => store.activateAI(id));
   handle('deactivate-ai', ({ id }) => store.deactivateAI(id));
@@ -200,9 +240,17 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   }
   handle('ai-run', args => runAI(args)); handle('ai-stop', ({ id }) => ai.stop(id));
   handle('ai-takeover', ({ id }) => ai.takeover(id)); handle('ai-resume', ({ id }) => ai.resume(id));
+  handle('set-target-environment', ({id,kind}) => {
+    if(historySessions.has(id)||[...ai.runs.values()].some(run=>run.sessionId===id))throw Error('请先停止当前 AI 任务');
+    const environments={linux:{os:'linux',shell:'/bin/bash'},macos:{os:'darwin',shell:'/bin/zsh'},cmd:{os:'windows',shell:'cmd.exe'},powershell:{os:'windows',shell:'powershell.exe'}};
+    if(!Object.hasOwn(environments,kind))throw Error('请选择有效的目标系统');
+    const session=ssh.get(id);session.environment={...session.environment,...environments[kind],cwd:'',confirmedByUser:true};session.interactiveTargetUnknown=false;
+    ai.clear(id);emit('remote:status',{id,status:session.status,environment:session.environment});return session.environment;
+  });
   handle('target', ({ id }) => target(id).environment);
   im = new WecomService({ store, emit, target, runAI, releaseSession: id => history.release(id), stopAI: id => ai.stop(id),
     startCLI: (id, name, cwd) => { const t = target(id); if (t.pendingInput || historySessions.has(id)) throw Error('终端有未完成输入或 AI 任务'); return cli.start(id, name, cwd); },
+    cycleCLIPermission: id => cli.cyclePermission(id),
     runCLI: (id, prompt) => cli.run(id, prompt), stopCLI: id => cli.stop(id), leaveCLI: id => cli.leave(id), closeCLI: id => cli.close(id), activeCLI: id => cli.sessions.get(id)?.name, cliStatus: id => cli.status(id),
     createTerminal: options => new Promise((resolve, reject) => {
       const token = crypto.randomUUID();
@@ -211,6 +259,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     })
   });
   handle('im-state', () => { im.start(); return im.state(); });
+  handle('im-reconnect', () => im.reconnect());
   handle('im-save', args => im.save(args));
   handle('im-qr-start', () => im.qr.start()); handle('im-qr-cancel', () => im.qr.cancel());
   handle('im-bind', ({ userid }) => im.bind(userid)); handle('im-unbind', ({ userid }) => im.unbind(userid));
@@ -228,7 +277,8 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   });
   app.on('will-quit', () => { for (const id of ssh.sessions.keys()) ssh.disconnect(id); for (const id of ai.runs.keys()) ai.stop(id); });
   return {
-    ssh, guard, authInput, 
+    ssh, guard, authInput,
+    petState() { const s=im.state();return {status:s.status,error:s.error,enabled:s.enabled,allowExecution:s.allowExecution,lastReceivedAt:s.lastReceivedAt,lastSentAt:s.lastSentAt,pendingApprovals:s.pendingApprovals,healthEvents:s.healthEvents,users:s.users.map(()=>null),pendingUsers:s.pendingUsers.map(()=>null),routes:s.routes.map(r=>({running:r.running}))}; },
     noteInput(id, text) { cli.userInput(id, text); const s = ssh.sessions.get(id) || local.get(id); if (s) noteInput(s, text); },
     localStarted(id, shell, cwd) {
       let system = process.platform === 'win32' ? 'windows' : process.platform;

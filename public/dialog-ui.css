@@ -58,8 +58,54 @@
 .model-catalog-item span { min-width:0; overflow-wrap:anywhere; }
 .model-catalog-item small { display:block; color:var(--text-dim); }
 .model-discovery [data-model-status] { color:var(--text-dim); font-size:12px; }
+.ui-secret-field{display:flex;align-items:center;gap:6px;width:100%;min-width:0}
+.ui-secret-field input{flex:1;min-width:0}
+.ui-secret-field .ui-secret-toggle{display:flex;align-items:center;justify-content:center;flex:none;width:34px;height:34px;padding:6px}
 @media(max-width:640px) {
   :is(.appearance-dialog,.remote-dialog,.im-settings,.input-dialog) { max-width:calc(100vw - 24px); padding:16px; }
   .im-grid,.remote-dialog .remote-form { grid-template-columns:1fr; }
   .appearance-overlay { padding:12px; }
 }
+
+/* Model configuration: selectable catalog, saved models and per-model checks. */
+.remote-dialog.model-config-dialog{width:min(1000px,calc(100vw - 64px));max-height:88vh;padding:24px}
+.model-config-dialog>header{position:sticky;top:-24px;background:var(--bg-2);z-index:3;padding-top:12px}
+.model-config-dialog .model-form{gap:18px}
+.model-config-dialog .model-form>label{gap:8px}
+.model-config-dialog .model-form>label>input,.model-config-dialog .model-form>label>select{padding:12px;border-radius:9px}
+.model-config-dialog .model-form>.remote-actions:last-child{position:sticky;bottom:-24px;background:var(--bg-2);padding:16px 0;margin:0;justify-content:flex-end;border-top:1px solid var(--border);z-index:2}
+.model-discovery>.remote-actions{padding:12px 16px;background:var(--bg-3);border-radius:9px;display:flex;align-items:center;gap:16px}
+.model-picker-toolbar{display:flex;justify-content:space-between;align-items:center;gap:20px;margin:20px 0 12px}
+.model-picker-toolbar input{max-width:260px}
+.model-card-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:10px;max-height:320px;overflow:auto}
+.remote-dialog .model-choice{display:flex;flex-direction:row;gap:12px;align-items:center;padding:16px;border:1px solid var(--border);border-radius:10px;cursor:pointer;min-height:72px;background:var(--bg)}
+.remote-dialog .model-choice.chosen{border-color:var(--accent);background:var(--bg-3)}
+.model-choice input{flex:none;width:17px;height:17px}.model-choice strong,.model-choice small{display:block;overflow-wrap:anywhere}.model-choice small{color:var(--text-dim);font-size:11px;margin-top:5px}
+.model-manual{display:flex;gap:8px;margin-top:14px}.model-manual input{flex:1}
+.model-selected-table{overflow:auto;border:1px solid var(--border);border-radius:10px}
+.model-selected-table table{width:100%;border-collapse:collapse;text-align:left;font-size:12px}
+.model-selected-table th{background:var(--bg-3);color:var(--text-dim)}
+.model-selected-table td,.model-selected-table th{padding:12px;border-bottom:1px solid var(--border)}
+.model-selected-table td:first-child{max-width:320px;overflow-wrap:anywhere}.model-selected-table td:last-child{min-width:215px}
+.model-selected-table .remote-actions{flex-wrap:nowrap;gap:5px;margin:0}
+.model-selected-table .model-star{border:0;background:transparent;font-size:22px;padding:0 7px 0 0}.model-star.active{color:var(--accent)}
+.model-test-result{display:block;max-width:320px;overflow-wrap:anywhere;white-space:pre-wrap;margin-top:7px;color:var(--text-dim)}
+.model-role-settings{margin-top:20px;border:1px solid var(--border);border-radius:9px;padding:14px}.model-role-settings summary{cursor:pointer;font-weight:600;margin-bottom:12px}
+.model-parameter-dialog{width:min(660px,90vw)}
+
+/* Shared confirmations: explicit target, scrollable command and stable actions. */
+.remote-dialog.ui-confirm{width:min(620px,calc(100vw - 32px));max-height:85vh;padding:0;overflow:hidden}
+.ui-confirm>header{margin:0;padding:20px 24px;gap:12px}
+.ui-confirm>header h2{flex:1;font-size:16px}
+.ui-confirm-icon{display:grid;place-items:center;width:34px;height:34px;flex:none;border-radius:10px;background:var(--bg-3);color:var(--accent);font-size:20px;font-weight:600}
+.ui-confirm-body{padding:4px 24px 20px;max-height:calc(85vh - 160px);overflow:auto}
+.ui-confirm-description{color:var(--text-dim);margin:12px 0 18px;line-height:1.7}
+.ui-confirm-facts{display:grid;grid-template-columns:100px minmax(0,1fr);gap:10px 16px;padding:14px 16px;border:1px solid var(--border);border-radius:9px;background:var(--bg);margin:0 0 18px}
+.ui-confirm-facts dt{color:var(--text-dim)}.ui-confirm-facts dd{margin:0;overflow-wrap:anywhere}
+.ui-confirm-command>span{font-size:12px;color:var(--text-dim)}
+.ui-confirm-command pre{margin:8px 0 16px;max-height:240px;overflow:auto;padding:16px;background:var(--bg);border:1px solid var(--border);border-radius:9px;font-family:var(--font-mono);line-height:1.7;white-space:pre-wrap;overflow-wrap:anywhere;user-select:text}
+.ui-confirm-note{margin:0;color:var(--text-dim);font-size:12px;line-height:1.7}
+.ui-confirm>footer{display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid var(--border);background:var(--bg-3)}
+.ui-confirm>footer button{min-width:90px;padding:8px 16px}
+.remote-dialog.ui-confirm .ui-confirm-danger{background:var(--red,#df665d);border-color:var(--red,#df665d);color:#fff}
+.ui-confirm [hidden]{display:none}

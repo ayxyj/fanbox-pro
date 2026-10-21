@@ -7,6 +7,7 @@ const http = require('http');
 const crypto = require('crypto');
 const { pipeline } = require('stream/promises');
 const { StringDecoder } = require('string_decoder');
+const { SSHZmodem } = require('./ssh-zmodem');
 const { noteInput } = require('./shell-context');
 const call = (object, method, ...args) => new Promise((resolve, reject) => {
   const timer = setTimeout(() => reject(Error(`SSH ${method} 请求超时`)), 30000);
@@ -16,7 +17,7 @@ const call = (object, method, ...args) => new Promise((resolve, reject) => {
 const quote = value => "'" + String(value).replace(/'/g, "'\\''") + "'";
 
 class SSHService {
-  constructor({ store, confirm, emit, ask }) { this.store = store; this.confirm = confirm; this.emit = emit; this.ask = ask || (async () => { throw Error('需要输入 SSH 认证信息'); }); this.sessions = new Map(); this.transfers = new Map(); }
+  constructor({ store, confirm, emit, ask, chooseUpload, chooseDownload }) { this.chooseUpload = chooseUpload; this.chooseDownload = chooseDownload; this.store = store; this.confirm = confirm; this.emit = emit; this.ask = ask || (async () => { throw Error('需要输入 SSH 认证信息'); }); this.sessions = new Map(); this.transfers = new Map(); }
   async proxySocket(p) {
     if (!p.proxy?.host) return undefined;
     const proxy = p.proxy, port = Number(proxy.port);
@@ -128,7 +129,9 @@ class SSHService {
     try {
       s.client = await this.connectProfile(profileId, [], clients, s.abort.signal, id);
       if (s.closed) throw Error('连接已取消');
-      const probe = await this.execClient(s.client, "printf '__FANBOX_OS__'; uname -s; printf '__FANBOX_SHELL__%s\\n' \"$SHELL\"; printf '__FANBOX_CWD__'; pwd", { timeout: 8000 }).catch(() => ({ output: '' }));
+      // Bastions may consume a login on the first session/exec request.
+      // Default to opening only the interactive shell; probing is explicit opt-in.
+      const probe = profile.detectEnvironment === true ? await this.execClient(s.client, "printf '__FANBOX_OS__'; uname -s; printf '__FANBOX_SHELL__%s\\n' \"$SHELL\"; printf '__FANBOX_CWD__'; pwd", { timeout: 8000 }).catch(() => ({ output: '' })) : { output: '' };
       const system = probe.output.match(/__FANBOX_OS__(Linux|Darwin|FreeBSD|OpenBSD)/)?.[1];
       if (system) s.environment = { os: system.toLowerCase(), shell: probe.output.match(/__FANBOX_SHELL__([^\r\n]+)/)?.[1] || '/bin/sh', cwd: probe.output.match(/__FANBOX_CWD__([^\r\n]+)/)?.[1] || '/', host: profile.host };
       // Unknown targets remain usable as terminals, but AI execution is disabled until identified.
@@ -136,7 +139,8 @@ class SSHService {
       if (s.closed) { s.stream.close(); throw Error('连接已取消'); }
       const decoder = new StringDecoder('utf8');
       const data = chunk => { const text = decoder.write(chunk); s.output = (s.output + text).slice(-32000); this.emit('pty:data', { id, data: text }); };
-      s.stream.on('data', data); s.stream.stderr.on('data', data);
+      if (this.chooseUpload && this.chooseDownload) s.zmodem = new SSHZmodem({ stream: s.stream, terminal: data, chooseUpload: this.chooseUpload, chooseDownload: this.chooseDownload });
+      s.stream.on('data', chunk => s.zmodem ? s.zmodem.consume(chunk) : data(chunk)); s.stream.stderr.on('data', data);
       s.stream.on('error', error => this.emit('remote:status', { id, status: 'error', error: error.message }));
       s.stream.once('close', () => this.disconnect(id)); s.client.once('close', () => this.disconnect(id));
       s.status = 'connected'; this.emit('remote:status', { id, status: s.status, environment: s.environment });
@@ -146,13 +150,14 @@ class SSHService {
   disconnect(id) {
     const s = this.sessions.get(id); if (!s || s.closed) return;
     s.closed = true;
-    s.abort.abort();
+    s.abort.abort(); s.zmodem?.close();
     for (const t of this.transfers.values()) if (t.sessionId === id) t.abort.abort();
     s.stream?.close(); for (const client of s.clients.slice().reverse()) client.end(); this.sessions.delete(id);
     this.emit('remote:status', { id, status: 'disconnected' }); this.emit('pty:exit', { id, exitCode: 0 });
   }
   get(id) { const s = this.sessions.get(id); if (!s || s.closed || s.status !== 'connected') throw Error('SSH 会话未连接'); return s; }
-  input(id, data) { const s = this.get(id); noteInput(s, data); s.stream.write(data); }
+  async detectEnvironment(id, signal) { const s=this.get(id);if(s.zmodem?.job)throw Error('文件传输中，请完成后再操作终端');const detected=await require('./ssh-environment').detectEnvironment(s,signal);if(this.get(id)!==s)throw Error('SSH 会话已更换');s.environment={...s.environment,...detected};s.interactiveTargetUnknown=false;this.emit('remote:status',{id,status:s.status,environment:s.environment});return {...s.environment,interactiveTargetUnknown:false}; }
+  input(id, data) { const s = this.get(id); if (s.zmodem?.input(data)) return; s.inputRevision=(s.inputRevision||0)+1; noteInput(s, data); s.stream.write(data); }
   resize(id, cols, rows) { this.get(id).stream.setWindow(rows, cols, 0, 0); }
   execClient(client, command, { timeout = 60000, signal, onData } = {}) {
     return new Promise((resolve, reject) => {

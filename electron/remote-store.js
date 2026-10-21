@@ -59,6 +59,7 @@ class RemoteStore {
     const secrets = input.clearCredentials ? {} : this.secret(id, old?.credentials);
     for (const key of ['password', 'passphrase', 'proxyPassword']) if (input[key]) secrets[key] = String(input[key]);
     const p = { id, name: String(input.name || input.host), group: String(input.group || ''), host: String(input.host).trim(), port,
+      detectEnvironment: input.detectEnvironment === undefined ? old?.detectEnvironment === true : input.detectEnvironment === true,
       shortcuts: old?.shortcuts || [], terminalType: input.terminalType || old?.terminalType || 'xterm',
       username: String(input.username).trim(), auth: input.auth === 'key' ? 'key' : 'password', keyPath: String(input.keyPath || ''),
       jumpId: input.jumpId || '', proxy: input.proxy || null, policy: input.policy ? { mode: input.policy.mode, interactive: !!input.policy.interactive } : null, remember: !!input.remember };
@@ -153,6 +154,11 @@ class RemoteStore {
     if (protocol === 'anthropic' && !allowed.includes(config.defaultRole)) throw Error('无效默认模型用途');
     if (protocol === 'anthropic' && input.modelSlots) config.model = config.modelSlots[config.defaultRole];
     if (!config.model || config.model.length > 512) throw Error('请选择或填写默认用途对应的模型');
+    config.selectedModels = require('./model-settings').modelSettings(input.selectedModels || old.selectedModels || []);
+    for (const model of [config.model,...Object.values(config.modelSlots)].filter(Boolean)) {
+      if (!config.selectedModels.some(item=>item.id===model)) config.selectedModels.push({id:model});
+    }
+    if (config.selectedModels.length > 100) throw Error('最多保存 100 个模型');
     const index = this.data.aiConfigs.findIndex(p => p.id === id);
     if (index < 0) this.data.aiConfigs.push(config); else this.data.aiConfigs[index] = config;
     if (input.activate || (index < 0 && this.data.aiConfigs.length === 1 && input.activate !== false)) this.data.activeAIId = id;

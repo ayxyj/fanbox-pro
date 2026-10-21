@@ -16,7 +16,14 @@
     try { const text=await read(); if(text)xterm.paste(text); } catch(err) { window.fanboxClipboardError?.('粘贴失败：'+err.message); }
   }
   function attach(xterm, host) {
+    let composing = false;
+    host.addEventListener('compositionstart', () => { composing = true; host.dataset.imeComposing = 'true'; }, true);
+    host.addEventListener('compositionend', () => { composing = false; delete host.dataset.imeComposing; }, true);
+    host.addEventListener('focusout', () => { composing = false; delete host.dataset.imeComposing; });
     xterm.attachCustomKeyEventHandler(event => {
+      // Do not cancel the browser's IME event. Only bypass xterm's key parser:
+      // compositionend remains responsible for committing the text exactly once.
+      if (composing || event.isComposing) return false;
       const key=event.key.toLowerCase(), modifier=event.ctrlKey || event.metaKey;
       if(!modifier || event.altKey)return true;
       if(key==='c' && (xterm.hasSelection() || event.shiftKey || event.metaKey)) {
@@ -32,18 +39,31 @@
     });
     host.addEventListener('contextmenu',event=>{
       event.preventDefault(); event.stopPropagation();
+      const session = typeof term !== 'undefined' ? term.sessions.find(s=>s.xterm===xterm) : null;
+      showMenu(event,[{label:'复制选中内容',fn:()=>copy(xterm),disabled:!xterm.hasSelection()},{label:'粘贴',fn:()=>paste(xterm)},{label:'全选',fn:()=>xterm.selectAll()},...(session ? window.remoteUI?.shortcutMenu(session.id) || [] : [])]);
+    });
+  }
+  function showMenu(event, items) {
       closeMenu?.();
       const menu=document.createElement('div');menu.className='terminal-context-menu';menu.setAttribute('role','menu');
       const close=()=>{menu.remove();document.removeEventListener('pointerdown',outside,true);document.removeEventListener('keydown',escape,true);if(closeMenu===close)closeMenu=null;};
       closeMenu=close;
       const outside=e=>{if(!menu.contains(e.target))close();}; const escape=e=>{if(e.key==='Escape')close();};
-      for(const [label,action,disabled] of [['复制选中内容',()=>copy(xterm),!xterm.hasSelection()],['粘贴',()=>paste(xterm),false],['全选',()=>xterm.selectAll(),false]]){
-        const button=document.createElement('button');button.textContent=label;button.disabled=disabled;button.onclick=()=>{close();void action();};menu.appendChild(button);
-      }
+      const append = (parent, entries) => {
+        for (const item of entries) {
+          if (item.children) {
+            const branch=document.createElement('details');branch.className='terminal-menu-group';
+            const summary=document.createElement('summary');summary.textContent=item.label;branch.append(summary);
+            const children=document.createElement('div');children.className='terminal-menu-children';append(children,item.children);branch.append(children);parent.append(branch);
+          } else {
+            const button=document.createElement('button');button.textContent=item.label;button.disabled=!!item.disabled;button.onclick=()=>{close();void item.fn();};parent.append(button);
+          }
+        }
+      };
+      append(menu, items);
       document.body.appendChild(menu);
-      menu.style.left=Math.max(0,Math.min(event.clientX,innerWidth-menu.offsetWidth-6))+'px';menu.style.top=Math.max(0,Math.min(event.clientY,innerHeight-menu.offsetHeight-6))+'px';
+      const position = () => { menu.style.left=Math.max(0,Math.min(event.clientX,innerWidth-menu.offsetWidth-6))+'px';menu.style.top=Math.max(0,Math.min(event.clientY,innerHeight-menu.offsetHeight-6))+'px'; }; position();menu.addEventListener('toggle',position,true);
       document.addEventListener('pointerdown',outside,true);document.addEventListener('keydown',escape,true);
-    });
   }
-  window.fbTerminalClipboard={attach,copy,paste};
+  window.fbTerminalClipboard={attach,copy,paste,showMenu};
 })();

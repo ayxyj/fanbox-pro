@@ -40,6 +40,7 @@ let seq=0;const frame=(user,text,msgid=String(++seq))=>({body:{aibotid:'bot',msg
  await service.accept(frame('alice','/list 999'));assert.equal(service.focused('alice'),second);assert(sent.at(-1).body.markdown.content.includes('不存在'));
  await service.accept(frame('alice','/list bad'));assert(sent.at(-1).body.markdown.content.includes('用法'));
  await service.accept(frame('alice','/list 1'));assert.equal(service.focused('alice'),route);assert.equal(runs.length,runCount);
+ let stopped=0;service.stopCLI=()=>stopped++;const previousMode=route.mode;route.mode='claude';await service.accept(frame('alice','/stop'));assert.equal(stopped,1);assert(sent.at(-1).body.markdown.content.includes('已请求停止'));route.mode=previousMode;
  await service.accept(frame('alice','continued'));assert.equal(runs.at(-1).sessionId,route.sessionId);
  await service.accept({...frame('alice','quoted continuation'),body:{...frame('alice','quoted continuation').body,quote:{msgtype:'text',text:{content:'[CodeChat:'+second.id+'] old output'}}}});assert.equal(runs.at(-1).sessionId,second.sessionId);assert.equal(service.focused('alice'),second);
  const count=runs.length;await service.accept({...frame('bob','wrong quote'),body:{...frame('bob','wrong quote').body,quote:{msgtype:'text',text:{content:'[CodeChat:'+second.id+']'}}}});assert.equal(runs.length,count);

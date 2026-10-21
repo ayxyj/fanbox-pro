@@ -6,6 +6,7 @@ const { RemoteStore } = require('../electron/remote-store');
   const requests = [];
   const server = http.createServer((req,res) => {
     requests.push({url:req.url,auth:req.headers.authorization,key:req.headers['x-api-key'],version:req.headers['anthropic-version']});
+    if(req.url.startsWith('/gateway/')) { if(req.url!=='/gateway/v1/models'||req.headers.authorization!=='Bearer fixture-gateway'){res.writeHead(401);return res.end();}res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({data:[{id:'gateway-model'}]})); }
     if(req.url.startsWith('/bad/')) { res.writeHead(401);return res.end('secret should not be echoed'); }
     if(req.url.startsWith('/redirect/')) { res.writeHead(302,{location:'/v1/models'});return res.end(); }
     res.setHeader('Content-Type','application/json');
@@ -30,6 +31,11 @@ const { RemoteStore } = require('../electron/remote-store');
     assert.equal(authHeaders({...ark,baseUrl:'https://api.anthropic.com'})['x-api-key'],'fixture-ark');
     assert.equal(authHeaders({...ark,baseUrl:'https://ark.cn-beijing.volces.com.attacker.test/api/coding'}).Authorization,undefined);
     assert.equal(catalogEndpoint(ark.baseUrl,'anthropic'),'https://ark.cn-beijing.volces.com/api/coding/v3/models');
+    assert.equal(catalogEndpoint(base,'openai'),base+'/v1/models');
+    assert.equal(catalogEndpoint(base+'/v1/models','openai'),base+'/v1/models');
+    assert.equal(catalogEndpoint(base+'/v1/models','anthropic'),base+'/v1/models');
+    await listModels({baseUrl:base,apiKey:'fixture-root'});assert.equal(requests.at(-1).url,'/v1/models');assert.equal(requests.at(-1).auth,'Bearer fixture-root');
+    assert.equal((await listModels({baseUrl:base+'/gateway',protocol:'anthropic',apiKey:'fixture-gateway'}))[0].id,'gateway-model');assert.equal(requests.at(-1).url,'/gateway/v1/models');assert.equal(requests.at(-1).key,undefined);
     const originalFetch=global.fetch;
     try { global.fetch=async(url,options)=>{assert.equal(String(url),'https://ark.cn-beijing.volces.com/api/coding/v3/models');assert.equal(options.headers.Authorization,'Bearer fixture-ark');return new Response(JSON.stringify({data:[{id:'fixture-model'}]}));};assert.equal((await listModels(ark))[0].id,'fixture-model'); }
     finally{global.fetch=originalFetch;}

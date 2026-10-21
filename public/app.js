@@ -2078,6 +2078,15 @@ function bindEvents() {
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-terminal').onclick = () => term.toggle();
   $('#term-claude').onclick = () => term.launchAgent('claude --dangerously-skip-permissions');
+  $('#term-permission').onclick = async () => {
+    const button = $('#term-permission'); button.disabled = true;
+    try {
+      if (!term.active) throw Error('请先选择 Claude 终端');
+      const r = await window.fanboxRemote.call('cli-permission', {sessionId:term.active});
+      if (!r.ok) throw Error(r.error);
+      toast(r.value);
+    } catch (e) { toast(e.message); } finally { button.disabled = false; }
+  };
   $('#term-codebuddy').onclick = () => term.launchAgent('codebuddy');
   $('#term-codex').onclick = () => term.launchAgent('codex');
   usagePanel.bind();
@@ -2182,6 +2191,7 @@ function bindEvents() {
   $('#cmdk').onclick = (e) => { if (e.target.id === 'cmdk') cmdk.close(); };
 
   document.addEventListener('keydown', (e) => {
+    if (e.isComposing || e.keyCode === 229 || e.target.closest?.('[data-ime-composing]')) return;
     if (e.key === 'Escape' && $('#context-menu')) { closeContextMenu(); return; }
     const cmdkOpen = !$('#cmdk').classList.contains('hidden');
     const lbOpen = !!document.querySelector('.lightbox');

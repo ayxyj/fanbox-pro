@@ -1,0 +1,10 @@
+'use strict';
+const fs=require('fs'),path=require('path');
+require('./build-user-guide');
+const source=path.resolve(__dirname,'../docs/user-guide');
+const output=path.resolve(__dirname,'../dist/fanbox-pro-guide-web');
+fs.mkdirSync(output,{recursive:true});
+fs.copyFileSync(path.join(source,'index.html'),path.join(output,'index.html'));
+fs.cpSync(path.join(source,'assets'),path.join(output,'assets'),{recursive:true});
+fs.writeFileSync(path.join(output,'部署说明.txt'),'将 index.html 和 assets 文件夹一起上传到网站目录。\r\n设置默认首页为 index.html，使用 UTF-8。\r\n支持网站根目录或任意子目录，不需要 Node.js、数据库或路由重写。\r\n例如上传到 /help/ 后访问 https://你的域名/help/ 。\r\n升级时一起替换 index.html 和 assets。\r\n');
+console.log('Web deployment directory: '+output);

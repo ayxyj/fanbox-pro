@@ -9,6 +9,9 @@ const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
+const { isHomeAppDataChange } = require('./watch-filter');
+// Single-instance events can arrive while startup dependencies are loading.
+let win = null;
 
 // Preserve existing appearance/window settings when renaming the Windows product.
 // An explicit --user-data-dir (including test profiles) always takes precedence.
@@ -18,6 +21,26 @@ if (process.platform === 'win32' && !process.argv.some(a => a === '--user-data-d
 }
 
 // 复用现有后端：require 即 listen 127.0.0.1:PORT，不自动开浏览器
+// Acquire the profile lock before starting the HTTP server or opening stores.
+if (!app.requestSingleInstanceLock()) {
+  app.exit(0);
+  process.exit(0);
+}
+app.on('second-instance', () => {
+  if (!win || win.isDestroyed()) return;
+  if (win.isMinimized()) win.restore();
+  win.show();
+  win.focus();
+});
+global.__fanboxStartupError = error => {
+  app.whenReady().then(() => {
+    const detail = error.code === 'EADDRINUSE'
+      ? `端口 ${PORT} 已被占用。旧版 FanBox 可能仍在后台运行，请先退出旧版再启动。\n关闭旧版会中断其中的终端和 SSH 会话。`
+      : `本地服务启动失败：${error.message}`;
+    dialog.showErrorBox('FanBox 启动失败', detail);
+    app.exit(1);
+  });
+};
 process.env.FANBOX_NO_OPEN = '1';
 const PORT = Number(process.env.GITSYNC_PORT || process.env.FANBOX_PORT) || 4569;
 require('../server.js');
@@ -29,8 +52,8 @@ catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）�
 
 const terminals = new Map();
 const terminalCwds = new Map(); // id -> cwd（Windows 无 /proc/pid/cwd / lsof，直接缓存）
-let win = null;
-const remoteWorkspace = require('./remote-workspace').installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow: () => win, terminals, terminalCwds, port: PORT });
+let desktopPet = null;
+const remoteWorkspace = require('./remote-workspace').installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow: () => win, terminals, terminalCwds, port: PORT, onIMState: state => desktopPet?.publish(state) });
 
 // ---------- 窗口尺寸/位置记忆 ----------
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -53,7 +76,8 @@ function createWindow() {
     width: b.width, height: b.height, x: b.x, y: b.y,
     minWidth: 920, minHeight: 600,
     icon: path.join(__dirname, '..', 'public', 'brand-icon.png'),
-    titleBarStyle: isMac ? 'hiddenInset' : 'default',
+    titleBarStyle: isMac ? 'hiddenInset' : process.platform === 'win32' ? 'hidden' : 'default',
+    ...(process.platform === 'win32' ? {titleBarOverlay:{color:'#151714',symbolColor:'#e4e7df',height:34},autoHideMenuBar:true} : {}),
     backgroundColor: '#0b0c0a',
     ...(isMac ? { vibrancy: 'sidebar', visualEffectState: 'active' } : {}),
     webPreferences: {
@@ -62,6 +86,7 @@ function createWindow() {
       nodeIntegration: false,
     },
   });
+  if(process.platform === 'win32') win.setMenuBarVisibility(false);
   // 拖动/缩放后防抖记忆，关窗再存一次兜底
   let bt = null;
   const remember = () => { clearTimeout(bt); bt = setTimeout(saveBounds, 400); };
@@ -79,7 +104,8 @@ function createWindow() {
     return { action: 'allow' };
   });
 
-  win.on('closed', () => { win = null; });
+  win.webContents.once('did-finish-load', () => { if(!desktopPet) desktopPet=require('./desktop-pet').createDesktopPet({port:PORT,getMain:()=>win,getState:()=>remoteWorkspace.petState()}); });
+  win.on('closed', () => { desktopPet?.destroy(); desktopPet=null; win = null; });
 }
 
 app.whenReady().then(() => {
@@ -303,10 +329,10 @@ function buildMenu() {
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
       { type: 'separator' }, { role: 'togglefullscreen', label: M('全屏', 'Full Screen') },
     ] },
-    { role: 'window', label: M('窗口', 'Window'), submenu: [{ role: 'minimize', label: M('最小化', 'Minimize') }, { role: 'zoom' }] },
     { label: M('设置', 'Settings'), submenu: [{ label: M('AI 配置…', 'AI Configuration…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:settings'); } }, { label: M('IM 远程干预与通知…', 'IM Remote Control…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:im-settings'); } }] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+  if(process.platform === 'win32' && win) win.setMenuBarVisibility(false);
 }
 ipcMain.on('theme:changed', (event, value) => {
   if(!win || win.isDestroyed() || event.sender !== win.webContents) return;
@@ -517,6 +543,7 @@ function startWatch(dir) {
     const w = fs.watch(dir, { persistent: false, recursive }, (evt, filename) => {
       if (!win || win.isDestroyed()) return;
       const name = filename ? filename.toString() : null;
+      if (isHomeAppDataChange(dir, name, os.homedir())) return;
       // FSEvents 连「文件只是被读了一下」（atime/元数据更新）都报：agent cat/Read 个文件、
       // Spotlight 扫一遍都会触发。mtime/ctime 都不新鲜 = 内容根本没动过，丢弃；
       // stat 失败 = 刚被删，是真变更，照常转发
@@ -564,3 +591,8 @@ global.__fanboxAgent = { create: ({ cwd, autorun }) => new Promise(resolve => {
  scheduleRequests.set(reqId, { resolve, timer });
  win.webContents.send('schedule:create', { reqId, cwd, command: autorun });
 }) };
+
+ipcMain.handle('window:menus',event=>{remoteWorkspace.guard(event);return process.platform==='win32'?Menu.getApplicationMenu().items.map(item=>item.label):[];});
+ipcMain.handle('window:menu',(event,{index,x,y}={})=>{remoteWorkspace.guard(event);if(process.platform!=='win32'||!Number.isInteger(index)||!Number.isFinite(x)||!Number.isFinite(y))return;const item=Menu.getApplicationMenu()?.items[index];item?.submenu?.popup({window:win,x:Math.max(0,Math.round(x)),y:Math.max(0,Math.round(y))});});
+
+ipcMain.handle('window:colors',(event,{color,symbolColor}={})=>{remoteWorkspace.guard(event);if(process.platform!=='win32'||!/^#[0-9a-f]{6}$/i.test(color)||!/^#[0-9a-f]{6}$/i.test(symbolColor))return;win.setTitleBarOverlay({color,symbolColor,height:34});});

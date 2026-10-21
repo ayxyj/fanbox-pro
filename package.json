@@ -1,6 +1,6 @@
 {
   "name": "fanbox-pro",
-  "version": "1.0.1",
+  "version": "1.0.2",
   "description": "fanbox-pro — Windows file browser, embedded terminal, Git repository management and scheduled tasks",
   "bin": {
     "fanbox-pro": "server.js"
@@ -101,7 +101,8 @@
     "node-pty": "^1.0.0",
     "qrcode": "^1.5.4",
     "socks": "^2.8.10",
-    "ssh2": "^1.17.0"
+    "ssh2": "^1.17.0",
+    "zmodem.js": "^0.1.10"
   },
   "devDependencies": {
     "@electron/rebuild": "^3.7.0",

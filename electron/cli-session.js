@@ -3,6 +3,7 @@ const { inspectProcess } = require('./terminal-process');
 const fs = require('fs'), path = require('path');
 const { createResultChannel } = require('./cli-result-channel');
 const { CLIProgress } = require('./cli-progress');
+const { watchPermissionStatus } = require('./cli-permission-status');
 const { randomUUID } = require('crypto');
 const NAMES = ['claude', 'codex', 'codebuddy'];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -37,18 +38,21 @@ class CLISessions {
       this.sessions.set(id, s);
       // PTY bytes are only inspected for a bounded error notice, never forwarded.
       s.unsubscribe = t.subscribeOutput(text => {
-        if (s.startup && s.name === 'claude' && !s.trustRequested) {
+        if (s.startup && ['claude', 'codebuddy'].includes(s.name) && !s.trustRequested) {
           s.startupOutput = (s.startupOutput + text).slice(-16000);
           const visible = s.startupOutput.replace(/\x1b\[(\d*)C/g, (_, n) => ' '.repeat(Math.min(Number(n) || 1, 1000))).replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
-          const match = visible.match(/Accessing\s*workspace:\s*([\s\S]+?)\s*Quick\s*safety\s*check:/);
-          if (match && /1\.\s*Yes,\s*I\s*trust\s*this\s*folder/.test(visible) && /2\.\s*No,\s*exit/.test(visible)) {
+          const clean = visible.replace(/[│┃]/g, '');
+          const buddy = s.name === 'codebuddy';
+          const buddyMatch = clean.match(/Do\s*you\s*trust\s*the\s*files\s*in\s*this\s*folder\?\s*([\s\S]+?)\s*CodeBuddy\s*Code\s*may/);
+          const match = buddy ? buddyMatch : visible.match(/Accessing\s*workspace:\s*([\s\S]+?)\s*Quick\s*safety\s*check:/);
+          if (match && (buddy ? /1\.\s*Trust\s*folder\s*only/.test(clean) && /2\.\s*Trust\s*parent\s*folder/.test(clean) && /3\.\s*Trust\s*folder\s*and\s*all\s*subdirectories/.test(clean) && /4\.\s*No,\s*exit/.test(clean) : /1\.\s*Yes,\s*I\s*trust\s*this\s*folder/.test(visible) && /2\.\s*No,\s*exit/.test(visible))) {
             const actual = t.environment?.cwd;
             const compact = value => String(value).replace(/\s/g, '').replaceAll('/', '\\').toLowerCase();
             if (actual && compact(match[1]) !== compact(actual)) return;
             s.trustRequested = true; s.trustPending = true;
             s.trustController = new AbortController();
             this.requestTrust(id, s, actual || match[1].trim()).catch(() => {
-              if (this.sessions.get(id) === s) this.deliver(id, s, '目录信任确认未完成，请在本机检查 CLI 或重新进入 /claude。');
+              if (this.sessions.get(id) === s) this.deliver(id, s, '目录信任确认未完成，请在本机检查 CLI 或重新进入 /' + s.name + '。');
             });
           }
         }
@@ -56,7 +60,7 @@ class CLISessions {
         s.tail = (s.tail + text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '')).slice(-6000);
         if (!s.errorNotified && /(?:API error[\s\S]{0,1000}(?:429|usage.{0,40}(?:quota|limit)|quota|rate.limit)|exceeded the .{0,40}usage|hit your .{0,30}limit)/i.test(s.tail)) {
           s.errorNotified = true; if (s.progress) s.progress.paused = true;
-          this.deliver(id, s, s.name + ' 服务额度不足或触发限流，暂未取得结果。CLI 可能仍在重试；可发送 /停止 中断，或 /aiquit 退出。');
+          this.deliver(id, s, s.name + ' 服务额度不足或触发限流，暂未取得结果。CLI 可能仍在重试；可发送 /stop 中断，或 /aiquit 退出。');
         }
       });
       t.input(command + s.channel.args + '\r');
@@ -76,17 +80,22 @@ class CLISessions {
   }
   async requestTrust(id, s, directory) {
     const signal = s.trustController.signal;
-    const approved = await this.confirmTrust(id, directory, signal);
+    const approved = await this.confirmTrust(id, directory, signal, s.name);
     if (signal.aborted || this.sessions.get(id) !== s || !s.trustPending) return;
     const t = this.target(id), state = await this.inspect(t);
-    if (signal.aborted || this.sessions.get(id) !== s || t.identity !== s.identity || state.name !== 'claude') return;
+    if (signal.aborted || this.sessions.get(id) !== s || t.identity !== s.identity || state.name !== s.name) return;
     // Select explicitly instead of depending on the default focus. Local input cancels this card.
-    t.input(approved ? '\x1b[A' : '\x1b[B');
+    const choice = s.name === 'codebuddy' ? (Number.isInteger(approved) && approved >= 0 && approved <= 3 ? approved : 3) : (approved ? 0 : 1);
+    if (s.name === 'codebuddy') {
+      // The captured prompt starts on option 1; any local input cancels this request.
+      if (choice === 3) t.input('\x1b');
+      else if (choice) t.input('\x1b[B'.repeat(choice));
+    } else t.input(approved ? '\x1b[A' : '\x1b[B');
     await this.wait(100);
     if (signal.aborted || this.sessions.get(id) !== s) return;
-    t.input('\r');
+    if (!(s.name === 'codebuddy' && choice === 3)) t.input('\r');
     s.startup = false; s.trustPending = false;
-    this.deliver(id, s, approved ? '已在 Claude 中确认信任目录：' + directory + '。可以继续发送消息。' : '已选择不信任并请求退出 Claude。');
+    this.deliver(id, s, choice < (s.name === 'codebuddy' ? 3 : 1) ? '已在 ' + s.name + ' 中确认信任：' + directory + (s.name === 'codebuddy' ? '（' + ['仅当前目录','父目录','当前目录及子目录'][choice] + '）' : '') + '。可以继续发送消息。' : '已选择不信任并请求退出 ' + s.name + '。');
   }
   async requestPermission(id, s, event) {
     if (s.permissionSeen.has(event.key)) return;
@@ -136,6 +145,27 @@ class CLISessions {
     else if (event.kind === 'missing') this.deliver(id, s, 'CLI 已结束本轮，但当前版本未提供最终回复。请查看本机 CLI 并检查版本；未转发终端界面内容。');
     else if (!s.errorNotified) this.deliver(id, s, s.name + ' 本轮未完成：' + String(event.text || 'CLI 返回错误').slice(0, 2000));
   }
+  async cyclePermission(id) {
+    return this.exclusive(id, async () => {
+      const t = this.target(id), s = this.sessions.get(id);
+      if (s?.trustPending || s?.permissions.size) throw Error('请先处理当前信任或操作确认，再切换权限模式');
+      const state = await this.inspect(t);
+      if (this.target(id).identity !== t.identity || this.sessions.get(id) !== s || state.name !== 'claude') throw Error('当前终端不是 Claude CLI，未发送权限切换快捷键');
+      if (s?.trustPending || s?.permissions.size) throw Error('请先处理当前确认');
+      const cancelledAt = s?.interactionsCancelledAt;
+      const watcher = watchPermissionStatus(t);
+      try {
+        t.input('\x1b[Z');
+        const status = await watcher.promise;
+        if (this.target(id).identity !== t.identity || this.sessions.get(id) !== s || s?.interactionsCancelledAt !== cancelledAt) {
+          return '终端会话已变化或被本机接管，暂未确认当前权限。';
+        }
+        return status
+          ? `Claude 当前权限：${status.label}（${status.raw}）。`
+          : '暂未确认当前权限，请查看终端底部。';
+      } finally { watcher.cancel(); }
+    });
+  }
   async run(id, prompt) {
     return this.exclusive(id, async () => {
       const s = this.sessions.get(id); if (!s) throw Error('CLI 会话已退出');
@@ -144,7 +174,7 @@ class CLISessions {
       if (s.permissions.size) throw Error('Claude 正在等待操作审批，请先点击企微卡片中的按钮');
       if (s.trustPending) throw Error('请先在企微信任卡片中选择“信任目录”或“不信任，退出”');
       if (t.pendingInput) throw Error('终端有未提交的本地输入，请先清空');
-      if (s.pending) throw Error('CLI 正在处理上一条消息，请等待结果，或先 /停止 中断');
+      if (s.pending) throw Error('CLI 正在处理上一条消息，请等待结果，或先 /stop 中断');
       if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(prompt)) throw Error('消息为空、过长或包含终端控制字符');
       s.startup = false; s.pending = true; s.started = Date.now(); s.errorNotified = false; s.tail = ''; s.seen.clear();
       s.taskId = randomUUID();

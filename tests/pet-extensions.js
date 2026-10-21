@@ -1,0 +1,12 @@
+'use strict';
+const assert=require('assert/strict'),{action,skin}=require('../public/pet-extensions');
+const dance=require('../docs/pet-actions/street-dance.json'),mint=require('../docs/pet-actions/mint-skin.json');
+assert.equal(action(dance).name,dance.name);
+assert.deepEqual(skin(mint),mint);
+assert.throws(()=>action({...dance,duration:Infinity}));
+assert.throws(()=>action({...dance,iterations:100}));
+assert.throws(()=>action({...dance,keyframes:[{offset:0},{offset:1,x:999}]}));
+assert.throws(()=>action({...dance,keyframes:[{offset:1},{offset:0}]}));
+assert.throws(()=>skin({...mint,fur:'url(https://example.invalid)'}));
+assert.equal(action({...dance,script:'arbitrary script'}).script,undefined);
+console.log('PASS: extension schemas, motion bounds, no arbitrary script/style, example files');

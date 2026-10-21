@@ -75,13 +75,17 @@ contextBridge.exposeInMainWorld('fanboxTheme', {
 
 contextBridge.exposeInMainWorld('fanboxRemote', {
   call: (action, args) => {
-    const allowed = ['state','save-profile','save-shortcut','delete-shortcut','rename-shortcut-group','run-shortcut','delete-profile','save-ai','list-ai-models','pick-key','list','read','write','transfer','cancel-transfer','ai-run','ai-stop','ai-takeover','ai-resume','history-list','history-open','history-read','history-delete','target','auth-reply','activate-ai','deactivate-ai','delete-ai','policy','ai-clear','im-state','im-save','im-qr-start','im-qr-cancel','im-bind','im-unbind','im-terminal-created'];
+    const allowed = ['cli-permission','state','save-profile','save-shortcut','delete-shortcut','rename-shortcut-group','run-shortcut','delete-profile','save-ai','list-ai-models','test-ai-model','reveal-ai-key','reveal-im-secret','pick-key','list','read','write','transfer','cancel-transfer','ai-run','ai-stop','ai-takeover','ai-resume','history-list','history-open','history-read','history-delete','target','set-target-environment','auth-reply','approval-reply','activate-ai','deactivate-ai','delete-ai','policy','ai-clear','im-state','im-reconnect','im-save','im-qr-start','im-qr-cancel','im-bind','im-unbind','im-terminal-created'];
     if (!allowed.includes(action)) return Promise.reject(new Error('Unknown remote action'));
     return ipcRenderer.invoke('remote:' + action, args);
   },
   on: (event, callback) => {
-    if (!['status','transfer','ai','auth','auth-close','settings','im-settings','im','im-create-terminal','im-task','im-task-done'].includes(event)) throw new Error('Unknown remote event');
+    if (!['status','transfer','ai','auth','auth-close','approval','approval-close','settings','im-settings','im','im-create-terminal','im-task','im-task-done'].includes(event)) throw new Error('Unknown remote event');
     const channel = 'remote:' + event, listener = (_, data) => callback(data);
     ipcRenderer.on(channel, listener); return () => ipcRenderer.removeListener(channel, listener);
   },
 });
+
+contextBridge.exposeInMainWorld('fanboxDesktopPet',{isDesktop:false,reset:()=>ipcRenderer.invoke('pet:reset'),visible:value=>ipcRenderer.invoke('pet:visible',value),onSettings:fn=>{const listener=()=>fn();ipcRenderer.on('pet:settings',listener);return()=>ipcRenderer.removeListener('pet:settings',listener);}});
+
+contextBridge.exposeInMainWorld('fanboxWindowMenu',{colors:args=>ipcRenderer.invoke('window:colors',args),list:()=>ipcRenderer.invoke('window:menus'),open:args=>ipcRenderer.invoke('window:menu',args)});

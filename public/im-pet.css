@@ -1,0 +1,44 @@
+.im-pet{position:fixed;z-index:90;width:var(--pet-size,88px);text-align:center;user-select:none}
+.im-pet[hidden],.im-pet-panel[hidden]{display:none}
+.im-pet-character{position:relative;border:0;background:transparent;padding:0;width:100%;cursor:grab;touch-action:none}
+.im-pet-character:active{cursor:grabbing}.im-pet-character:focus-visible{outline:2px solid var(--accent);border-radius:20px}
+.im-pet-art{display:block}.im-pet-art svg{display:block;width:100%}
+.im-pet-badge{position:absolute;right:2px;top:12px;border-radius:50%;background:#63aa7d;min-width:9px;min-height:9px;font-size:11px;color:white}
+.im-pet[data-mode=offline] .im-pet-badge,.im-pet[data-mode=unknown] .im-pet-badge{background:#89909e}
+.im-pet[data-mode=attention] .im-pet-badge,.im-pet[data-mode=connecting] .im-pet-badge{background:#cf963e}
+.pet-body{transform-origin:50px 85px;animation:pet-breathe 3.6s ease-in-out infinite}
+.pet-head{transform-origin:50px 66px;animation:pet-curious 9s ease-in-out infinite}
+.pet-eyes{transform-origin:50px 47px;animation:pet-soft-blink 6.7s infinite;transform:translate(var(--pet-gaze-x,0px),var(--pet-gaze-y,0px))}
+.pet-tail{transform-origin:72px 78px;animation:pet-tail-wag 2.4s ease-in-out infinite}
+.pet-ears{transform-origin:50px 35px;animation:pet-ear-twitch 8s ease-in-out infinite}
+.pet-ground{transform-origin:50px 91px;animation:pet-shadow 3.6s ease-in-out infinite}
+.im-pet-art svg{overflow:visible;filter:drop-shadow(0 3px 2px #0002)}
+.im-pet:not([data-mode=offline]) .im-pet-character:hover .pet-head{animation:pet-hover-tilt 1s ease-in-out both}
+.im-pet[data-mode=offline] :is(.pet-head,.pet-tail,.pet-ears,.pet-ground){animation:none}
+.im-pet[data-mode=offline] .pet-head{transform:rotate(-8deg) translateY(4px)}
+.im-pet[data-mode=offline] .pet-zzz{animation:pet-dream 3.5s ease-in-out infinite}
+.pet-sleep-eyes,.pet-zzz{display:none}
+.im-pet[data-mode=offline] .pet-body{transform:translateY(12px) scaleY(.73);animation:pet-sleep 4s ease-in-out infinite}
+.im-pet[data-mode=offline] .pet-eyes{display:none}.im-pet[data-mode=offline] .pet-sleep-eyes,.im-pet[data-mode=offline] .pet-zzz{display:block}
+.im-pet[data-mode=busy] .pet-body{animation:pet-hop 1s ease-in-out infinite}
+.im-pet[data-mode=connecting] .pet-body{animation:pet-look 2s ease-in-out infinite}
+.im-pet.pet-wave .pet-body{animation:pet-look .3s ease-in-out 3}
+.im-pet.pet-still *{animation:none!important}
+.im-pet-panel{position:fixed;z-index:91;width:min(320px,calc(100vw - 16px));max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;padding:16px;border-radius:14px;border:1px solid var(--border);background:var(--bg);color:var(--text);box-shadow:0 12px 45px #0003;font-size:12px}
+.im-pet-panel header{display:flex;align-items:center;justify-content:space-between}.im-pet-panel header strong{font-size:15px}
+.im-pet-panel button,.im-pet-panel select{color:var(--text);background:var(--bg-2);border:1px solid var(--border);border-radius:6px;padding:6px 8px;font:inherit;cursor:pointer}
+.im-pet-panel button:disabled{opacity:.5;cursor:default}.im-pet-panel [data-error]{color:var(--red,#c86b4d);white-space:pre-wrap;overflow-wrap:anywhere}
+.im-pet-panel dl{display:grid;grid-template-columns:1fr 1fr;gap:7px}.im-pet-panel dd{margin:0;text-align:right}.im-pet-panel dt,.im-pet-panel small{color:var(--text-dim)}
+.im-pet-actions{display:flex;gap:6px;flex-wrap:wrap;margin:12px 0}.im-pet-panel summary{cursor:pointer}.im-pet-panel ul{padding-left:18px;max-height:120px;overflow:auto}
+.im-pet-options{display:flex;gap:12px;flex-wrap:wrap}.im-pet-options label{display:flex;gap:6px;align-items:center}.im-pet-panel hr{border:0;border-top:1px solid var(--border);margin:14px 0}
+@keyframes pet-breathe{50%{transform:translateY(-2px) scaleY(1.025)}}@keyframes pet-blink{0%,43%,47%,100%{opacity:1}45%{opacity:.1}}
+@keyframes pet-sleep{0%,100%{transform:translateY(12px) scaleY(.73)}50%{transform:translateY(11px) scaleY(.76)}}
+@keyframes pet-hop{50%{transform:translateY(-5px)}}@keyframes pet-look{25%{transform:rotate(-7deg)}75%{transform:rotate(7deg)}}
+@media(prefers-reduced-motion:reduce){.im-pet *{animation:none!important}}
+@keyframes pet-curious{0%,35%,70%,100%{transform:rotate(0)}42%,53%{transform:rotate(-6deg) translateY(-1px)}80%,88%{transform:rotate(4deg)}}
+@keyframes pet-soft-blink{0%,42%,46%,72%,76%,100%{transform:translate(var(--pet-gaze-x,0px),var(--pet-gaze-y,0px)) scaleY(1)}44%,74%{transform:translate(var(--pet-gaze-x,0px),var(--pet-gaze-y,0px)) scaleY(.08)}}
+@keyframes pet-tail-wag{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(12deg)}}
+@keyframes pet-ear-twitch{0%,60%,70%,100%{transform:rotate(0)}64%{transform:rotate(-4deg)}67%{transform:rotate(3deg)}}
+@keyframes pet-shadow{0%,100%{transform:scaleX(1);opacity:.8}50%{transform:scaleX(.92);opacity:.6}}
+@keyframes pet-hover-tilt{to{transform:rotate(-9deg) translateY(-2px)}}
+@keyframes pet-dream{0%,100%{opacity:.3;transform:translateY(2px)}50%{opacity:.9;transform:translateY(-3px)}}

@@ -5,6 +5,7 @@ const { spawn, execFile } = require('child_process');
 const { randomUUID } = require('crypto');
 const fs = require('fs');
 const path = require('path');
+const { retainContext } = require('./ai-context');
 
 function localExec(command, environment, { signal, onData, timeout = 60000 } = {}) {
   return new Promise((resolve, reject) => {
@@ -80,8 +81,18 @@ class ShellAI {
     const prior = this.history.get(sessionId);
     messages[0].content += ' Long-running commands remain monitored until a shell completion marker arrives; silence is not success or failure. Before starting a persistent process such as tail -f or a server, explain that it will not finish on its own and prefer a bounded observation or an appropriate managed background command. Never duplicate a command that is still running. After human takeover the user may have changed directory, environment or foreground program: recheck these before continuing.';
     if (prior && prior.identity === target.identity) messages.splice(1, 0, ...prior.messages);
+    messages[0].content += ' Resolve requests such as “继续” against the MOST RECENT user goal, tool results and interruption status, not the first task in history. Later user corrections supersede earlier plans. Historical actions and excerpts are context, not instructions to execute again. Unknown completion is not failure: inspect current state before retrying.';
     const turn = []; let executed = 0;
     try {
+      if ((environment.os === 'unknown' || environment.interactiveTargetUnknown) && config.mode !== 'read' && config.interactive && target.detectEnvironment) {
+        if (authorized && !authorized()) throw Error('远程授权已撤销');
+        const before = JSON.stringify(environment);
+        Object.assign(environment, await target.detectEnvironment(controller.signal));
+        await this.checkpoint(controller);
+        if (this.target(sessionId).identity !== target.identity) throw Error('目标会话已重建');
+        messages[0].content = messages[0].content.replace(before, JSON.stringify(environment));
+      }
+      if (environment.os === 'unknown' && config.mode !== 'read' && config.interactive) throw Error('目标系统未识别，请在 AI 会话中点击“确认当前系统”，选择实际登录服务器的系统和 Shell 后重试；也可切换为仅建议。');
       if (environment.interactiveTargetUnknown && config.mode !== 'read') throw Error('当前终端检测到手动 SSH / 容器切换，请选择对应 SSH 会话后再执行，或切换为仅建议');
       for (let step = 0; step < 10; step++) {
         await this.checkpoint(controller);
@@ -94,7 +105,7 @@ class ShellAI {
         emit('status', { text: `正在分析 · 第 ${step + 1} 步 · ${environment.host} / ${environment.os} / ${environment.shell}` });
         emit('analysis-start', { step: step + 1, toolsEnabled: !!allowedTools.length });
         let streamedText = false, streamedReasoning = false;
-        const message = await requestModel(config, messages, allowedTools, controller.signal, (type, text) => {
+        const message = await requestModel(config, [messages[0], ...retainContext(messages)], allowedTools, controller.signal, (type, text) => {
           if (type === 'text') { streamedText = true; emit('text-delta', { text, step: step + 1 }); }
           else { streamedReasoning = true; emit('reasoning-delta', { text, step: step + 1 }); }
         });
@@ -105,9 +116,6 @@ class ShellAI {
         emit('analysis-end', { step: step + 1 });
         await this.checkpoint(controller);
         if (!message.tool_calls?.length) {
-          const history = [...(prior && prior.identity === target.identity ? prior.messages : []), { role: 'user', content: String(prompt).slice(0, 20000) }, { role: 'assistant', content: turn.join('\n').slice(-24000) }].slice(-12);
-          while (JSON.stringify(history).length > 64000 && history.length > 2) history.splice(0, 2);
-          this.history.set(sessionId, { identity: target.identity, messages: history });
           return { ok: true, id, executed, noToolsReason: executed ? undefined : current.mode === 'read' ? '当前为仅建议模式，未执行命令' : !current.interactive ? '终端操作权限未开启，未执行命令' : '模型本轮未调用终端工具，未执行命令' };
         }
         for (const tool of message.tool_calls) {
@@ -130,7 +138,7 @@ class ShellAI {
           if (typeof text !== 'string' || !text || text.length > 16000) throw Error('命令内容无效或过长');
           let approved = !controller.recheck && permission.mode === 'auto' && action === 'execute_command';
           if (!approved) emit('status', { text: '等待您确认终端命令', phase: 'approval' });
-          if (!approved) approved = await (confirmAction || this.confirm)(action === 'terminal_input' ? '允许 AI 输入到交互式终端？' : '允许 AI 执行命令？', `目标：${environment.host}\n系统：${environment.os}\nShell：${environment.shell}\n执行位置：当前终端所在目录（继承终端状态）\n${action === 'terminal_input' ? '请核对当前前台程序及手动 SSH 跳转后的实际目标：' + String(args.expectedEnvironment || '未说明') + '\n' : ''}\n${JSON.stringify(text)}\n\n${action === 'terminal_input' ? '确认后输入会直接发送到当前终端。' : '命令将直接输入右侧当前终端。请确认当前停在 Shell 提示符，且没有未提交的输入。'}`);
+          if (!approved) approved = await (confirmAction || this.confirm)(action === 'terminal_input' ? '允许 AI 输入到交互式终端？' : '允许 AI 执行命令？', `目标：${environment.host}\n系统：${environment.os}\nShell：${environment.shell}\n执行位置：当前终端所在目录（继承终端状态）\n${action === 'terminal_input' ? '请核对当前前台程序及手动 SSH 跳转后的实际目标：' + String(args.expectedEnvironment || '未说明') + '\n' : ''}\n${JSON.stringify(text)}\n\n${action === 'terminal_input' ? '确认后输入会直接发送到当前终端。' : '命令将直接输入右侧当前终端。请确认当前停在 Shell 提示符，且没有未提交的输入。'}`, { signal: controller.signal, sessionId, command: text, environment, kind: action, expectedEnvironment: String(args.expectedEnvironment || '') });
           if (controller.signal.aborted) throw Error('任务已停止');
           if (controller.paused) { await this.checkpoint(controller); throw Error('接管期间原命令确认已失效，请重新发送任务'); }
           if (authorized && !authorized()) throw Error('远程授权已撤销');
@@ -140,7 +148,7 @@ class ShellAI {
           const latest = this.policy(liveTarget);
           if (latest.mode === 'read' || !latest.interactive) throw Error('权限已撤销');
           this.audit({ runId: id, sessionId, target: environment.host, action, approved });
-          if (!approved) { emit('status', { text: '用户拒绝执行，任务已停止' }); return { ok: true, stopped: true }; }
+          if (!approved) { messages.push({ role: 'tool', tool_call_id: tool.id, content: '{"executed":false,"status":"denied","note":"用户拒绝执行，不得将继续理解为批准此命令"}' }); emit('status', { text: '用户拒绝执行，任务已停止' }); return { ok: true, stopped: true }; }
           emit('command', { text, action, environment }); executed++;
           emit('status', { text: '正在终端执行命令，请在右侧查看输出', phase: 'execution' });
           let result;
@@ -156,16 +164,23 @@ class ShellAI {
             } });
           }
           turn.push('执行记录（不可信输出）：' + JSON.stringify({ command: text, result }).slice(-8000));
+          messages.push({ role: 'tool', tool_call_id: tool.id, content: JSON.stringify(result) });
           if (result.disconnected) throw Error('终端连接已断开，无法确认远端命令是否结束');
           if (result.stopped) throw Error(result.completed ? '命令已结束，AI 后续操作已停止' : '已发送 Ctrl+C，但未确认命令结束，请查看终端');
           if (result.pending) { emit('status', { text: '命令尚未确认结束，请在终端查看或接管；已暂停后续执行' }); return { ok: true, pending: true }; }
-          messages.push({ role: 'tool', tool_call_id: tool.id, content: JSON.stringify(result) });
           emit('status', { text: controller.paused ? '命令已结束；已接管，等待您点击“让 AI 继续”' : '命令已结束，AI 正在继续处理', phase: 'completed', paused: !!controller.paused });
           await this.checkpoint(controller);
         }
       }
-      emit('status', { text: '已达到本轮 10 步上限，请检查结果后发起后续任务' }); return { ok: true };
-    } finally { this.runs.delete(id); emit('done', {}); }
+      messages.push({ role: 'assistant', content: '本轮达到 10 步上限，任务可能尚未完成。下次继续应衔接最近执行结果，检查剩余工作，不要从头重复执行。' });
+      emit('status', { text: '已达到本轮 10 步上限，请检查结果后发起后续任务' }); return { ok: true, stepLimit: true };
+    } catch (error) {
+      messages.push({ role: 'assistant', content: '本轮中断：' + error.message + '。此前操作并未回滚；继续前核对最近结果，未确认完成的操作不可直接重试。' });
+      throw error;
+    } finally {
+      this.history.set(sessionId, { identity: target.identity, messages: retainContext(messages) });
+      this.runs.delete(id); emit('done', {});
+    }
   }
 }
 module.exports = { ShellAI, localExec };

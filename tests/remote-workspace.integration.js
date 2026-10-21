@@ -53,12 +53,14 @@ let model, proxy, socks;
   const switched = {}; for (const char of 'ssh tester@host\r') noteInput(switched, char); assert(switched.interactiveTargetUnknown); noteInput(switched, 'exit\r'); assert(switched.interactiveTargetUnknown);
   const normal = {}; noteInput(normal, 'echo ssh\r'); assert(!normal.interactiveTargetUnknown); noteInput(normal, 'ssh tester'); noteInput(normal, '\x03echo ok\r'); assert(!normal.interactiveTargetUnknown);
   await listen(server); const port = server.address().port;
-  const profile = store.save({ name: 'fixture', host: '127.0.0.1', port, username: 'tester', password: 'secret-test', remember: true });
+  const profile = store.save({ name: 'fixture', detectEnvironment: true, host: '127.0.0.1', port, username: 'tester', password: 'secret-test', remember: true });
   assert(!fs.readFileSync(store.file, 'utf8').includes('secret-test'));
   assert.equal(new RemoteStore(root, vault).get(profile).password, 'secret-test');
   assert(!JSON.stringify(store.list()).includes('secret-test'));
   for (const username of ['interactive', 'mfa']) { const id = store.save({ host: '127.0.0.1', port, username, password: 'secret-test' }); await ssh.connect('auth-' + username, id, 80, 24); }
   const ephemeral = store.save({ host: '127.0.0.1', port, username: 'tester' }); await ssh.connect('auth-missing-password', ephemeral, 80, 24);
+  assert(!received.some(command => command.includes('__FANBOX_OS__')), 'Default login must not issue hidden exec requests');
+  assert.equal(ssh.get('auth-missing-password').environment.os, 'unknown');
   const connected = await ssh.connect('ssh-test', profile, 80, 24); assert.equal(connected.environment.os, 'linux'); assert.equal(prompts, 1);
   ssh.resize('ssh-test', 100, 30); ssh.input('ssh-test', 'hello\r'); await new Promise(r => setTimeout(r, 40)); assert(received.includes('hello\r'));
   assert.equal((await ssh.exec('ssh-test', 'echo hello', '/', {})).code, 0);
@@ -69,7 +71,7 @@ let model, proxy, socks;
   const local = path.join(root, 'download.txt'); await ssh.transfer({ id: 'download', sessionId: 'ssh-test', direction: 'download', remote: '/hello.txt', local }); assert.equal(fs.readFileSync(local, 'utf8'), 'edited remotely');
   await ssh.transfer({ id: 'upload', sessionId: 'ssh-test', direction: 'upload', remote: '/uploaded.txt', local }); assert.equal(files.get('/uploaded.txt').toString(), 'edited remotely');
   const pending = ssh.transfer({ id: 'cancel', sessionId: 'ssh-test', direction: 'download', remote: '/large.bin', local: path.join(root, 'cancel.bin') }); setTimeout(() => ssh.cancel('cancel'), 20); await assert.rejects(pending); assert(!fs.existsSync(path.join(root, 'cancel.bin')));
-  const jump = store.save({ name: 'via-jump', host: '127.0.0.1', port, username: 'tester', password: 'secret-test', jumpId: profile }); await ssh.connect('jump-test', jump, 80, 24); assert.equal(ssh.get('jump-test').environment.os, 'linux');
+  const jump = store.save({ name: 'via-jump', detectEnvironment: true, host: '127.0.0.1', port, username: 'tester', password: 'secret-test', jumpId: profile }); await ssh.connect('jump-test', jump, 80, 24); assert.equal(ssh.get('jump-test').environment.os, 'linux');
   await assert.rejects(async () => store.remove(profile), /跳板机/);
   proxy = http.createServer(); proxy.on('connect', (req, socket, head) => { const upstream = net.connect(port, '127.0.0.1', () => { socket.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head.length) upstream.write(head); socket.pipe(upstream).pipe(socket); }); upstream.on('error', () => socket.destroy()); socket.on('close', () => upstream.destroy()); }); await listen(proxy);
   const proxied = store.save({ host: '127.0.0.1', port, username: 'tester', password: 'secret-test', proxy: { type: 'http', host: '127.0.0.1', port: proxy.address().port } }); await ssh.connect('proxy-test', proxied, 80, 24);
@@ -112,7 +114,7 @@ let model, proxy, socks;
   store.saveAI({ ...store.aiConfig(), interactive: true }); rounds = 0; await ai.run({ id: 'interactive', sessionId: 'ssh-test', prompt: 'test' });
 
   toolName = 'execute_command'; rounds = 0; config('confirm'); ai.confirm = async () => { config('read'); return true; }; await assert.rejects(ai.run({ id: 'revoked', sessionId: 'ssh-test', prompt: 'test' }), /权限已撤销/);
-  config('auto'); rounds = 0; const unknownAI = new ShellAI({ store, ssh, target: id => ({ ...target(id), environment: { ...target(id).environment, os: 'unknown' } }), confirm: async () => true, emit: () => {}, auditFile: path.join(root, 'audit.jsonl') }); await assert.rejects(unknownAI.run({ id: 'unknown', sessionId: 'ssh-test', prompt: 'test' }), /目标系统未识别/);
+  config('auto'); rounds = 0; const unknownAI = new ShellAI({ store, ssh, target: id => ({ ...target(id), environment: { ...target(id).environment, os: 'unknown' } }), confirm: async () => true, emit: () => {}, auditFile: path.join(root, 'audit.jsonl') }); await assert.rejects(unknownAI.run({ id: 'unknown', sessionId: 'ssh-test', prompt: 'test' }), /目标系统未识别/); assert.equal(rounds,0,'Unknown target must fail before model analysis');
   if (process.platform === 'win32') { const stopped = await localExec('Start-Sleep -Seconds 30', { os: 'windows', shell: 'powershell', cwd: root }, { timeout: 150 }); assert(stopped.stopped); }
   assert(!fs.readFileSync(store.file, 'utf8').includes('test-key')); assert(!fs.readFileSync(path.join(root, 'audit.jsonl'), 'utf8').includes('echo fixture'));
   if (process.platform === 'win32') for (const shell of ['cmd', 'powershell']) { const result = await localExec('echo local-fixture', { os: 'windows', shell, cwd: root }); assert.equal(result.code, 0); assert(result.output.includes('local-fixture')); }

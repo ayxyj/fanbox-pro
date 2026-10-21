@@ -3,6 +3,7 @@ const { randomUUID } = require('crypto');
 const path = require('path'), fs = require('fs');
 const HELP = `📱 Code Chat 桥接命令
 • /claude /codex /codebuddy — 进入对应 CLI，原样发送消息
+• /permiss — Claude 权限模式切换一次（Shift+Tab）
 • /aiquit — 退出 CLI，恢复 AI 对话
 • /projects [页码] — 列出工作目录下的项目目录
 • /new [项目名] — 新建终端会话
@@ -11,7 +12,7 @@ const HELP = `📱 Code Chat 桥接命令
 • /content — 查看聚焦会话最近内容
 • /set_name <英文名> <中文名> [昵称] — 设置身份；修改需加 --force
 • /help — 显示本帮助
-• /停止 — 停止聚焦会话的任务
+• /stop — 停止聚焦会话的任务
 直接发消息 = 续聊聚焦会话；引用桥接推送 = 切到那个会话续聊。
 权限请求直接点击卡片上的“批准 / 拒绝”。`;
 module.exports = {
@@ -53,17 +54,22 @@ module.exports = {
     if (['claude','codex','codebuddy'].includes(cliName)) {
       if (!route) route = await this.newRoute(userid);
       if (!this.valid(route)) throw Error('远程操作权限尚未开启');
-      if (route.busy) throw Error('当前任务尚未结束，请先等待完成或发送 /停止');
+      if (route.busy) throw Error('当前任务尚未结束，请先等待完成或发送 /stop');
       await this.startCLI(route.sessionId, cliName, route.cwd); route.mode = cliName; this.changed();
       await this.say(route, '已向终端发送启动命令：' + cliName + ' CLI。后续消息原样转发，执行中发送简洁进度，确认事项和最终结果会在这里通知。/aiquit 发送 Ctrl+C，退出后恢复 AI 对话。'); return true;
     }
+    if (command === '/permiss') {
+      if (arg) throw Error('用法：/permiss，每次切换一次 Claude 权限模式');
+      if (!route || !this.valid(route) || route.mode !== 'claude') throw Error('请先选择已授权的 Claude 会话');
+      await this.say(route, await this.cycleCLIPermission(route.sessionId)); return true;
+    }
     if (command === '/aiquit') {
-      if (route?.busy) throw Error('CLI 尚未结束，请先发送 /停止并等待结束');
+      if (route?.busy) throw Error('CLI 尚未结束，请先发送 /stop并等待结束');
       if (route) { await this.leaveCLI(route.sessionId); route.mode = 'ai'; this.changed(); }
       await this.send(userid, '已恢复 AI 对话模式'); return true;
     }
     // CLI slash commands such as /help belong to the CLI; /bridge help remains available.
-    if (route && route.mode !== 'ai' && !['/new','/list','/sel','/content','/projects','/项目','/set_name','/bridge','/停止','/状态'].includes(command)) return false;
+    if (route && route.mode !== 'ai' && !['/new','/list','/sel','/content','/projects','/项目','/set_name','/bridge','/stop','/状态'].includes(command)) return false;
     if (command === '/bridge') { await this.send(userid, HELP); return true; }
     if (command === '/help' || command === '/帮助') { await this.send(userid, HELP); return true; }
     if (command === '/projects' || command === '/项目') {

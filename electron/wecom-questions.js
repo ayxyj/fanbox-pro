@@ -26,7 +26,7 @@ module.exports = {
       if (signal.aborted) return abort();
       (async () => {
         const details = q.options.map((o,i) => `${i+1}. ${o.label}\n${o.description || ''}`).join('\n\n');
-        await this.say(route, `Claude 提问：${q.question}\n\n${details}\n\n${q.multiSelect ? '可多选，选好后点击提交；也可回复多个编号，如 1,3。' : '点击选项，或直接回复编号/自定义内容。'}\n指定回答：/回答 ${token} 您的答案\n4 分钟内有效。`);
+        await this.say(route, `${q.title || 'Claude 提问'}：${q.question}\n\n${details}\n\n${q.multiSelect ? '可多选，选好后点击提交；也可回复多个编号，如 1,3。' : (q.fixedOptions ? '点击选项或回复编号。' : '点击选项，或直接回复编号/自定义内容。')}\n指定回答：/回答 ${token} 您的答案\n4 分钟内有效。`);
         if (settled || !this.valid(route)) return abort();
         await this.client.sendMessage(route.userid, { msgtype: 'template_card', template_card: this.questionCard(entry) });
       })().catch(() => finish(null));
@@ -36,11 +36,11 @@ module.exports = {
     const { token, q, selected } = entry;
     const key = action => `question:${token}:${action}`;
     return { card_type: 'button_interaction', task_id: 'question_' + token,
-      main_title: { title: ended ? '回答已提交或问题已取消' : 'Claude 提问', desc: q.question.slice(0,120) },
+      main_title: { title: ended ? '回答已提交或问题已取消' : (q.title || 'Claude 提问'), desc: q.question.slice(0,120) },
       sub_title_text: '会话 #' + entry.route.number + ' · ' + entry.route.project,
       button_list: ended ? [{text:'已处理',key:key('done'),style:4}] : [
         ...q.options.map((o,i) => ({text: `${selected.has(i) ? '✓ ' : ''}${i+1}. ${o.label}`.slice(0,20),key:key(String(i)),style:selected.has(i)?1:2})),
-        {text:q.multiSelect?'提交选择':'自定义回答',key:key(q.multiSelect?'done':'custom'),style:1},
+        ...(q.fixedOptions ? [] : [{text:q.multiSelect?'提交选择':'自定义回答',key:key(q.multiSelect?'done':'custom'),style:1}]),
         {text:'取消问题',key:key('cancel'),style:2}
       ] };
   },
@@ -60,7 +60,7 @@ module.exports = {
       else if (action === 'done' && entry.q.multiSelect) {
         if (!entry.selected.size) { await this.send(userid,'请先选择至少一项。'); return; }
         entry.finish([...entry.selected].sort().map(i=>entry.q.options[i].label).join(', '));
-      } else if (action === 'custom') { await this.say(entry.route,`请发送：/回答 ${entry.token} 自定义内容`); return; }
+      } else if (action === 'custom' && !entry.q.fixedOptions) { await this.say(entry.route,`请发送：/回答 ${entry.token} 自定义内容`); return; }
       try { await this.client.updateTemplateCard(frame,this.questionCard(entry,!this.questions.has(entry.token)),[userid]); }
       catch { await this.send(userid,this.questions.has(entry.token)?'选择已记录，卡片显示暂未更新。':'回答已记录，卡片显示暂未更新。'); }
     } finally { entry.busy = false; }
@@ -77,6 +77,7 @@ module.exports = {
       if(ids.some(i=>!entry.q.options[i])||(!entry.q.multiSelect&&ids.length!==1)){await this.send(userid,'选项编号无效，请重新选择。');return true;}
       answer=ids.map(i=>entry.q.options[i].label).join(', ');
     }
-    entry.finish(answer);await this.say(entry.route,'回答已提交给 Claude。');return true;
+    if(entry.q.fixedOptions && !entry.q.options.some(o=>o.label===answer)){await this.say(entry.route,'请点击选项或回复有效编号。');return true;}
+    entry.finish(answer);await this.say(entry.route,entry.q.title ? '选择已提交。' : '回答已提交给 Claude。');return true;
   }
 };

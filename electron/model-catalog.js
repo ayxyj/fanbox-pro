@@ -13,14 +13,28 @@ async function listModels(config) {
   const { baseUrl, protocol } = connection(config), anthropic = protocol === 'anthropic';
   const endpoint = catalogEndpoint(baseUrl, protocol);
   const signal = AbortSignal.timeout(60000), models = new Map(), cursors = new Set();
-  let after;
+  let after, bearerCatalog = false;
   for (let page = 0; page < 100; page++) {
     const url = new URL(endpoint);
-    if (anthropic && !isArkCoding(baseUrl)) url.searchParams.set('limit', '1000');
+    if (anthropic && !isArkCoding(baseUrl) && !bearerCatalog) url.searchParams.set('limit', '1000');
     if (after) url.searchParams.set('after_id', after);
     let response;
-    try { response = await fetch(url, { redirect: 'error', signal, headers: authHeaders({ ...config, baseUrl, protocol }) }); }
-    catch { throw Error(signal.aborted ? '获取模型超时，请重试' : '无法连接模型列表接口，请检查服务地址和网络'); }
+    try {
+      const request = headers => fetch(url, { redirect: 'error', signal, headers });
+      response = await request(bearerCatalog ? { Authorization: 'Bearer ' + config.apiKey } : authHeaders({ ...config, baseUrl, protocol }));
+      // Some gateways expose Claude chat but only an OpenAI-style model catalog.
+      // Retry on the same endpoint only; never send keys to a discovered host.
+      if (anthropic && !isArkCoding(baseUrl) && config.apiKey && !bearerCatalog && [400,401,403,404,405,422].includes(response.status)) {
+        await response.body?.cancel();
+        bearerCatalog = true; url.searchParams.delete('limit');
+        response = await request({ Authorization: 'Bearer ' + config.apiKey });
+      }
+    }
+    catch (error) {
+      const code = error.cause?.code || error.code;
+      const reason = { ECONNREFUSED:'目标端口拒绝连接', ENOTFOUND:'服务域名无法解析', EHOSTUNREACH:'无法到达目标主机', ENETUNREACH:'目标网络不可达', UND_ERR_CONNECT_TIMEOUT:'连接超时' }[code];
+      throw Error(signal.aborted ? '获取模型超时，请重试' : `无法连接模型列表接口（${url.origin}${url.pathname}）${reason ? '：' + reason : '，请检查服务地址和网络'}`);
+    }
     if (!response.ok) { await response.body?.cancel(); throw Error(`获取模型失败（HTTP ${response.status}），请检查地址、密钥或服务是否支持模型列表；也可手动填写模型`); }
     let text = '', bytes = 0;
     const decoder = new TextDecoder();

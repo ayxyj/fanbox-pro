@@ -2,6 +2,23 @@
 const { authHeaders } = require('./model-provider');
 // Canonical tool messages are translated at the protocol boundary only.
 async function requestModel(config, messages, tools, signal, onDelta) {
+  const timeout = new AbortController();
+  let timer;
+  const touch = () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => timeout.abort(), config.responseIdleTimeoutMs || 300000);
+  };
+  touch();
+  try {
+    return await requestModelResponse(config, messages, tools, AbortSignal.any([signal, timeout.signal]), onDelta, touch);
+  } catch (error) {
+    if (signal.aborted) throw Error('模型请求已停止');
+    if (timeout.signal.aborted) throw Error('模型服务长时间没有返回新数据，已停止等待。此前已执行的命令不会重试，请先查看终端结果再继续。');
+    if (error.name === 'TimeoutError' || error.name === 'AbortError') throw Error('模型连接超时或中断，请检查网络后继续；此前已执行的命令不会自动重试。');
+    throw error;
+  } finally { clearTimeout(timer); }
+}
+async function requestModelResponse(config, messages, tools, signal, onDelta, touch) {
   const anthropic = config.protocol === 'anthropic';
   let payload;
   if (anthropic) {
@@ -21,12 +38,35 @@ async function requestModel(config, messages, tools, signal, onDelta) {
     payload = { model: config.model, messages: messages.map(({ anthropicContent, finishReason, reasoning, ...m }) => m), ...(tools.length ? { tools, tool_choice: 'auto' } : {}) };
   }
   if (onDelta) payload.stream = true;
+  const settings = config.selectedModels?.find(item=>item.id===config.model);
+  if (settings?.maxTokens) payload.max_tokens = settings.maxTokens;
+  if (settings?.temperature != null) payload.temperature = settings.temperature;
+  if (!anthropic && settings?.reasoningEffort) payload.reasoning_effort = settings.reasoningEffort;
   const base = config.baseUrl.replace(/\/$/, '');
   const endpoint = anthropic ? base + (base.endsWith('/v1') ? '/messages' : '/v1/messages') : base + '/chat/completions';
-  const response = await fetch(endpoint, { method: 'POST', redirect: 'error', signal: AbortSignal.any([signal, AbortSignal.timeout(90000)]),
-    headers: { 'Content-Type': 'application/json', ...authHeaders(config) }, body: JSON.stringify(payload) });
-  if (!response.ok) throw Error(`模型服务返回 HTTP ${response.status}`);
-  const body = response.headers.get('content-type')?.includes('text/event-stream') ? await readStream(response, anthropic, onDelta) : await response.json();
+  let response;
+  try {
+    response = await fetch(endpoint, { method: 'POST', redirect: 'error', signal,
+      headers: { 'Content-Type': 'application/json', ...authHeaders(config) }, body: JSON.stringify(payload) });
+  } catch (error) {
+    if (signal.aborted) throw Error('模型请求已取消');
+    const code = error.cause?.code;
+    const reasons = {UNABLE_TO_VERIFY_LEAF_SIGNATURE:'HTTPS 证书链无法验证，请核对服务协议和证书',DEPTH_ZERO_SELF_SIGNED_CERT:'服务器使用自签名证书',ECONNREFUSED:'服务端口拒绝连接',ENOTFOUND:'服务域名无法解析'};
+    throw Error('模型连接失败：' + (reasons[code] || '请检查服务地址、网络或超时设置'));
+  }
+  touch();
+  if (!response.ok) { await response.body?.cancel(); throw Error(`模型服务返回 HTTP ${response.status}`); }
+  let body;
+  if (response.headers.get('content-type')?.includes('text/event-stream')) body = await readStream(response, anthropic, onDelta, touch);
+  else {
+    const decoder = new TextDecoder(); let text = '', total = 0;
+    for await (const chunk of response.body) {
+      touch(); total += chunk.length;
+      if (total > 4 * 1024 * 1024) throw Error('模型响应过大，已停止');
+      text += decoder.decode(chunk, {stream:true});
+    }
+    body = JSON.parse(text + decoder.decode());
+  }
   if (!anthropic) {
     if (!body.choices?.[0]?.message) throw Error('模型返回格式不兼容');
     return { ...body.choices[0].message, finishReason: body.choices[0].finish_reason, reasoning: body.choices[0].message.reasoning_content || '' };
@@ -35,7 +75,7 @@ async function requestModel(config, messages, tools, signal, onDelta) {
   return { role: 'assistant', finishReason: body.stop_reason, reasoning: body.content.filter(b => b.type === 'thinking').map(b => b.thinking || '').join('\n'), content: body.content.filter(b => b.type === 'text').map(b => b.text).join('\n'), anthropicContent: body.content,
     tool_calls: body.content.filter(b => b.type === 'tool_use').map(b => ({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } })) };
 }
-async function readStream(response, anthropic, onDelta) {
+async function readStream(response, anthropic, onDelta, touch) {
   const decoder = new TextDecoder(), blocks = [], calls = new Map();
   let pending = '', total = 0, content = '', reasoning = '', finished = false, finishReason;
   const emit = (type, text) => { if (text) onDelta?.(type, text); };
@@ -75,6 +115,7 @@ async function readStream(response, anthropic, onDelta) {
     }
   };
   for await (const chunk of response.body) {
+    touch();
     total += chunk.length; if (total > 4 * 1024 * 1024) throw Error('模型响应过大，已停止');
     pending += decoder.decode(chunk, { stream: true });
     let boundary;

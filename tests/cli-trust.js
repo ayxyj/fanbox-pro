@@ -14,5 +14,16 @@ const turn = () => new Promise(r => setImmediate(r));
  cli.close('a'); target.state={idle:true};await cli.start('a','claude');emit(fixture.replace(/\s+/g, ''));decide(false);await turn();await turn();assert.deepEqual(writes.slice(-2),['\x1b[B','\r']);
  cli.close('a');target.state={idle:true};await cli.start('a','claude');emit(fixture);const before=writes.length;cli.userInput('a','\r');assert(signal.aborted);decide(true);await turn();assert.equal(writes.length,before);
  cli.close('a');target.state={idle:true};await cli.start('a','claude');emit(fixture);const beforeClose=writes.length;cli.close('a');decide(true);await turn();assert.equal(writes.length,beforeClose);
+ const buddyPrompt='│ Do you trust the files in this folder? │\r\n│ C:\\Users\\jeremyxia │\r\n│ CodeBuddy Code may read, write, or execute files contained in this directory. │\r\n│ > 1. Trust folder only (jeremyxia) │\r\n│ 2. Trust parent folder (Users/**) │\r\n│ 3. Trust folder and all subdirectories (jeremyxia/**) │\r\n│ 4. No, exit (escape) │\r\nEnter to confirm • Esc to exit';
+ const buddy=new CLISessions({target:()=>target,inspect:async()=>({name:'codebuddy',idle:true}),command:n=>n,wait:async()=>{},resultChannel:()=>({args:'',close(){}}),confirmTrust:async(id,dir,abort,name)=>{assert.equal(name,'codebuddy');assert.equal(dir,'C:\\Users\\jeremyxia');cards++;signal=abort;return new Promise(r=>decide=r);}});
+ cli.close('a');
+ for(const choice of [0,1,2,3,null]){
+  await buddy.start('b','codebuddy');const count=cards;
+  emit(buddyPrompt.slice(0,100));emit(buddyPrompt.slice(100));emit(buddyPrompt);assert.equal(cards,count+1);
+  await assert.rejects(buddy.run('b','hello'),/信任卡片/);
+  const begin=writes.length;decide(choice);await turn();await turn();assert.deepEqual(writes.slice(begin),choice===null||choice===3?['\x1b']:choice===0?['\r']:['\x1b[B'.repeat(choice),'\r']);buddy.close('b');
+ }
+ await buddy.start('b','codebuddy');const count=cards;emit(buddyPrompt.replace('C:\\Users\\jeremyxia','D:\\unexpected'));assert.equal(cards,count,'Unrelated directory must not be approved');buddy.close('b');
+ await buddy.start('b','codebuddy');emit(buddyPrompt);const begin=writes.length;buddy.userInput('b','\x1b[B');assert(signal.aborted);decide(2);await turn();assert.equal(writes.length,begin);buddy.close('b');
  console.log('PASS: split trust prompt, one card, directory, approve/reject, input blocking, local takeover, closed terminal and xterm status replies');
 })().catch(e=>{console.error(e);process.exitCode=1;});

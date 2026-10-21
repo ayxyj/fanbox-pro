@@ -32,6 +32,23 @@
   window.fanboxRemote.on('auth-close', ({ sessionId }) => { const session = term.sessions.find(s => s.id === sessionId); if (session) session.authenticating = false; });
   const notify = (message, error = false) => { status.textContent = message; status.classList.toggle('error', error); };
   const api = async (action, args) => { const r = await window.fanboxRemote.call(action, args); if (!r.ok) throw Error(r.error); return r.value; };
+  const approvalDialogs = new Map();
+  window.fanboxRemote.on('approval', async request => {
+    const controller = new AbortController(); approvalDialogs.set(request.token, controller);
+    const env = request.environment || {};
+    try {
+      const approved = await window.fanboxUI.confirm({
+        title: request.message, description: '请核对目标和内容，本次授权仅用于下方操作。',
+        command: request.command,
+        facts: [['目标', env.host], ['系统 / Shell', [env.os, env.shell].filter(Boolean).join(' / ')], ['执行位置', '当前终端所在目录（继承终端状态）'], ...(request.kind === 'terminal_input' ? [['当前前台程序 / 目标', request.expectedEnvironment || '未说明，请核对终端']] : [])],
+        note: request.kind === 'terminal_input' ? '允许后将直接输入当前终端，请确认当前前台程序。' : '允许后将在当前终端执行，请确认已回到 Shell 提示符且没有未提交的输入。',
+        approveLabel: '仅允许本次', signal: controller.signal
+      });
+      if (!controller.signal.aborted) await api('approval-reply', { token: request.token, approved });
+    } catch (error) { notify(error.message, true); }
+    finally { approvalDialogs.delete(request.token); }
+  });
+  window.fanboxRemote.on('approval-close', ({ token }) => { approvalDialogs.get(token)?.abort(); approvalDialogs.delete(token); });
   const wrap = fn => async (...args) => { try { await fn(...args); } catch (e) { notify(e.message, true); } };
   const bind = (selector, fn) => { const element = body.querySelector(selector); if (element) element.onclick = wrap(fn); };
   const field = (name, label, value = '', type = 'text', full = false) => `<label class="${full ? 'full' : ''}">${label}<input name="${name}" type="${type}" value="${escape(value)}" autocomplete="off"></label>`;
@@ -87,7 +104,7 @@
   document.getElementById('sidebar').addEventListener('click', event => { if (!navigation.contains(event.target) && event.target.closest('li,.side-link,#cron-entry')) close(); }, true);
   document.getElementById('term-tabs').addEventListener('contextmenu', event => {
     const id = event.target.closest('[data-session-id]')?.dataset.sessionId; if (!id) return;
-    event.preventDefault(); popupMenu(event, [{ label: '打开 AI 会话', fn: wrap(() => openAI(id)) }, ...shortcutMenu(id).map(x => ({label:x[0],fn:x[1]}))]);
+    event.preventDefault(); window.fbTerminalClipboard.showMenu(event, [{ label: '打开 AI 会话', fn: wrap(() => openAI(id)) }, ...shortcutMenu(id)]);
   });
   async function render() {
     const rev = ++revision;
@@ -129,7 +146,8 @@
     if (!session?.sshProfile) return [];
     const profile = data?.profiles.find(p => p.id === session.sshProfile);
     const commands = [...(profile?.shortcuts || [])].sort((a,b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name));
-    return [...commands.map(c => [(c.group ? c.group + ' / ' : '') + c.name, wrap(async () => { await api('run-shortcut', {sessionId:id,id:c.id});term.activate(id);session.xterm.focus();notify('已发送快捷命令：' + c.name); }), !!session.dead]), ['管理快捷命令…', () => shortcutManager(session.sshProfile), false]];
+    const groups=[...new Set(commands.map(c=>c.group))];
+    return [{label:'快捷指令',children:groups.length ? groups.map(group=>({label:group||'未分组',children:commands.filter(c=>c.group===group).map(c=>({label:c.name,disabled:!!session.dead,fn:wrap(async()=>{await api('run-shortcut',{sessionId:id,id:c.id});term.activate(id);session.xterm.focus();notify('已发送快捷命令：'+c.name);})}))})) : [{label:'暂无快捷指令',disabled:true}]}, {label:'管理快捷指令…',fn:()=>shortcutManager(session.sshProfile)}];
   }
   async function shortcutManager(profileId, create = false) {
     await refresh(); const profile = data.profiles.find(p=>p.id===profileId); if(!profile)return;
@@ -138,8 +156,13 @@
     const items = () => data.profiles.find(p=>p.id===profileId)?.shortcuts || [];
     const draw = () => {
       const groups=[...new Set(items().map(c=>c.group))].sort();
-      content.innerHTML='<div class="remote-actions"><button data-new-shortcut>＋ 新增快捷命令</button></div><p class="remote-help">仅供此 SSH 连接使用。多行命令按顺序输入当前终端，不等待每条命令完成；输出直接在终端查看。</p>' + (groups.map((g,i)=>'<section class="shortcut-group"><header><strong>'+escape(g||'未分组')+'</strong>'+(g?'<button data-rename-group="'+i+'">重命名</button><button data-ungroup="'+i+'">移除分组</button>':'')+'</header>'+items().filter(c=>c.group===g).map(c=>'<article class="remote-card"><strong>'+escape(c.name)+'</strong><pre class="shortcut-preview">'+escape(c.command)+'</pre><div class="remote-actions"><button data-shortcut-edit="'+c.id+'">编辑</button><button data-shortcut-delete="'+c.id+'">删除</button></div></article>').join('')+'</section>').join('')||'<p class="remote-help">尚未保存快捷命令。</p>');
+      content.innerHTML='<div class="remote-actions"><button data-new-shortcut>＋ 新增快捷命令</button></div><p class="remote-help">仅供此 SSH 连接使用。多行命令按顺序输入当前终端，不等待每条命令完成；输出直接在终端查看。</p>' + (groups.map((g,i)=>'<section class="shortcut-group"><header><strong>'+escape(g||'未分组')+'</strong>'+(g?'<button data-rename-group="'+i+'">重命名</button><button data-ungroup="'+i+'">移除分组</button>':'')+'</header>'+items().filter(c=>c.group===g).map(c=>'<div class="shortcut-row"><div class="shortcut-row-name">'+escape(c.name)+'</div><div class="remote-actions"><button data-shortcut-view="'+c.id+'">查看</button><button data-shortcut-edit="'+c.id+'">编辑</button><button data-shortcut-delete="'+c.id+'">删除</button></div></div>').join('')+'</section>').join('')||'<p class="remote-help">尚未保存快捷命令。</p>');
       content.querySelector('[data-new-shortcut]').onclick=()=>edit();
+      content.querySelectorAll('[data-shortcut-view]').forEach(b=>b.onclick=()=>{
+        const command=items().find(c=>c.id===b.dataset.shortcutView);
+        content.innerHTML='<div class="shortcut-detail"><h3>'+escape(command.name)+'</h3><p class="remote-help">'+escape(command.group||'未分组')+'</p><pre class="shortcut-preview">'+escape(command.command)+'</pre><div class="remote-actions"><button data-back>返回列表</button><button data-edit>编辑指令</button></div></div>';
+        content.querySelector('[data-back]').onclick=draw;content.querySelector('[data-edit]').onclick=()=>edit(command);
+      });
       content.querySelectorAll('[data-shortcut-edit]').forEach(b=>b.onclick=()=>edit(items().find(c=>c.id===b.dataset.shortcutEdit)));
       content.querySelectorAll('[data-shortcut-delete]').forEach(b=>b.onclick=act(async()=>{if(!confirm('删除此快捷命令？'))return;await api('delete-shortcut',{profileId,id:b.dataset.shortcutDelete});await refresh();draw();}));
       content.querySelectorAll('[data-rename-group]').forEach(b=>b.onclick=()=>{
@@ -149,7 +172,7 @@
       content.querySelectorAll('[data-ungroup]').forEach(b=>b.onclick=act(async()=>{if(!confirm('移除分组？其中的快捷命令会保留在“未分组”。'))return;await api('rename-shortcut-group',{profileId,group:groups[Number(b.dataset.ungroup)],name:''});await refresh();draw();}));
     };
     const edit = (command={}) => {
-      content.innerHTML='<form class="remote-form shortcut-form">'+field('name','快捷名称',command.name,'text',true)+field('group','分组（输入新名称即可创建）',command.group,'text',true)+'<datalist id="shortcut-groups">'+[...new Set(items().map(c=>c.group).filter(Boolean))].map(g=>'<option value="'+escape(g)+'">').join('')+'</datalist><label class="full">命令（支持多行）<textarea name="command" rows="8" spellcheck="false" required>'+escape(command.command||'')+'</textarea></label><div class="remote-actions full"><button type="submit">保存快捷命令</button><button type="button" data-back>返回列表</button></div></form>';
+      content.innerHTML='<form class="remote-form shortcut-form">'+field('name','快捷名称',command.name)+field('group','分组（可输入新名称）',command.group)+'<datalist id="shortcut-groups">'+[...new Set(items().map(c=>c.group).filter(Boolean))].map(g=>'<option value="'+escape(g)+'">').join('')+'</datalist><label class="full">命令（支持多行）<textarea name="command" rows="8" spellcheck="false" required>'+escape(command.command||'')+'</textarea></label><div class="remote-actions full"><button type="submit">保存快捷命令</button><button type="button" data-back>返回列表</button></div></form>';
       const form=content.querySelector('form');form.elements.name.required=true;form.elements.name.maxLength=100;form.elements.group.maxLength=100;form.elements.command.maxLength=32000;form.elements.group.setAttribute('list','shortcut-groups');form.querySelector('[data-back]').onclick=draw;
       form.onsubmit=event=>{event.preventDefault();act(async()=>{await api('save-shortcut',{...values(form),profileId,id:command.id});await refresh();draw();})();};
     };
@@ -165,6 +188,7 @@
       <div data-key-fields class="remote-form full">${field('keyPath', '私钥路径', p.keyPath, 'text', true)}<button type="button" data-key>选择私钥文件</button>${field('passphrase', '私钥口令（可选）', '', 'password')}</div>
       ${check('remember', '记住凭据（使用系统加密保存）', p.remember)}${p.hasCredentials ? check('clearCredentials', '清除已有凭据，下次在终端输入', false) : '<input type="checkbox" name="clearCredentials" hidden>'}
       </section><section data-category-page="network" class="remote-form full" hidden>
+      ${check('detectEnvironment', '检测服务器系统（普通 SSH 可开启，堡垒机请关闭；关闭时 AI 不自动执行未知系统的命令）', p.detectEnvironment === true)}
       ${select('terminalType', '终端类型', [['xterm','xterm（兼容堡垒机）'],['xterm-256color','xterm-256color'],['vt100','VT100']], p.terminalType || 'xterm', true)}
       ${select('jumpId', '跳板机', [['', '直接连接'], ...data.profiles.filter(x => x.id !== p.id).map(x => [x.id, x.name])], p.jumpId || '', true)}
       ${select('proxyType', '代理（跳板连接的代理请在跳板会话设置）', [['', '不使用'], ['socks5', 'SOCKS5'], ['http', 'HTTP CONNECT']], p.proxy?.type || '', true)}
@@ -177,7 +201,7 @@
     form.elements.auth.onchange = update; form.elements.proxyType.onchange = update;
     form.querySelectorAll('[data-category]').forEach(b => b.onclick = () => { form.querySelectorAll('[data-category-page]').forEach(page => page.hidden = page.dataset.categoryPage !== b.dataset.category); });
     form.querySelector('[data-key]').onclick = wrap(async () => { const filename = await api('pick-key'); if (filename) form.elements.keyPath.value = filename; });
-    form.onsubmit = async event => { event.preventDefault(); try { const v = values(form); await api('save-profile', { ...v, id: p.id, remember: form.elements.remember.checked, clearCredentials: form.elements.clearCredentials.checked, proxy: v.proxyType ? { type: v.proxyType, host: v.proxyHost, port: Number(v.proxyPort), username: v.proxyUser } : null, policy: v.mode ? { mode: v.mode, interactive: form.elements.interactive.checked } : null }); dialog.close(); await refresh(); if (!panel.hidden && tab === 'connections') connections(); notify('连接配置已保存'); } catch (error) { dialog.querySelector('.dialog-error').textContent = error.message; } };
+    form.onsubmit = async event => { event.preventDefault(); try { const v = values(form); await api('save-profile', { ...v, id: p.id, detectEnvironment: form.elements.detectEnvironment.checked, remember: form.elements.remember.checked, clearCredentials: form.elements.clearCredentials.checked, proxy: v.proxyType ? { type: v.proxyType, host: v.proxyHost, port: Number(v.proxyPort), username: v.proxyUser } : null, policy: v.mode ? { mode: v.mode, interactive: form.elements.interactive.checked } : null }); dialog.close(); await refresh(); if (!panel.hidden && tab === 'connections') connections(); notify('连接配置已保存'); } catch (error) { dialog.querySelector('.dialog-error').textContent = error.message; } };
   }
   async function modelSettings() {
     await refresh(); const dialog = modal('AI 配置'), content = dialog.querySelector('.dialog-content');
@@ -191,9 +215,11 @@
       content.querySelectorAll('[data-model-delete]').forEach(b => b.onclick = () => { if (confirm('删除此 AI 配置？')) action(() => api('delete-ai', { id: b.dataset.modelDelete })); });
     };
     const edit = (c = {}) => {
-      content.innerHTML = `<form class="remote-form model-form">${field('name', '配置名称', c.name, 'text', true)}${select('protocol', 'API 协议', [['openai', 'OpenAI 兼容'], ['anthropic', 'Anthropic / Claude']], c.protocol || 'openai', true)}${field('baseUrl', 'API 基础地址', c.baseUrl || 'https://api.openai.com/v1', 'url', true)}${field('apiKey', c.hasKey ? 'API 密钥（已保存，留空保留）' : 'API 密钥', '', 'password', true)}${check('clearKey', '清除已保存密钥', false)}${check('activate', '保存后启用', !data.aiConfigs.length || c.active)}<div class="full model-discovery"><div class="remote-actions"><button type="button" data-fetch-models>获取所有模型</button><span data-model-status role="status"></span></div><div data-model-slots class="remote-form"></div></div><p class="remote-help full">支持 HTTP / HTTPS。一份服务配置共用地址与密钥，获取模型后按用途选择，也可手动输入。Claude 的三个位置允许选择相同模型；默认用途决定内置 AI 对话使用的模型。CLI 自身的配置不会被改写。切换配置对下一轮对话生效。</p><div class="remote-actions full"><button type="submit">保存配置</button><button type="button" data-model-back>返回列表</button></div></form>`;
+      dialog.classList.add('model-config-dialog');
+      content.innerHTML = `<form class="remote-form model-form">${field('name', '配置名称', c.name, 'text', true)}${select('protocol', 'API 协议', [['openai', 'OpenAI 兼容'], ['anthropic', 'Anthropic / Claude']], c.protocol || 'openai', true)}${field('baseUrl', 'API 基础地址', c.baseUrl || 'https://api.openai.com/v1', 'url', true)}${field('apiKey', c.hasKey ? 'API 密钥（已保存，留空保留）' : 'API 密钥', '', 'password', true)}${check('clearKey', '清除已保存密钥', false)}${check('activate', '保存后启用', !data.aiConfigs.length || c.active)}<div class="full model-discovery"><div class="remote-actions"><button type="button" data-fetch-models>获取所有模型</button><span data-model-status role="status"></span></div><div data-model-picker></div><details class="model-role-settings" open><summary>默认模型与用途映射</summary><div data-model-slots class="remote-form"></div></details></div><p class="remote-help full">支持 HTTP / HTTPS。一份服务配置共用地址与密钥，获取模型后按用途选择，也可手动输入。Claude 的三个位置允许选择相同模型；默认用途决定内置 AI 对话使用的模型。CLI 自身的配置不会被改写。切换配置对下一轮对话生效。</p><div class="remote-actions full"><button type="submit">保存配置</button><button type="button" data-model-back>返回列表</button></div></form>`;
       const form = content.querySelector('form'); form.elements.name.required = true;
       const slots = form.querySelector('[data-model-slots]'), status = form.querySelector('[data-model-status]');
+      let picker;
       let generation = 0, models = [], draft = { model: c.model || '', ...c.modelSlots }, role = c.defaultRole || 'sonnet';
       const capture = () => { for (const input of slots.querySelectorAll('[data-slot]')) draft[input.name] = input.value; if (form.elements.defaultRole) role = form.elements.defaultRole.value; };
       const renderSlots = () => {
@@ -204,19 +230,27 @@
         slots.querySelector('[data-manual-model]')?.addEventListener('click',()=>{capture();models=[];renderSlots();});
       };
       renderSlots();
+      slots.addEventListener('change',()=>{capture();picker?.sync();});
       form.elements.protocol.onchange = () => { capture(); if (['https://api.openai.com/v1', 'https://api.anthropic.com'].includes(form.elements.baseUrl.value)) form.elements.baseUrl.value = form.elements.protocol.value === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'; models=[];renderSlots(); };
       form.querySelector('[data-model-back]').onclick = draw;
-      const requestConfig = () => ({ ...values(form), id: c.id, clearKey: form.elements.clearKey.checked });
-      for (const key of ['baseUrl','protocol','apiKey','clearKey']) form.elements[key].addEventListener('input',()=>{generation++;capture();models=[];status.textContent='';renderSlots();});
+      const secretField = fanboxUI.secretInput(form.elements.apiKey, { saved:c.hasKey, read:()=>api('reveal-ai-key',{id:c.id}), onError:e=>dialog.querySelector('.dialog-error').textContent=e.message });
+      const requestConfig = () => ({ ...values(form), apiKey:secretField.value(), id: c.id, clearKey: form.elements.clearKey.checked });
+      const defaults=()=>({model:form.elements.protocol.value==='anthropic'?draft[role]:draft.model,ids:[draft.model,...['haiku','sonnet','opus'].map(k=>draft[k])].filter(Boolean)});
+      picker=createModelPicker({host:form.querySelector('[data-model-picker]'),initial:c.selectedModels,defaults,
+        protocol:()=>form.elements.protocol.value,
+        setDefault:id=>{capture();if(form.elements.protocol.value==='anthropic')draft[role]=id;else draft.model=id;renderSlots();},
+        remove:(id,next)=>{capture();for(const key of Object.keys(draft))if(draft[key]===id)draft[key]='';if(!defaults().model){if(form.elements.protocol.value==='anthropic')draft[role]=next;else draft.model=next;}renderSlots();},
+        test:modelSettings=>api('test-ai-model',{...requestConfig(),modelSettings})});
+      for (const key of ['baseUrl','protocol','apiKey','clearKey']) form.elements[key].addEventListener('input',()=>{generation++;capture();models=[];status.textContent='';picker.invalidate();renderSlots();});
       form.querySelector('[data-fetch-models]').onclick = async event => {
         const button=event.currentTarget,current=++generation;button.disabled=true;status.textContent='正在获取模型…';dialog.querySelector('.dialog-error').textContent='';
-        try { const result=await api('list-ai-models',requestConfig());if(!form.isConnected || !dialog.open || current!==generation)return;capture();models=result;renderSlots();status.textContent=models.length?'已获取 '+models.length+' 个模型，请在对应位置选择':'未返回模型，请手动输入'; }
+        try { const result=await api('list-ai-models',requestConfig());if(!form.isConnected || !dialog.open || current!==generation)return;capture();models=result;picker.catalog(models);renderSlots();status.textContent=models.length?'已获取 '+models.length+' 个模型，请在对应位置选择':'未返回模型，请手动输入'; }
         catch(error){if(form.isConnected && current===generation){status.textContent=error.message;dialog.querySelector('.dialog-error').textContent=error.message;}}
         finally{button.disabled=false;}
       };
       form.onsubmit = async event => { event.preventDefault(); capture(); const anthropic=form.elements.protocol.value==='anthropic';const modelSlots=anthropic?{haiku:draft.haiku||'',sonnet:draft.sonnet||'',opus:draft.opus||''}:{}; const model=anthropic?modelSlots[role]:draft.model;
         if(!model?.trim()){dialog.querySelector('.dialog-error').textContent='请选择或填写默认用途对应的模型';return;}
-        try { await api('save-ai', { ...requestConfig(), model, modelSlots, defaultRole:anthropic?role:'', activate:form.elements.activate.checked }); await refresh();draw(); } catch(e){dialog.querySelector('.dialog-error').textContent=e.message;}
+        try { await api('save-ai', { ...requestConfig(), model, modelSlots, selectedModels:picker.value(), defaultRole:anthropic?role:'', activate:form.elements.activate.checked }); await refresh();draw(); } catch(e){dialog.querySelector('.dialog-error').textContent=e.message;}
       };
 
     }; draw();
@@ -280,7 +314,7 @@
       current.conversationId = record.id; current.items = record.items; current.visibleCount = 100;
       if (rev !== revision) return;
     }
-    body.innerHTML = `<div class="ai-session-bar" role="tablist" aria-label="AI 会话">${sessions(false).map(session => `<button role="tab" aria-selected="${session.id === selected}" data-chat-session="${session.id}" title="${escape(session.title)}">${escape(session.title)}<small>${session.sshProfile ? 'SSH' : escape(session.shell || 'Shell')}</small></button>`).join('')}<button data-chat-add title="打开其他会话" aria-label="打开其他会话">＋</button></div><div class="remote-log" aria-label="AI 对话" tabindex="0"></div><div class="chat-progress" role="status" hidden></div><div class="chat-composer"><textarea class="remote-prompt" placeholder="输入消息，Enter 发送" aria-label="AI 任务"></textarea><div class="chat-input-actions"><details class="chat-options"><summary title="会话选项" aria-label="会话选项">☰</summary><div class="chat-options-menu"><div class="remote-target" data-environment>正在读取目标…</div><div class="chat-model">${escape(data.ai.name || '请在设置中配置模型')} · ${escape(data.ai.model || '')}</div><div class="remote-form">${targetOptions}${select('mode', '执行权限', [['read', '仅建议'], ['confirm', '确认后执行'], ['auto', '自动执行']], 'confirm', true)}${check('interactive', '允许 AI 交互式终端', false)}${check('context', '发送终端最近 16 KB 内容', current.context)}</div><div class="chat-menu-actions"><button data-takeover title="接管终端" aria-label="接管终端">⌨ <span>接管终端</span></button><button data-clear title="清空当前对话" aria-label="清空当前对话">↻ <span>清空对话</span></button><button data-chat-files title="远程文件" aria-label="远程文件">▤ <span>远程文件</span></button><button data-chat-exit title="返回文件浏览" aria-label="返回文件浏览">↩ <span>返回文件浏览</span></button></div></div></details><button data-permission-pill class="permission-pill" title="设置当前会话执行权限">读取权限…</button><span class="chat-input-hint">Shift + Enter 换行</span><button data-stop title="停止 AI" aria-label="停止 AI">■</button><button data-run title="发送消息" aria-label="发送消息">↑</button></div></div>`;
+    body.innerHTML = `<div class="ai-session-bar" role="tablist" aria-label="AI 会话">${sessions(false).map(session => `<button role="tab" aria-selected="${session.id === selected}" data-chat-session="${session.id}" title="${escape(session.title)}">${escape(session.title)}<small>${session.sshProfile ? 'SSH' : escape(session.shell || 'Shell')}</small></button>`).join('')}<button data-chat-add title="打开其他会话" aria-label="打开其他会话">＋</button></div><div class="remote-log" aria-label="AI 对话" tabindex="0"></div><div class="chat-progress" role="status" hidden></div><div class="chat-composer"><div data-target-confirm hidden class="target-confirm-hint"></div><textarea class="remote-prompt" placeholder="输入消息，Enter 发送" aria-label="AI 任务"></textarea><div class="chat-input-actions"><details class="chat-options"><summary title="会话选项" aria-label="会话选项">☰</summary><div class="chat-options-menu"><div class="remote-target" data-environment>正在读取目标…</div><div class="chat-model">${escape(data.ai.name || '请在设置中配置模型')} · ${escape(data.ai.model || '')}</div><div class="remote-form">${targetOptions}${select('mode', '执行权限', [['read', '仅建议'], ['confirm', '确认后执行'], ['auto', '自动执行']], 'confirm', true)}${check('interactive', '允许 AI 交互式终端', false)}${check('context', '发送终端最近 16 KB 内容', current.context)}</div><div class="chat-menu-actions"><button data-takeover title="接管终端" aria-label="接管终端">⌨ <span>接管终端</span></button><button data-clear title="清空当前对话" aria-label="清空当前对话">↻ <span>清空对话</span></button><button data-chat-files title="远程文件" aria-label="远程文件">▤ <span>远程文件</span></button><button data-chat-exit title="返回文件浏览" aria-label="返回文件浏览">↩ <span>返回文件浏览</span></button></div></div></details><button data-permission-pill class="permission-pill" title="设置当前会话执行权限">读取权限…</button><span class="chat-input-hint">Shift + Enter 换行</span><button data-stop title="停止 AI" aria-label="停止 AI">■</button><button data-run title="发送消息" aria-label="发送消息">↑</button></div></div>`;
     body.querySelectorAll('[data-chat-session]').forEach(b => b.onclick = wrap(() => openAI(b.dataset.chatSession)));
     body.querySelector('.ai-session-bar').insertAdjacentHTML('beforeend', '<button data-chat-history title="查看、继续或删除历史对话" aria-label="会话历史">◷ 会话历史</button><button data-chat-new title="新建对话" aria-label="新建对话">✎ 新对话</button>');
     bind('[data-chat-history]', historyDialog);
@@ -303,6 +337,17 @@
     current.policy = policy; drawLog();
     body.querySelector('[name=mode]').value = policy.mode; body.querySelector('[name=interactive]').checked = policy.interactive;
     body.querySelector('[data-environment]').textContent = `${env.host} · ${env.os} · ${env.shell}\n命令直接在右侧终端执行，继承当前目录和环境。${env.interactiveTargetUnknown ? '\n检测到手动环境切换，执行前需重新确认目标。' : ''}`;
+    if (sessions(true).some(s=>s.id===selected)) {
+      const hint=body.querySelector('[data-target-confirm]');hint.hidden=false;body.querySelector('.chat-options-menu').append(hint);
+      hint.innerHTML='<span>'+escape(env.os==='unknown'?'执行前会自动识别系统；特殊终端也可手动确认。':'当前系统：'+env.os+' · '+env.shell)+'</span><button type="button" data-confirm-system>确认当前系统</button>';
+      hint.querySelector('button').onclick=()=>{
+        const sessionId=selected,d=modal('确认当前 SSH 目标系统');
+        d.querySelector('.dialog-content').innerHTML='<p>请确认右侧终端已经登录目标服务器，并停在 Shell 命令提示符。请选择实际目标系统，而不是堡垒机系统。本次设置仅用于当前连接。</p><form class="remote-form">'+select('kind','目标系统 / Shell',[['linux','Linux / Bash'],['macos','macOS / Zsh'],['cmd','Windows / CMD'],['powershell','Windows / PowerShell']],'linux',true)+'<div class="remote-actions full"><button type="submit">确认并应用</button><button type="button" data-cancel>取消</button></div></form>';
+        d.querySelector('[data-cancel]').onclick=()=>d.close();
+        d.querySelector('form').onsubmit=async e=>{e.preventDefault();const button=e.currentTarget.querySelector('[type=submit]');button.disabled=true;try{await api('set-target-environment',{id:sessionId,kind:e.currentTarget.elements.kind.value});d.close();if(selected===sessionId)await render();notify('目标系统已确认，可以重新发送任务');}catch(error){d.querySelector('.dialog-error').textContent=error.message;}finally{button.disabled=false;}};
+      };
+    }
+
   }
   function addItem(current, kind, text = '', key = crypto.randomUUID()) {
     let item = current.items.find(item => item.key === key);
@@ -331,7 +376,7 @@
         if (record.boundSessionId && record.boundSessionId !== selected) { button.disabled = true; button.textContent = '已绑定其他终端'; button.title = '可查看记录；继续对话请回到原终端，或关闭原终端后再恢复'; }
         button.onclick = action(async () => { await restoreConversation(button.dataset.historyResume); dialog.close(); });
       });
-      content.querySelectorAll('[data-history-delete]').forEach(button => button.onclick = action(async () => { if (!confirm('删除这段会话历史？')) return; const id = button.dataset.historyDelete; await api('history-delete', { id, sessionId: historySession }); for (const current of chats.values()) if (current.conversationId === id) { current.conversationId = ''; current.items = []; } await draw(); }));
+      content.querySelectorAll('[data-history-delete]').forEach(button => button.onclick = action(async () => { const id = button.dataset.historyDelete; const record = result.records.find(r => r.id === id); if (!await window.fanboxUI.confirm({ title: '删除会话记录', description: '确定删除这段会话的聊天记录吗？', facts: [['会话', record?.title || '未命名会话']], note: '删除后无法恢复。仅删除聊天记录，不会删除 SSH 连接配置或项目文件。', approveLabel: '删除记录', danger: true })) return; await api('history-delete', { id, sessionId: historySession }); for (const current of chats.values()) if (current.conversationId === id) { current.conversationId = ''; current.items = []; } await draw(); }));
       content.querySelectorAll('[data-history-read]').forEach(button => button.onclick = action(async () => {
         const record = await api('history-read', { id: button.dataset.historyRead, sessionId: historySession });
         content.innerHTML = '<button data-history-back>← 返回历史列表</button><div class="history-transcript"></div>';

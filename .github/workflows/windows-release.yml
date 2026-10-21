@@ -34,6 +34,8 @@ jobs:
           node --check public/terminal-scroll.js
           node tests/terminal-output.js
           node tests/theme-menu-state.js
+          node tests/startup-single-instance.js
+          node tests/ssh-zmodem.js
           npm test
       - name: Package Windows app
         shell: pwsh
@@ -69,13 +71,11 @@ jobs:
           $notes = @"
           fanbox-pro $env:RELEASE_VERSION · Windows x64
 
-          基于 alchaincyf/fanbox 的 Windows 衍生版本，增加多工作区 Git 仓库管理、自动同步及定时任务。
-          包含主题配置、编辑器配色、盘符切换、文件选中框及资源管理器定位修复。
-
-          本次修订：目录默认使用树视图，支持逐层缩进、按需加载、大目录窗口渲染、全部展开/折叠及文件夹右键操作；后续启动恢复用户选择的视图。
-          文件名与时间/大小分两行展示；文本和代码默认编辑，图片和 HTML 默认预览，预览支持全屏恢复，编辑器和终端分别占用独立区域。
-          终端输出批处理、标签状态局部更新和尺寸请求合并；修复历史滚动位置不同步与继承 NO_COLOR 导致的颜色缺失。
-          Git 脏状态处理显示真实操作阶段与耗时，操作完成或失败后刷新当前仓库状态，并发查询改善加载速度。
+          本次更新：
+          - 修复重复启动时主窗口变量尚未初始化导致的崩溃。
+          - 内置 SSH 支持 rz/sz 文件传输、多文件上传、下载保存和取消，兼容部分服务器缺少结束标记的情况。
+          - 优化 AI 配置、上下文续聊、执行授权、模型超时及企业微信 CLI 交互提示。
+          - 增加桌面宠物、扩展动作与皮肤，完善用户指南与静态网站编译工具。
 
           下载 fanbox-pro-$env:RELEASE_VERSION-x64.exe 并运行安装。Git 功能需要本机 Git；Agent 功能需要另行配置对应工具。
           原项目：https://github.com/alchaincyf/fanbox

@@ -41,9 +41,9 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  fileTree.current().expanded.delete(unrelated);
  await fileTree.toggle(folder);
  await wait(()=>state.visible.some(e=>e.name==='nested'));
- document.getElementById('tree-collapse-all').click();
+ fileTree.collapseAll();
  check(fileTree.current().expanded.size===0 && !state.visible.some(e=>e.name==='nested'),'Collapse-all failed');
- await document.getElementById('tree-expand-all').onclick();
+ await fileTree.expandAll();
  check(state.visible.some(e=>e.name==='deep.txt'),'Expand-all did not load descendants');
  check(fileTree.current().expanded.has(folder.path),'Root folder did not expand');
  const fakeLink={...folder,name:'junction',path:root+state.sep+'junction',isSymlink:true};
@@ -56,9 +56,9 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
    window.fetch=(url,options)=>String(url).includes('/api/list?tree=1&path='+encodeURIComponent(folder.path))
      ? new Promise(resolve=>{finishRead=()=>fetchBeforeCancel(url,options).then(resolve);}) : fetchBeforeCancel(url,options);
    const expanding=fileTree.expandAll();
-   check(document.getElementById('tree-expand-all').textContent==='停止展开','Cancel button missing');
-   check(!document.getElementById('tree-collapse-all').disabled,'Collapse-all unavailable during loading');
-   document.getElementById('tree-collapse-all').click();check(fileTree.current().expanded.size===0,'Collapse while expanding failed');
+   check(!!fileTree.bulk,'Expansion operation missing');
+   check(!document.getElementById('tree-actions'),'Removed toolbar still present');
+   fileTree.collapseAll();check(fileTree.current().expanded.size===0,'Collapse while expanding failed');
    finishRead();await expanding;check(fileTree.current().expanded.size===0,'Pending read re-expanded collapsed folders');
  } finally {window.fetch=fetchBeforeCancel;finishRead?.();}
  await fileTree.expandAll();

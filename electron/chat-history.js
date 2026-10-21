@@ -79,17 +79,21 @@ class ChatHistory {
     const r = await this.get(id); r.running = false; r.updatedAt = Date.now(); r.items.forEach(item => item.thinking = false);
     if (error) this.item(r, 'error', error);
     else if (result?.noToolsReason) this.item(r, 'notice', result.noToolsReason);
+    else if (result?.stepLimit) this.item(r, 'notice', '本轮达到 10 步上限，继续时应衔接最近进展，不要从头重复执行。');
+    else if (result?.pending) this.item(r, 'notice', '命令完成状态未知，继续前核对终端，不可直接重试。');
+    else if (result?.stopped) this.item(r, 'notice', '用户拒绝执行，本轮已停止；继续不代表批准被拒绝的命令。');
     await this.persist(id);
   }
   context(record) {
-    // Restored dialogue is context only, never a queued tool call or shell result.
+    // Restored actions are historical descriptions, never executable tool calls.
     let size = 0; const messages = [];
     for (const item of [...record.items].reverse()) {
-      if (!['user', 'assistant'].includes(item.kind) || !item.text) continue;
-      const content = item.text.slice(-12000); if (size + content.length > 48000 || messages.length >= 12) break;
-      size += content.length; messages.unshift({ role: item.kind, content });
+      if (!['user', 'assistant', 'command', 'error', 'notice'].includes(item.kind) || !item.text) continue;
+      const prefix = item.kind === 'command' ? '历史命令（完成状态未知；不得自动重复执行）：' : item.kind === 'error' ? '历史中断：' : item.kind === 'notice' ? '历史状态：' : '';
+      const content = prefix + item.text.slice(-12000); if (size + content.length > 48000 || messages.length >= 40) break;
+      size += content.length; messages.unshift({ role: item.kind === 'user' ? 'user' : 'assistant', content });
     }
-    while (messages.length && messages[0].role !== 'user') messages.shift();
+    if (messages.length && messages[0].role !== 'user') messages.unshift({ role: 'user', content: '以下为该会话最近历史，较早目标已省略。先核对最近进展；信息不足时询问。' });
     return messages;
   }
   persist(id) {

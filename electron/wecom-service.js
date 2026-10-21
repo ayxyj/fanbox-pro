@@ -6,16 +6,22 @@ const { redact } = require('./im-redact');
 const os = require('os'), fs = require('fs');
 const clean = text => String(text || '').replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0,64000);
 class WecomService {
-  constructor({ store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, runCLI, stopCLI = () => {}, leaveCLI = () => {}, closeCLI = () => {}, activeCLI, cliStatus = () => null, releaseSession = () => {}, Client = WSClient }) {
-    Object.assign(this, { store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, runCLI, stopCLI, leaveCLI, closeCLI, activeCLI, cliStatus, releaseSession, Client });
+  constructor({ store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, stopCLI = () => {}, leaveCLI = () => {}, closeCLI = () => {}, activeCLI, cliStatus = () => null, releaseSession = () => {}, Client = WSClient }) {
+    Object.assign(this, { store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, stopCLI, leaveCLI, closeCLI, activeCLI, cliStatus, releaseSession, Client });
     this.focus = new Map(); this.numbers = new Map(); this.completedApprovals = new Map();
+    this.healthEvents = []; this.lastReceivedAt = 0; this.lastSentAt = 0;
     this.routes = new Map(); this.pendingUsers = new Map(); this.approvals = new Map(); this.seen = new Set(this.config().recent || []); this.generation = 0; this.status = 'disabled';
     this.qr = new WecomQR({ onBound: credentials => this.save({ ...credentials, enabled: true }), onState: state => this.emit('remote:im', { qr: state }) });
   }
   config() { return { botId: '', enabled: false, allowExecution: false, mode: 'ai', shell: 'cmd', cwd: os.homedir(), permission: 'confirm', notifications: { success: true, failure: true, progress: true }, users: [], ...this.store.data.im }; }
   state() {
     const { secret, recent, conversations, ...config } = this.config();
-    return { ...config, hasSecret: !!secret, status: this.status, error: this.lastError || '', pendingUsers: [...this.pendingUsers.values()], routes: [...this.routes.values()].map(r => ({ id: r.id, number: r.number, project: r.project, focused: this.focus.get(r.userid) === r.key, userid: r.userid, sessionId: r.sessionId, running: r.busy, mode: r.mode })) };
+    return { ...config, hasSecret: !!secret, lastReceivedAt: this.lastReceivedAt, lastSentAt: this.lastSentAt, pendingApprovals: this.approvals.size, healthEvents: this.healthEvents.slice(-20), status: this.status, error: this.lastError || '', pendingUsers: [...this.pendingUsers.values()], routes: [...this.routes.values()].map(r => ({ id: r.id, number: r.number, project: r.project, focused: this.focus.get(r.userid) === r.key, userid: r.userid, sessionId: r.sessionId, running: r.busy, mode: r.mode })) };
+  }
+  health(message) { this.healthEvents.push({at:Date.now(),message}); if(this.healthEvents.length>20)this.healthEvents.shift(); }
+  reconnect() {
+    if(!this.config().enabled) throw Error('机器人尚未启用，请在 IM 设置中启用连接');
+    const old=this.client; this.client=null; old?.disconnect(); this.health('手动重新连接'); this.start(); return this.state();
   }
   changed() { this.emit('remote:im', this.state()); }
   save(input) {
@@ -43,16 +49,16 @@ class WecomService {
     catch { this.status = 'error'; this.lastError = '机器人凭据无法解密，请重新扫码或填写 Secret'; this.changed(); return; }
     const client = this.client = new this.Client({ botId: config.botId, secret, maxReconnectAttempts: -1, maxAuthFailureAttempts: 2, logger: { debug() {}, info() {}, warn() {}, error() {} } });
     this.status = 'connecting'; this.lastError = '';
-    client.on('authenticated', () => { if (this.client !== client) return; this.status = 'connected'; this.changed(); });
-    client.on('disconnected', () => { if (this.client !== client) return; this.status = 'disconnected'; this.changed(); });
-    client.on('reconnecting', () => { if (this.client !== client) return; this.status = 'reconnecting'; this.changed(); });
-    client.on('error', () => { if (this.client !== client) return; this.lastError = '连接或发送失败，请检查网络、机器人凭据及是否被其他客户端占用'; this.changed(); });
-    client.on('message.text', frame => { if (this.client === client) this.accept(frame).catch(error => { this.lastError = error.message; this.changed(); }); });
+    client.on('authenticated', () => { if (this.client !== client) return; this.status = 'connected'; this.lastError=''; this.health('认证成功，机器人在线'); this.changed(); });
+    client.on('disconnected', reason => { if (this.client !== client) return; this.status = 'disconnected'; this.lastError = /another|new connection|kick|replace|其他|新连接/i.test(String(reason)) ? '机器人被另一客户端连接挤下线，请关闭重复连接后点击重连' : '连接已断开；若持续离线，请检查网络或重复客户端并点击重连'; this.health(this.lastError); this.changed(); });
+    client.on('reconnecting', () => { if (this.client !== client) return; this.status = 'reconnecting'; this.health('正在重连'); this.changed(); });
+    client.on('error', error => { if (this.client !== client) return; const auth=error?.code==='WS_AUTH_FAILURE_EXHAUSTED'; if(auth || client.isConnected===false)this.status='error'; this.lastError=auth?'机器人认证失败且重试已停止，请重新填写 Secret 或扫码绑定':'连接或发送失败，请检查网络、机器人凭据及是否被其他客户端占用'; this.health(this.lastError); this.changed(); });
+    client.on('message.text', frame => { if (this.client === client) { this.lastReceivedAt=Date.now(); this.changed(); this.accept(frame).catch(error => { this.lastError = '消息处理失败：'+redact(error.message); this.health(this.lastError); this.changed(); }); } });
     client.on('event.template_card_event', frame => { if (this.client === client) this.cardEvent(frame).catch(() => { this.lastError = '审批回调处理失败'; this.changed(); }); });
-    client.connect(); this.changed();
+    try { client.connect(); } catch { this.status='error'; this.lastError='无法建立机器人连接，请检查网络并重连'; this.health(this.lastError); } this.changed();
   }
   stop() {
-    this.generation++; this.client?.disconnect(); this.client = null; this.status = 'disabled';
+    this.generation++; const oldClient=this.client; this.client=null; oldClient?.disconnect(); this.status = 'disabled';
     for (const approval of this.approvals.values()) approval.finish(false);
     for (const route of this.routes.values()) { if (route.runId) this.stopAI(route.runId); this.closeCLI(route.sessionId); this.releaseSession(route.sessionId); route.unsubscribe?.(); clearTimeout(route.flushTimer); }
     this.routes.clear(); this.focus.clear(); this.completedApprovals.clear();
@@ -72,6 +78,7 @@ class WecomService {
     // Always send to the requesting user's private chat, never echo terminal data to a group.
     const prefix = route ? `#${route.number} · ${route.project} · ${route.mode === 'ai' ? 'AI' : route.mode} [会话:${route.id.slice(0,8)}]\n\n` : '';
     let chunk = ''; for (const c of clean(redact(text)) || '（无文本输出）') { if (!this.client || !this.config().enabled || !this.config().users.includes(userid)) return; if (Buffer.byteLength(prefix + chunk + c) > 3800) { await this.client.sendMessage(userid, { msgtype: 'markdown', markdown: { content: prefix + chunk } }); chunk = ''; } chunk += c; } if (chunk) await this.client.sendMessage(userid, { msgtype: 'markdown', markdown: { content: prefix + chunk } });
+    this.lastSentAt = Date.now(); this.changed();
   }
   async confirm(route, message, detail, options = {}) {
     if (!this.valid(route) || options.signal?.aborted) return false;
@@ -79,7 +86,7 @@ class WecomService {
     return new Promise(resolve => {
       let settled = false;
       const finish = (value, label = value ? '已批准' : '已取消或过期') => {
-        if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', abort); this.approvals.delete(token);
+        if (settled) return; settled = true; clearTimeout(timer); options.signal?.removeEventListener('abort', abort); this.approvals.delete(token); this.changed();
         this.completedApprovals.set(token, { userid: route.userid, label });
         while (this.completedApprovals.size > 300) this.completedApprovals.delete(this.completedApprovals.keys().next().value);
         resolve(value && this.valid(route));
@@ -87,7 +94,7 @@ class WecomService {
       const abort = () => finish(false, '已由本机接管或取消');
       const timer = setTimeout(() => finish(false, '已过期'), options.timeout || 300000);
       options.signal?.addEventListener('abort', abort, { once: true });
-      this.approvals.set(token, { userid: route.userid, routeKey: route.key, finish });
+      this.approvals.set(token, { userid: route.userid, routeKey: route.key, finish }); this.changed();
       (async () => {
         await this.say(route, message + '\n\n' + detail);
         if (settled || !this.valid(route)) return finish(false);
@@ -131,7 +138,7 @@ class WecomService {
       if (await this.bridgeCommand(userid, text)) return;
     } catch (error) { await this.send(userid, error.message); return; }
     let key = route?.key;
-    if (text === '/停止') {
+    if (text === '/stop') {
       if (route?.runId) this.stopAI(route.runId);
       for (const approval of this.approvals.values()) if (approval.routeKey === key) approval.finish(false);
       if (route && route.mode !== 'ai') this.stopCLI(route.sessionId);
@@ -141,7 +148,7 @@ class WecomService {
     if (text === '/状态') { await this.send(userid, route ? `终端：${route.sessionId || '创建中'}\n模式：${route.mode}\n状态：${route.busy ? '处理中' : '等待消息'}` : '当前对话尚未创建终端'); return; }
     if (text.startsWith('/') && (!route || route.mode === 'ai')) { await this.send(userid, '未知桥接命令，请用 /help 查看帮助'); return; }
     if (!config.allowExecution) { await this.send(userid, '电脑端尚未开启“允许远程操作”，请在设置中开启'); return; }
-    if (route?.busy) { await this.send(userid, '当前会话仍在处理上一条消息；没有重复执行。可发送 /状态 或 /停止'); return; }
+    if (route?.busy) { await this.send(userid, '当前会话仍在处理上一条消息；没有重复执行。可发送 /状态 或 /stop'); return; }
     if (!route) { try { route = await this.newRoute(userid); key = route.key; } catch (error) { await this.send(userid, error.message); return; } }
     route.busy = true; this.changed();
     try {
