@@ -4,18 +4,26 @@ const delay=ms=>new Promise(r=>setTimeout(r,ms));
 const menu='Do you want to proceed?\r\n❯ 1. Yes\r\n  2. No\r\nEnter to confirm · Esc to cancel';
 (async()=>{
  const writes=[],cards=[];let valid=true;
- const watcher=new NativeInteraction({target:{size:()=>({cols:100,rows:30}),input:t=>writes.push(t),validate:async()=>valid},settle:10,ask:(q,signal)=>new Promise(resolve=>cards.push({q,signal,resolve}))});
+ const type=t=>{
+  writes.push(t);const lines=watcher.lines(),m=parseMenu(lines);
+  if(m&&(t==='\x1b[B'||t==='\x1b[A')){
+   const next=m.selected+(t==='\x1b[B'?1:-1);
+   if(m.options[next]){lines[m.options[m.selected].row]=lines[m.options[m.selected].row].replace(/[❯>›]/,' ');lines[m.options[next].row]='❯ '+lines[m.options[next].row].trim();watcher.output('\x1b[2J\x1b[H'+lines.join('\r\n'));}
+  }else if(m&&t===' '){const row=m.options[m.selected].row;lines[row]=lines[row].replace(/\[([ x])\]/,(_,c)=>c==='x'?'[ ]':'[x]');watcher.output('\x1b[2J\x1b[H'+lines.join('\r\n'));}
+  else if(t==='\r'||t==='\x1b')watcher.output('\x1b[2J\x1b[H> ');
+ };
+ const watcher=new NativeInteraction({target:{size:()=>({cols:100,rows:30}),input:type,validate:async()=>valid},settle:10,keyDelay:1,ackTimeout:100,confirmDelay:5,ask:(q,signal)=>new Promise(resolve=>cards.push({q,signal,resolve}))});
  watcher.output('\x1b[2J\x1b[H'+menu.slice(0,30));watcher.output(menu.slice(30));await delay(60);assert.equal(cards.length,1);assert.equal(cards[0].q.options[1].label,'No');
  watcher.output('\x1b[H'+menu);await delay(40);assert.equal(cards.length,1,'identical redraw must not spam');
  watcher.input('\x1b[?2026;2$y');assert(!cards[0].signal.aborted,'terminal report is not user interaction');
- cards[0].resolve({indices:[1]});await delay(30);assert.equal(writes[0],'\x1b[B\r');
- watcher.output('\x1b[2J\x1b[H'+menu);await delay(30);const old=cards.at(-1);watcher.input('\x1b[B');assert(old.signal.aborted);old.resolve({indices:[0]});await delay(30);assert.equal(writes.length,1);
- watcher.output('\x1b[2J\x1b[H'+menu.replace('❯ 1. Yes','  1. Yes').replace('  2. No','❯ 2. No'));await delay(30);cards.at(-1).resolve({indices:[0]});await delay(30);assert.equal(writes.at(-1),'\x1b[A\r');
- watcher.output('\x1b[2J\x1b[H'+menu);await delay(30);const before=writes.length;valid=false;cards.at(-1).resolve({indices:[0]});await delay(30);assert.equal(writes.length,before);valid=true;
- watcher.input('x');watcher.output('\x1b[2J\x1b[HResume Session\r\nSearch sessions\r\n❯ First session\r\n  1 minute ago · 800 bytes\r\n  Second session\r\n  2 minutes ago · 900 bytes\r\nEnter to select · Esc to cancel');await delay(30);assert(cards.at(-1).q.searchable);cards.at(-1).resolve({search:'test'});await delay(30);assert.equal(writes.at(-1),'\x15test');
- watcher.input('x');watcher.output('\x1b[2J\x1b[HChoose features\r\n❯ 1. [ ] A\r\n  2. [x] B\r\nSpace to select · Enter to submit · Esc to cancel');await delay(30);assert(cards.at(-1).q.multiSelect);cards.at(-1).resolve({indices:[0]});await delay(30);assert.equal(writes.at(-1),' '+'\x1b[B'+' '+'\r');
- watcher.input('x');watcher.output('\x1b[2J\x1b[HYour answer?\r\n❯ 1. Type something.\r\nEnter to submit · Esc to cancel');await delay(30);assert(cards.at(-1).q.nativeText);cards.at(-1).resolve({text:'中文回答'});await delay(30);assert.equal(writes.at(-1),'\x1b[200~中文回答\x1b[201~\r');
- watcher.input('x');watcher.output('\x1b[2J\x1b[HResume session\r\nNo conversations found in this project.\r\nType to search · Esc to cancel');await delay(30);assert(cards.at(-1).q.searchable);cards.at(-1).resolve({cancel:true});await delay(30);assert.equal(writes.at(-1),'\x1b');
+ cards[0].resolve({indices:[1]});await delay(150);assert.deepEqual(writes.slice(0,2),['\x1b[B','\r']);
+ watcher.input('x');watcher.output('\x1b[2J\x1b[H'+menu);await delay(30);const old=cards.at(-1);watcher.input('\x1b[B');assert(old.signal.aborted);old.resolve({indices:[0]});await delay(150);assert.equal(writes.length,2);
+ watcher.output('\x1b[2J\x1b[H'+menu.replace('❯ 1. Yes','  1. Yes').replace('  2. No','❯ 2. No'));await delay(30);cards.at(-1).resolve({indices:[0]});await delay(150);assert.deepEqual(writes.slice(-2),['\x1b[A','\r']);
+ watcher.output('\x1b[2J\x1b[H'+menu);await delay(30);const before=writes.length;valid=false;cards.at(-1).resolve({indices:[0]});await delay(150);assert.equal(writes.length,before);valid=true;
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HResume Session\r\nSearch sessions\r\n❯ First session\r\n  1 minute ago · 800 bytes\r\n  Second session\r\n  2 minutes ago · 900 bytes\r\nEnter to select · Esc to cancel');await delay(30);assert(cards.at(-1).q.searchable);cards.at(-1).resolve({search:'test'});await delay(150);assert.deepEqual(writes.slice(-2),['\x15','test']);
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HChoose features\r\n❯ 1. [ ] A\r\n  2. [x] B\r\nSpace to select · Enter to submit · Esc to cancel');await delay(30);assert(cards.at(-1).q.multiSelect);cards.at(-1).resolve({indices:[0]});await delay(200);assert.deepEqual(writes.slice(-4),[' ','\x1b[B',' ','\r']);
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HYour answer?\r\n❯ 1. Type something.\r\nEnter to submit · Esc to cancel');await delay(30);assert(cards.at(-1).q.nativeText);cards.at(-1).resolve({text:'中文回答'});await delay(150);assert.deepEqual(writes.slice(-2),['\x1b[200~中文回答\x1b[201~','\r']);
+ watcher.input('x');watcher.output('\x1b[2J\x1b[HResume session\r\nNo conversations found in this project.\r\nType to search · Esc to cancel');await delay(30);assert(cards.at(-1).q.searchable);cards.at(-1).resolve({cancel:true});await delay(150);assert.equal(writes.at(-1),'\x1b');
  watcher.close();assert(cards.at(-1).signal.aborted);
  const realResume=parseMenu(['> /resume','','───','  Resume session','  │ ⌕ Search… │','    fanbox-pro-win','','  > Fixture session 2','    15 seconds ago · 817 bytes','','    Fixture session 0','    15 seconds ago · 817 bytes','','    Fixture session 1','    15 seconds ago · 817 bytes','','    Ctrl+A to show all projects · Type to','    search · Esc to cancel']);assert.equal(realResume.options.length,3);assert.equal(realResume.selected,0);assert.equal(realResume.options[1].label,'Fixture session 0');
  assert.equal(parseMenu(['Printed prose','1. Yes','2. No','Enter to confirm']),null);

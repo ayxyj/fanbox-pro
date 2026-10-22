@@ -6,8 +6,8 @@ const { redact } = require('./im-redact');
 const os = require('os'), fs = require('fs');
 const clean = text => String(text || '').replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0,64000);
 class WecomService {
-  constructor({ store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, stopCLI = () => {}, leaveCLI = () => {}, closeCLI = () => {}, activeCLI, cliStatus = () => null, releaseSession = () => {}, Client = WSClient }) {
-    Object.assign(this, { store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, stopCLI, leaveCLI, closeCLI, activeCLI, cliStatus, releaseSession, Client });
+  constructor({ store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, retryCLIInteraction, stopCLI = () => {}, leaveCLI = () => {}, closeCLI = () => {}, activeCLI, cliStatus = () => null, releaseSession = () => {}, Client = WSClient }) {
+    Object.assign(this, { store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, retryCLIInteraction, stopCLI, leaveCLI, closeCLI, activeCLI, cliStatus, releaseSession, Client });
     this.focus = new Map(); this.numbers = new Map(); this.completedApprovals = new Map();
     this.healthEvents = []; this.lastReceivedAt = 0; this.lastSentAt = 0;
     this.routes = new Map(); this.pendingUsers = new Map(); this.approvals = new Map(); this.seen = new Set(this.config().recent || []); this.generation = 0; this.status = 'disabled';
@@ -134,7 +134,8 @@ class WecomService {
       if (body.quote) { route = this.quotedRoute(userid, body.quote); this.focus.set(userid, route.key); this.changed(); }
       else route = this.focused(userid);
       if (route && route.mode !== 'ai' && this.activeCLI && !this.activeCLI(route.sessionId)) route.mode = 'ai';
-      if (!text.startsWith('/') && await this.answerQuestionText(userid, route, rawText)) return;
+      const nativeText = [...(this.questions?.values() || [])].some(e=>e.route===route && e.q.nativeText);
+      if ((!text.startsWith('/') || nativeText && !['/stop','/aiquit','/retry','/list','/sel','/状态','/bridge'].includes(text.split(/\s/)[0])) && await this.answerQuestionText(userid, route, rawText)) return;
       if (await this.bridgeCommand(userid, text)) return;
     } catch (error) { await this.send(userid, error.message); return; }
     let key = route?.key;
@@ -145,7 +146,7 @@ class WecomService {
       await this.send(userid, '已请求停止，请检查终端实际状态'); return;
     }
     
-    if (text === '/状态') { await this.send(userid, route ? `终端：${route.sessionId || '创建中'}\n模式：${route.mode}\n状态：${route.busy ? '处理中' : '等待消息'}` : '当前对话尚未创建终端'); return; }
+    if (text === '/状态') { await this.send(userid, route ? `终端：${route.sessionId || '创建中'}\n模式：${route.mode}\n状态：${route.mode !== 'ai' ? this.cliStatus(route.sessionId)?.text || '等待消息' : route.busy ? '处理中' : '等待消息'}` : '当前对话尚未创建终端'); return; }
     if (text.startsWith('/') && (!route || route.mode === 'ai')) { await this.send(userid, '未知桥接命令，请用 /help 查看帮助'); return; }
     if (!config.allowExecution) { await this.send(userid, '电脑端尚未开启“允许远程操作”，请在设置中开启'); return; }
     if (route?.busy) { await this.send(userid, '当前会话仍在处理上一条消息；没有重复执行。可发送 /状态 或 /stop'); return; }

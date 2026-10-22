@@ -1,0 +1,13 @@
+'use strict';
+const fs=require('fs'),path=require('path');
+const root=path.resolve(__dirname,'..'),version=require('../package.json').version;
+const changelog=fs.readFileSync(path.join(root,'CHANGELOG.md'),'utf8');
+const heading='## ['+version+']';
+const start=changelog.indexOf(heading);
+if(start<0)throw Error('Missing changelog entry for '+version);
+const end=changelog.indexOf('\n## [',start+heading.length);
+const section=changelog.slice(start,end<0?undefined:end).trim();
+const output=path.resolve(process.argv[2]||path.join(root,'dist','release-notes.md'));
+fs.mkdirSync(path.dirname(output),{recursive:true});
+fs.writeFileSync(output,'fanbox-pro '+version+' · Windows x64\n\n'+section+'\n','utf8');
+console.log('Release notes generated for '+version);

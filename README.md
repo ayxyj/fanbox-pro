@@ -6,7 +6,7 @@
 
 **Windows 本地工作台 · 文件浏览 × 内嵌终端 × Git 仓库管理 × 定时任务**
 
-![Version](https://img.shields.io/badge/version-1.0.0-blue)
+![Version](https://img.shields.io/badge/version-1.0.3-blue)
 ![Windows](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -51,6 +51,15 @@
 - 终端选区复制、粘贴和右键菜单；无选区时 `Ctrl+C` 保留中断功能。
 - Windows 内置 Claude / Codex 启动入口使用 `.cmd`，避免 npm `.ps1` 启动脚本受 PowerShell 执行策略拦截。
 
+### 企业微信与 Claude CLI
+
+- 在软件的 IM 设置中绑定企业微信账号，开启远程操作；通过 `/new 项目名` 创建会话，再发送 `/claude` 启动真实 Claude CLI。
+- 终端保留原生显示，企微同步可识别的目录信任、操作确认、单选、多选和文字问题；点击卡片或回复编号后回传当前终端。
+- 回传按键逐个发送，核对实际焦点后提交，终端离开原问题才提示选择生效；没有收到终端确认时会明确提示，不自动重复提交或反复推送同一问题。
+- 最终结果与限频进度发送至绑定账号，同一桥接会话中从本机终端提交的 Claude 任务也会回传结果。切换到企微不会将终端状态应答误判成用户输入。
+- `/状态` 查看任务状态，`/retry` 重新获取过期或未完成的当前问题；卡片不可用时可按文字提示回复，跨会话可用 `/回答 问题编号 内容`。
+- 仅支持通过 FanBox 桥接启动并绑定的会话；无法识别的 CLI 菜单需在本机处理。完整操作见[企业微信配置](docs/user-guide/wecom-setup.md)和[CLI 与交互说明](docs/user-guide/wecom-commands.md)。
+
 ### Git 仓库管理
 
 - 添加多个工作区，扫描其中的 Git 仓库，集中展示仓库总览。
@@ -84,9 +93,9 @@
 
 ## 安装与环境要求
 
-当前发行版本：**1.0.0 · Windows x64**。
+当前发行版本：**1.0.3 · Windows x64**。升级内容见[更新日志](CHANGELOG.md)。
 
-1. 在 [本项目 Releases](https://github.com/ayxyj/fanbox-pro/releases) 下载 `fanbox-pro-1.0.0-x64.exe`。
+1. 在 [本项目 Releases](https://github.com/ayxyj/fanbox-pro/releases) 下载 `fanbox-pro-1.0.3-x64.exe`。
 2. 运行安装程序，选择安装目录，安装完成后启动 **fanbox-pro**。
 3. 使用 Git 功能前，安装 Git for Windows，并确保终端执行 `git --version` 正常。
 4. 使用 Agent 功能时，另行安装并配置 Claude Code / Codex；应用不包含这些工具的账号或订阅。
@@ -118,13 +127,15 @@
 
 ## 本地数据与升级
 
-为兼容此前版本，1.0.0 保留原存储位置：
+为兼容此前版本，1.0.3 保留原存储位置：
 
 - 仓库、工作区、同步日志和任务配置：`%USERPROFILE%\.fanbox-pro-win\`。
 - 主题选择、背景图片和窗口状态：Electron 用户数据目录。已有安装优先沿用 `%APPDATA%\fanbox-pro-win\`，首次安装通常为 `%APPDATA%\fanbox-pro\`。
 - 默认后端地址：`http://127.0.0.1:4569`，仅监听本机回环地址。
 
 升级前关闭旧版本；需要备份时复制上述数据目录。存储目录中的 `-win` 为历史兼容名称，软件显示名称已统一为 **fanbox-pro**。
+
+**升级到 1.0.3 后，退出原有桥接 Claude CLI，再通过企微 `/claude` 重新启动。** 旧 CLI 进程仍使用启动时的 Hook 设置，安装新版不会自动替换；无需重新绑定企微账号。若问题卡片过期，可发送 `/retry`，不必反复点击旧卡片。
 
 开发和测试可通过环境变量使用独立数据：
 
@@ -162,7 +173,7 @@ npm run dist:win
 默认产物：
 
 ```text
-dist/fanbox-pro-1.0.0-x64.exe       # NSIS 安装包
+dist/fanbox-pro-1.0.3-x64.exe       # NSIS 安装包
 dist/win-unpacked/fanbox-pro.exe   # 解压目录中的应用
 ```
 

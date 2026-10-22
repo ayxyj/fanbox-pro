@@ -25,6 +25,11 @@ async function invoke(file, args, input) {
   await invoke(process.execPath,[path.join(channel.directory,'notify.cjs'),channel.directory,JSON.stringify({type:'agent-turn-complete','thread-id':'t','turn-id':'r','last-assistant-message':'codex final'})]);
   await channel.poll();assert.equal(seen[1].text,'codex final');
   const codex=createResultChannel('codex',()=>{}, {runtime:process.execPath});assert.match(codex.args,/notify=\[/);codex.close();
+  assert(settings.hooks.UserPromptSubmit, 'local terminal prompts must establish a bridged turn');
+  // Reversed UUID filenames must not make a quick Stop arrive before its prompt.
+  fs.writeFileSync(path.join(channel.directory,'aaaaaaaa-0000-0000-0000-000000000000.event'),JSON.stringify({kind:'result',createdAt:200,text:'quick'}));
+  fs.writeFileSync(path.join(channel.directory,'ffffffff-0000-0000-0000-000000000000.event'),JSON.stringify({kind:'prompt',createdAt:100}));
+  await channel.poll();assert.deepEqual(seen.slice(-2).map(e=>e.kind),['prompt','result']);
  } finally {channel.close();}
  console.log('PASS: structured results, real Windows hook command, Codex argument, transcript-only text, subagent exclusion, error and cleanup');
 })().catch(e=>{console.error(e);process.exitCode=1;});

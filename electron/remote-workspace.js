@@ -256,7 +256,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   im = new WecomService({ store, emit, target, runAI, releaseSession: id => history.release(id), stopAI: id => ai.stop(id),
     startCLI: (id, name, cwd) => { const t = target(id); if (t.pendingInput || historySessions.has(id)) throw Error('终端有未完成输入或 AI 任务'); return cli.start(id, name, cwd); },
     cycleCLIPermission: id => cli.cyclePermission(id),
-    runCLI: (id, prompt) => cli.run(id, prompt), stopCLI: id => cli.stop(id), leaveCLI: id => cli.leave(id), closeCLI: id => cli.close(id), activeCLI: id => cli.sessions.get(id)?.name, cliStatus: id => cli.status(id),
+    runCLI: (id, prompt) => cli.run(id, prompt), retryCLIInteraction: id => cli.retryInteraction(id), stopCLI: id => cli.stop(id), leaveCLI: id => cli.leave(id), closeCLI: id => cli.close(id), activeCLI: id => cli.sessions.get(id)?.name, cliStatus: id => cli.status(id),
     createTerminal: options => new Promise((resolve, reject) => {
       const token = crypto.randomUUID();
       const timer = setTimeout(() => { terminalRequests.delete(token); reject(Error('创建终端超时，请打开软件后重试')); }, 30000);

@@ -28,7 +28,8 @@ module.exports = {
         const details = q.options.map((o,i) => `${i+1}. ${o.label}\n${o.description || ''}`).join('\n\n');
         await this.say(route, `${q.title || 'Claude 提问'}：${q.question}\n\n${details}\n\n${q.nativeMenu ? (q.nativeText?'请直接回复填写内容。':'')+'终端与此卡片同步，任一端操作后旧卡片可能失效。' + (q.searchable ? ' 可回复“搜索 关键词”筛选历史会话。' : '') : ''}\n${q.multiSelect ? '可多选，选好后点击提交；也可回复多个编号，如 1,3。' : (q.fixedOptions ? '点击选项或回复编号。' : '点击选项，或直接回复编号/自定义内容。')}\n指定回答：/回答 ${token} 您的答案\n4 分钟内有效。`);
         if (settled || !this.valid(route)) return abort();
-        await this.client.sendMessage(route.userid, { msgtype: 'template_card', template_card: this.questionCard(entry) });
+        try { await this.client.sendMessage(route.userid, { msgtype: 'template_card', template_card: this.questionCard(entry) }); }
+        catch { if(!settled)await this.say(route,`选项卡片发送失败，请直接按上方提示回复，或发送 /回答 ${token} 您的答案。`); }
       })().catch(() => finish(null));
     });
   },
@@ -84,8 +85,15 @@ module.exports = {
     const entry = entries[0], raw = explicit ? explicit[2] : text;
     if(entry.q.nativeMenu){
       if(entry.busy)return true;
-      if(entry.q.nativeText && raw.trim()!=='取消'){entry.finish({text:raw});return true;}
-      if(entry.q.searchable && /^搜索\s+/.test(raw)){entry.finish({search:raw.replace(/^搜索\s+/,'')});return true;}
+      if(entry.q.nativeText && raw.trim()!=='取消'){
+        if(!raw.trim() || raw.length>4000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(raw)){await this.say(entry.route,'回答为空、过长或包含终端控制字符，请重新输入（最多 4000 字符）。');return true;}
+        entry.finish({text:raw});return true;
+      }
+      if(entry.q.searchable && /^搜索\s+/.test(raw)){
+        const search=raw.replace(/^搜索\s+/,'');
+        if(!search.trim() || search.length>200 || /[\x00-\x1f\x7f]/.test(search)){await this.say(entry.route,'搜索内容为空、过长或包含控制字符，请重新输入（最多 200 字符）。');return true;}
+        entry.finish({search});return true;
+      }
       if(raw.trim()==='取消'){entry.finish({cancel:true});return true;}
       if(!/^\s*\d+(?:\s*[,，]\s*\d+)*\s*$/.test(raw)){await this.say(entry.route,'请回复选项编号'+(entry.q.searchable?'、搜索 关键词':'')+'，或回复取消。');return true;}
       const indices=[...new Set(raw.trim().split(/[,，]/).map(n=>Number(n.trim())-1))];

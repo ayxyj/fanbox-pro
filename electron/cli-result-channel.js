@@ -24,7 +24,7 @@ function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval
     else {
       const command = paths.map(p => '"' + p + '"').join(' ');
       const hook = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
-      fs.writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook, ...(name === 'claude' ? { StopFailure: hook, SessionStart: hook, PreToolUse: [ { matcher: 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash|PowerShell|WebFetch|WebSearch|Agent|Task', hooks: [{ type: 'command', command, timeout: 10 }] }], PostToolUse: hook, PostToolUseFailure: hook } : {}) } }));
+      fs.writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook, ...(name === 'claude' ? { UserPromptSubmit: hook, StopFailure: hook, SessionStart: hook, PreToolUse: [ { matcher: 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash|PowerShell|WebFetch|WebSearch|Agent|Task', hooks: [{ type: 'command', command, timeout: 10 }] }], PostToolUse: hook, PostToolUseFailure: hook } : {}) } }));
       args = ' --settings "' + safe(settings) + '"';
     }
     if (name === 'codex') args += ` -c "mcp_servers.fanbox_delivery.command='${safe(runtime)}'" -c "mcp_servers.fanbox_delivery.args=['${safe(mcpScript)}','${safe(directory)}']" -c "mcp_servers.fanbox_delivery.tool_timeout_sec=200"`;
@@ -34,12 +34,17 @@ function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval
   const poll = async () => {
     if (closed || reading) return; reading = true;
     try {
+      const events=[];
       for (const file of await fs.promises.readdir(directory)) {
         if (!/^[a-f0-9-]+\.event$/.test(file)) continue;
         const full = path.join(directory, file);
         let event; try { if ((await fs.promises.stat(full)).size <= 700000) event = JSON.parse(await fs.promises.readFile(full, 'utf8')); } catch {} finally { await fs.promises.unlink(full).catch(() => {}); }
-        if (!closed && event) await onResult(event);
+        if (event) events.push(event);
       }
+      // UUID filenames do not preserve hook order. A quick local turn may submit
+      // and finish between polls, so establish its task before delivering Stop.
+      events.sort((a,b)=>(a.createdAt-b.createdAt) || (a.kind==='prompt'?-1:b.kind==='prompt'?1:0));
+      for(const event of events)if(!closed)await onResult(event);
     } finally { reading = false; }
   };
   const timer = setInterval(() => poll().catch(() => {}), interval); timer.unref?.();

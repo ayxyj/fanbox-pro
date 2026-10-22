@@ -5,6 +5,7 @@ const { createResultChannel } = require('./cli-result-channel');
 const { CLIProgress } = require('./cli-progress');
 const { watchPermissionStatus } = require('./cli-permission-status');
 const { NativeInteraction } = require('./cli-native-interaction');
+const { isTerminalReply } = require('./terminal-protocol');
 const { randomUUID } = require('crypto');
 const NAMES = ['claude', 'codex', 'codebuddy'];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -126,16 +127,21 @@ class CLISessions {
     // xterm also emits focus changes, DECRPM, window-size and DECRQSS
     // responses via onData. Switching to WeCom is not local takeover.
     // Match only complete protocol responses; ordinary keys/pastes still cancel.
-    if (typeof text === 'string' && /^(?:\x1b\[[IO]|\x1b\[[?>=]?[\d;]*[cRn]|\x1b\[\??\d+;\d+\$y|\x1b\[\d+(?:;\d+)*t|\x1bP[01]\$r[ -~]*?\x1b\\|\x1b\][^\x07]*(?:\x07|\x1b\\))+$/.test(text)) return;
+    if (isTerminalReply(text)) return;
     const s = this.sessions.get(id); if (!s) return;
     s.native?.input(text);
-    s.interactionsCancelledAt = Date.now(); s.startup = false; s.trustPending = false; s.trustController?.abort(); this.cancelPermissions(s);
+    s.localInput = true; s.interactionsCancelledAt = Date.now(); s.startup = false; s.trustPending = false; s.trustController?.abort(); this.cancelPermissions(s);
   }
   deliver(id, s, text, metadata) {
     if (!text?.trim()) return;
     s.sending = s.sending.catch(() => {}).then(() => this.sessions.get(id) === s ? this.notify(id, text, metadata) : undefined).catch(() => {});
   }
   result(id, s, event) {
+    if(event.kind === 'prompt') {
+      if(this.sessions.get(id)!==s || event.createdAt < (s.interactionsCancelledAt || 0))return;
+      if(!s.pending || s.localInput){this.beginTask(id,s,event.createdAt);s.localInput=false;}
+      return;
+    }
     if(event.kind === 'session') { if(this.sessions.get(id)===s && event.source==='resume'){s.nativeMenu=false;s.pending=false;s.slashCommand=null;this.finishProgress(s);this.deliver(id,s,'Claude 已恢复历史会话：'+event.sessionId);} return; }
     if (event.kind === 'attachment') {
       const taskId = s.taskId;
@@ -190,10 +196,7 @@ class CLISessions {
       if (s.pending) throw Error('CLI 正在处理上一条消息，请等待结果，或先 /stop 中断');
       if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(prompt)) throw Error('消息为空、过长或包含终端控制字符');
       s.slashCommand = prompt.trim().startsWith('/') ? prompt.trim().split(/\s/)[0] : null;
-      s.startup = false; s.pending = true; s.started = Date.now(); s.errorNotified = false; s.tail = ''; s.seen.clear();
-      s.taskId = randomUUID();
-      s.progress = new CLIProgress({ send: text => this.deliver(id, s, text, { taskId: s.taskId, progress: true }) });
-      s.progressTimer = setInterval(() => s.progress?.tick(), 1000); s.progressTimer.unref?.();
+      this.beginTask(id,s); s.localInput=false;
       // Bracketed paste protects multiline text from being submitted one line at a time.
       t.input('\x1b[200~' + prompt + '\x1b[201~');
       await this.wait(100);
@@ -203,7 +206,15 @@ class CLISessions {
     });
   }
   finishProgress(s) { clearInterval(s.progressTimer); s.progress?.close(); }
-  status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: !s.pending ? '本轮已结束或已请求中断' : s.permissions.size ? '等待您确认或回答' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
+  beginTask(id,s,started=Date.now()) {
+    this.finishProgress(s); s.startup=false;s.pending=true;s.started=started;s.errorNotified=false;s.tail='';s.seen.clear();s.taskId=randomUUID();
+    const taskId=s.taskId;
+    s.progress=new CLIProgress({send:text=>this.deliver(id,s,text,{taskId,progress:true})});
+    s.progress.paused=!!s.nativeMenu || s.permissions.size>0;
+    s.progressTimer=setInterval(()=>s.progress?.tick(),1000);s.progressTimer.unref?.();
+  }
+  retryInteraction(id) { const s=this.sessions.get(id);if(!s?.native?.retry())throw Error('当前未识别到待确认的终端问题，请查看本机终端');return '已重新转发当前终端问题，请查看新卡片。'; }
+  status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: s.nativeMenu || s.permissions.size || s.trustPending ? '等待您确认或回答' : !s.pending ? '本轮已结束或已请求中断' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
   stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
   async leave(id) {
     this.userInput(id);

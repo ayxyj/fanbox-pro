@@ -37,6 +37,14 @@ jobs:
           node tests/startup-single-instance.js
           node tests/ssh-zmodem.js
           npm test
+      - name: Verify CLI and WeCom interactions
+        shell: pwsh
+        run: |
+          $tests = @('cli-native-delivery', 'cli-native-interaction', 'cli-wecom-native-roundtrip', 'cli-session', 'cli-interactions', 'cli-result-channel', 'cli-wecom-approval', 'cli-trust', 'cli-permission', 'cli-progress', 'wecom-service', 'wecom-files')
+          foreach ($test in $tests) {
+            node "tests/$test.js"
+            if ($LASTEXITCODE -ne 0) { throw "Interaction test failed: $test" }
+          }
       - name: Package Windows app
         shell: pwsh
         run: |
@@ -68,19 +76,8 @@ jobs:
         run: |
           $installer = "dist/fanbox-pro-$env:RELEASE_VERSION-x64.exe"
           if (!(Test-Path $installer)) { throw 'Installer not found' }
-          $notes = @"
-          fanbox-pro $env:RELEASE_VERSION · Windows x64
-
-          本次更新：
-          - 修复重复启动时主窗口变量尚未初始化导致的崩溃。
-          - 内置 SSH 支持 rz/sz 文件传输、多文件上传、下载保存和取消，兼容部分服务器缺少结束标记的情况。
-          - 优化 AI 配置、上下文续聊、执行授权、模型超时及企业微信 CLI 交互提示。
-          - 增加桌面宠物、扩展动作与皮肤，完善用户指南与静态网站编译工具。
-
-          下载 fanbox-pro-$env:RELEASE_VERSION-x64.exe 并运行安装。Git 功能需要本机 Git；Agent 功能需要另行配置对应工具。
-          原项目：https://github.com/alchaincyf/fanbox
-          "@
-          $notes | Set-Content dist/release-notes.md -Encoding utf8
+          node scripts/release-notes.js dist/release-notes.md
+          if ($LASTEXITCODE -ne 0) { throw 'Release notes generation failed' }
           gh release view $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY *> $null
           if ($LASTEXITCODE -eq 0) {
             gh release edit $env:GITHUB_REF_NAME --repo $env:GITHUB_REPOSITORY --notes-file dist/release-notes.md

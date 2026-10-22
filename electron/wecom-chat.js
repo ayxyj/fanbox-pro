@@ -4,6 +4,7 @@ const path = require('path'), fs = require('fs');
 const HELP = `📱 Code Chat 桥接命令
 • /claude /codex /codebuddy — 进入对应 CLI，原样发送消息
 • /permiss — Claude 权限模式切换一次（Shift+Tab）
+• /retry — 重新发送当前 Claude 终端的待确认问题
 • /aiquit — 退出 CLI，恢复 AI 对话
 • /projects [页码] — 列出工作目录下的项目目录
 • /new [项目名] — 新建终端会话
@@ -51,6 +52,10 @@ module.exports = {
     const [command, ...parts] = text.split(/\s+/), arg = text.slice(command.length).trim();
     let route = this.focused(userid);
     const cliName = text.replace(/^\//, '');
+    if(command === '/retry') {
+      if(!route || !this.valid(route) || route.mode!=='claude')throw Error('请先选择已授权的 Claude 会话');
+      await this.say(route,this.retryCLIInteraction(route.sessionId));return true;
+    }
     if (['claude','codex','codebuddy'].includes(cliName)) {
       if (!route) route = await this.newRoute(userid);
       if (!this.valid(route)) throw Error('远程操作权限尚未开启');
