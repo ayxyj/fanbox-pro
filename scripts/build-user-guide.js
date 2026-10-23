@@ -16,6 +16,9 @@ const pages = entries.map(entry => {
   return { ...entry, text: md, html: marked.parse(md) };
 });
 const data = JSON.stringify(pages).replace(/</g, '\\u003c');
+const metadata=pages.find(page=>page.file==='README.md')?.text.match(/^\*\*适用版本：(.+?)\*\*$/m)?.[1];
+if(!metadata)throw Error('User guide version/date metadata is missing');
+const safeMetadata=metadata.replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 fs.writeFileSync(path.join(root, 'index.html'), `<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>fanbox-pro 用户指南</title>
@@ -38,7 +41,7 @@ li{margin:6px 0}.pager{display:flex;gap:16px;justify-content:space-between;borde
 dialog{border:0;border-radius:10px;max-width:96vw;max-height:96vh;padding:12px;background:#fff}dialog::backdrop{background:#000b}dialog img{max-height:88vh;max-width:92vw;object-fit:contain;margin:0;cursor:zoom-out}dialog button{display:block;margin:0 0 8px auto;padding:6px 14px}
 @media(max-width:800px){aside{position:static;width:auto;max-height:320px;border-bottom:1px solid var(--line)}main{margin:0;padding:28px 18px}h1{font-size:27px}}
 @media print{aside,.crumb,.pager{display:none}main{margin:0;padding:0}img,table{break-inside:avoid}a{color:inherit}pre{white-space:pre-wrap}}
-</style></head><body><aside><div class="brand">fanbox-pro</div><div class="version">用户指南 · Windows 1.0.1 · 2026-10-21</div><input id="search" aria-label="搜索章节内容" placeholder="搜索操作、命令或错误…"><nav></nav></aside>
+</style></head><body><aside><div class="brand">fanbox-pro</div><div class="version">用户指南 · ${safeMetadata}</div><input id="search" aria-label="搜索章节内容" placeholder="搜索操作、命令或错误…"><nav></nav></aside>
 <main><div class="crumb">使用指南 / <span id="current"></span>　·　点击截图可放大</div><article></article><div class="pager"></div></main>
 <dialog id="zoom"><button type="button">关闭</button><img alt="放大后的界面截图"></dialog>
 <script>

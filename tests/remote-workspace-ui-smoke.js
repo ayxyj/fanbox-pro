@@ -28,7 +28,7 @@ const model=require('http').createServer(async(req,res)=>{let body='';for await(
  for(let i=0;i<50&&!document.querySelector('.remote-dialog');i++)await new Promise(r=>setTimeout(r,50));if(!document.querySelector('[data-add-model]'))throw Error('Settings button cannot open AI config');document.querySelector('[data-dismiss]').click();
  document.querySelector('[data-ssh-add]').click();for(let i=0;i<50&&!document.querySelector('.profile-form');i++)await new Promise(r=>setTimeout(r,50));
  const bounds=document.querySelector('.remote-dialog').getBoundingClientRect();if(Math.abs(bounds.x+bounds.width/2-innerWidth/2)>2||Math.abs(bounds.y+bounds.height/2-innerHeight/2)>2)throw Error('Dialog not centered');
- const f=document.querySelector('.profile-form');f.elements.name.value='UI fixture';f.elements.group.value='Test group';f.elements.host.value='127.0.0.1';f.elements.port.value='14650';f.elements.username.value='tester';f.elements.password.value='ui-secret';f.elements.remember.checked=true;f.requestSubmit();
+ const f=document.querySelector('.profile-form');f.elements.name.value='UI fixture';f.elements.group.value='Test group';f.elements.host.value='127.0.0.1';f.elements.port.value='14650';f.elements.username.value='tester';f.elements.password.value='ui-secret';f.elements.remember.checked=true;f.elements.detectEnvironment.checked=true;f.requestSubmit();
  for(let i=0;i<100&&document.querySelector('.profile-form');i++)await new Promise(r=>setTimeout(r,50));
  const stored=await fanboxRemote.call('state');if(!stored.ok||stored.value.profiles.length!==1)throw Error('Save profile failed: '+document.querySelector('.remote-status').textContent);
  if(JSON.stringify(stored).includes('ui-secret'))throw Error('Credential exposed');

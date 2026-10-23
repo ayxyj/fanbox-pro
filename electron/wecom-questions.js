@@ -3,11 +3,11 @@ const { randomBytes } = require('crypto');
 module.exports = {
   async askCLIQuestions(route, questions, signal) {
     if (!Array.isArray(questions) || !questions.length || questions.length > 4) return null;
-    const answers = {}, deadline = Date.now() + 240000;
+    const answers = {};
     for (const q of questions) {
-      if (!this.valid(route) || signal.aborted || Date.now() >= deadline) return null;
+      if (!this.valid(route) || signal.aborted) return null;
       if (typeof q.question !== 'string' || !Array.isArray(q.options) || q.options.length > 4 || q.options.some(o => typeof o.label !== 'string')) return null;
-      const answer = await this.askCLIQuestion(route, q, signal, deadline);
+      const answer = await this.askCLIQuestion(route, q, signal, Date.now()+240000);
       if (answer === null) return null;
       answers[q.question] = answer;
     }
@@ -24,13 +24,19 @@ module.exports = {
       const timer = setTimeout(abort, Math.max(1, deadline - Date.now()));
       entry.finish = finish; this.questions.set(token, entry); signal.addEventListener('abort', abort, { once: true });
       if (signal.aborted) return abort();
-      (async () => {
+      // Serialize outbound details/card pairs per terminal. An obsolete queued
+      // question must never be sent after a newer screen has replaced it.
+      this.questionDeliveries ||= new WeakMap();
+      const previous=this.questionDeliveries.get(route)||Promise.resolve();
+      const delivery=previous.catch(()=>{}).then(async () => {
+        if(settled || signal.aborted || !this.valid(route))return abort();
         const details = q.options.map((o,i) => `${i+1}. ${o.label}\n${o.description || ''}`).join('\n\n');
         await this.say(route, `${q.title || 'Claude 提问'}：${q.question}\n\n${details}\n\n${q.nativeMenu ? (q.nativeText?'请直接回复填写内容。':'')+'终端与此卡片同步，任一端操作后旧卡片可能失效。' + (q.searchable ? ' 可回复“搜索 关键词”筛选历史会话。' : '') : ''}\n${q.multiSelect ? '可多选，选好后点击提交；也可回复多个编号，如 1,3。' : (q.fixedOptions ? '点击选项或回复编号。' : '点击选项，或直接回复编号/自定义内容。')}\n指定回答：/回答 ${token} 您的答案\n4 分钟内有效。`);
         if (settled || !this.valid(route)) return abort();
         try { await this.client.sendMessage(route.userid, { msgtype: 'template_card', template_card: this.questionCard(entry) }); }
         catch { if(!settled)await this.say(route,`选项卡片发送失败，请直接按上方提示回复，或发送 /回答 ${token} 您的答案。`); }
-      })().catch(() => finish(null));
+      }).catch(() => finish(null));
+      this.questionDeliveries.set(route,delivery);
     });
   },
   questionCard(entry, ended = false) {

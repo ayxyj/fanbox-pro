@@ -1,0 +1,18 @@
+'use strict';
+const assert=require('assert/strict'),fs=require('fs'),vm=require('vm');
+const source=fs.readFileSync(require('path').join(__dirname,'../public/im-pet.js'),'utf8');
+const start=source.indexOf('  const capture=e=>'),end=source.indexOf("  document.addEventListener('pointerdown'",start);
+assert(start>=0&&end>start);
+const phases=[],documentEvents={},windowEvents={};let captureFails=true,restores=0,reset;
+const character={setPointerCapture(){if(captureFails)throw Error('No active pointer');},hasPointerCapture:()=>false,releasePointerCapture(){},contains:e=>e===character};
+const context={character,desktop:true,desktopBridge:{drag:p=>{phases.push(p);return Promise.resolve();},restore:()=>{restores++;return Promise.resolve();},settings:()=>Promise.resolve(),onResetInput:fn=>reset=fn},native:p=>p?.catch(()=>{}),root:{style:{setProperty(){}}},prefs:{motion:false},panel:{hidden:true},position(){},refresh(){},save(){},document:{addEventListener:(n,f)=>documentEvents[n]=f},addEventListener:(n,f)=>windowEvents[n]=f};
+vm.runInNewContext('(()=>{let drag=null,moved=false;'+source.slice(start,end)+'})()',context);
+const down=()=>character.onpointerdown({button:0,pointerId:1,screenX:10,screenY:10});
+assert.doesNotThrow(down);assert.equal(phases.at(-1),'start','native drag starts even if capture fails');
+documentEvents.pointermove({buttons:1,screenX:35,screenY:25,target:{}});assert.equal(phases.at(-1),'move','document fallback moves the window');
+character.onlostpointercapture();assert.equal(phases.at(-1),'end');character.onclick();assert.equal(restores,1,'lost capture cannot suppress later clicks');
+down();documentEvents.pointermove({buttons:0,target:{}});assert.equal(phases.at(-1),'end','missed mouse-up is recovered');
+down();windowEvents.blur();assert.equal(phases.at(-1),'end');character.onclick();assert.equal(restores,2);
+captureFails=false;down();character.onpointermove({buttons:1,screenX:40,screenY:40});documentEvents.pointerup();const before=restores;character.onclick();assert.equal(restores,before,'completed drag does not activate main window');
+down();reset();character.onclick();assert.equal(restores,before+1,'reset clears both dragging and suppressed click state');
+console.log('PASS capture failure, document fallback, lost capture, missed mouse-up, blur, drag-click separation and reset recovery');

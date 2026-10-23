@@ -1585,7 +1585,7 @@ async function memoryPanel(dirPath) {
   body.querySelectorAll('.mem-resume').forEach((b) => {
     b.onclick = () => {
       const s = d.sessions[Number(b.dataset.i)];
-      const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --dangerously-skip-permissions --resume ${s.id}`;
+      const cmd = s.agent === 'codex' ? `codex resume ${s.id}` : `claude --permission-mode auto --resume ${s.id}`;
       close();
       term.runInDir(dirPath, cmd, '已在终端续上会话');
     };
@@ -2077,7 +2077,7 @@ function bindEvents() {
   $('#preview-max').onclick = () => togglePreviewMax();
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-terminal').onclick = () => term.toggle();
-  $('#term-claude').onclick = () => term.launchAgent('claude --dangerously-skip-permissions');
+  $('#term-claude').onclick = () => term.launchAgent('claude --permission-mode auto');
   $('#term-permission').onclick = async () => {
     const button = $('#term-permission'); button.disabled = true;
     try {
@@ -2405,10 +2405,16 @@ const term = {
     if (sess && (sess.dead || sess.agentStartingUntil > Date.now())) sess = null;
     if (!sess) sess = await this.openInDir(dir, {shell});
     if (!sess || sess.dead) { toast('终端启动失败', true); return; }
+    let prepared = command;
+    if (agent === 'claude' && window.fanboxRemote) {
+      const result = await window.fanboxRemote.call('mcp-prepare', {sessionId:sess.id, command});
+      if (!result.ok) { toast(result.error, true); return; }
+      prepared = result.value;
+    }
     sess.repoDir = dir; sess.agent = agent; sess.agentStartingUntil = Date.now() + 3000;
     sess.title = (baseOf(dir.replaceAll('\\','/')) || dir) + ' · ' + (labels[agent] || agent);
     this.open(); this.activate(sess.id);
-    const cmd = windows ? command.replace(/^(claude|codex)(?=\s|$)/,'$1.cmd') : command;
+    const cmd = windows ? prepared.replace(/^(claude|codex)(?=\s|$)/,'$1.cmd') : prepared;
     this.input(sess.id, cmd + '\r'); sess.xterm.focus(); this.renderTabs();
     toast('已在当前目录启动 ' + (labels[agent] || agent));
     return sess;
@@ -2418,6 +2424,11 @@ const term = {
     if(window.fanboxEnv?.platform==='win32')cmd=cmd.replace(/^(claude|codex)(?=\s|$)/,'$1.cmd');
     if (!this.available()) { openWith(dir, 'terminal'); return; }
     const sess = await this.openInDir(dir);
+    if (sess && !sess.dead && /^claude(?:\.cmd)?(?=\s|$)/i.test(cmd) && window.fanboxRemote) {
+      const result = await window.fanboxRemote.call('mcp-prepare', {sessionId:sess.id, command:cmd});
+      if (!result.ok) { toast(result.error, true); return; }
+      cmd = result.value;
+    }
     if (sess && !sess.dead) { this.input(sess.id, cmd + '\r'); sess.xterm.focus(); toast(msg || '已在终端启动'); }
     else toast('终端启动失败', true);
   },

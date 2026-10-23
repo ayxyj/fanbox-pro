@@ -23,3 +23,16 @@ GitBook 的导航和内容配置依据：[官方内容配置文档](https://gitb
 没有创建真实企微机器人、发送真实消息或连接生产服务器；因此企微手机端和 SFTP 没有伪造的操作截图，相关章节通过步骤和命令示例说明。
 
 维护时更新对应章节及截图，再检查 `SUMMARY.md` 和图片相对链接。源码仓库中的 `scripts/capture-user-guide.js` 可重新生成演示截图；它使用测试端口和独立配置，不应与相同端口的测试同时运行。
+
+本次文字文档同步到 2026-10-22 的当前 1.0.3 本地调试包，现有截图继续用于说明界面位置，没有把它们冒充为真实企微在线联调或长期运行验证结果。
+
+## 重新生成离线版和网站版
+
+在项目根目录执行：
+
+```powershell
+node scripts/build-user-guide.js
+node scripts/build-user-guide-web.js
+```
+
+第一条校验 Markdown 链接和截图路径并更新 `docs/user-guide/index.html`；第二条生成 `dist/fanbox-pro-guide-web`，其中 `index.html` 与 `assets` 可一起部署。离线页的适用版本和文档日期从本指南首页读取，不再单独维护旧版本标注。这些操作不修改软件版本号，也不发布网站或 Release。

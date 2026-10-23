@@ -14,7 +14,7 @@ function parseMenu(lines) {
  const tail = lines.slice(footer + 1).join('').trim();
  if (tail) return null;
  const body=lines.slice(0,footer), resume=body.some(l=>/(?:Resume|Continue|Search).*session|Select a conversation/i.test(l));
- const options=[];let selected=-1;
+ let options=[];let selected=-1,contextStart=0,optionsEnd=body.length;
  for(let row=0;row<body.length;row++){
   const line=body[row];
   const numbered=line.match(/^\s*([❯>›])?\s*(\d+)\.\s+(.*\S)\s*$/);
@@ -22,8 +22,20 @@ function parseMenu(lines) {
  }
  // Only recognize a numbered menu with a real focused item and contiguous numbering.
  if(options.length){
+  // A question wizard may leave several numbered blocks on screen. Only the
+  // block containing the actual terminal focus is answerable now.
+  const groups=[];for(const option of options){const group=groups.at(-1);if(!group||option.number!==group.at(-1).number+1)groups.push([option]);else group.push(option);}
+  const focused=groups.filter(group=>group.some(o=>/^\s*[❯>›]/.test(body[o.row])));
+  if(focused.length!==1)return null;
+  options=focused[0];selected=options.findIndex(o=>/^\s*[❯>›]/.test(body[o.row]));
+  const groupIndex=groups.indexOf(options);contextStart=groupIndex?groups[groupIndex-1].at(-1).row+1:0;
+  if(groups[groupIndex+1]){
+   // Stop descriptions at the paragraph introducing the next block.
+   optionsEnd=groups[groupIndex+1][0].row;
+   while(optionsEnd>options.at(-1).row+1&&body[optionsEnd-1].trim())optionsEnd--;
+  }
   if(selected<0 || options.some((o,i)=>i&&o.number!==options[i-1].number+1))return null;
-  options.forEach((o,i)=>{o.description=body.slice(o.row+1,options[i+1]?.row??body.length).filter(l=>!/^\s*[─━]+\s*$/.test(l)).join(' ').trim().slice(0,800);});
+  options.forEach((o,i)=>{o.description=body.slice(o.row+1,options[i+1]?.row??optionsEnd).filter(l=>!/^\s*[─━]+\s*$/.test(l)).join(' ').trim().slice(0,800);});
  }else if(body.some(l=>/Accessing workspace:|Quick safety check:/i.test(l))){
   // Claude 2.1.306 uses unnumbered trust options, with "No, exit" first.
   // Preserve the actual order and focus instead of assuming Yes is the default.
@@ -49,7 +61,7 @@ function parseMenu(lines) {
  }else return null;
  if((!options.length&&!resume)||options.length>100)return null;
  const first=options[0]?.row ?? body.length;
- const context=body.slice(Math.max(0,first-12),first).filter(l=>l.trim()&&!/^\s*[─━╭╮╰╯│]+\s*$/.test(l)).map(l=>l.replace(/((?:API[_ ]?KEY|TOKEN|SECRET|PASSWORD)\s*[:=]).*/ig,'$1 [已隐藏]')).join('\n').trim().slice(-3000);
+ const context=body.slice(Math.max(contextStart,first-12),first).filter(l=>l.trim()&&!/^\s*[─━╭╮╰╯│]+\s*$/.test(l)).map(l=>l.replace(/((?:API[_ ]?KEY|TOKEN|SECRET|PASSWORD)\s*[:=]).*/ig,'$1 [已隐藏]')).join('\n').trim().slice(-3000);
  if(!context)return null;
  const help=lines[footer]||'',multi=/space.*(?:select|toggle)|select.*space/i.test(help);
  const menu={kind:resume?'resume':customOption(options[selected]?.label||'')&&/enter.*submit/i.test(help)?'input':multi?'multi':'choice',question:context,options,selected,footer:help,multi};
@@ -61,7 +73,7 @@ class NativeInteraction {
   const size=target.size?.()||{};this.screen=new Terminal({cols:size.cols||80,rows:size.rows||24,scrollback:0,allowProposedApi:true});
  }
  lines(){const b=this.screen.buffer.active;return Array.from({length:this.screen.rows},(_,i)=>b.getLine(b.baseY+i)?.translateToString(true)||'');}
- output(text){if(this.closed)return;clearTimeout(this.timer);this.screen.write(text,()=>{if(this.closed)return;const menu=this.menu();if(this.current&&!this.current.processing&&menu?.fingerprint!==this.current.menu.fingerprint)this.invalidate();this.timer=setTimeout(()=>this.refresh(),this.settle);});}
+ output(text){if(this.closed)return;clearTimeout(this.timer);this.screen.write(text,()=>{if(this.closed)return;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);});}
  resize(cols,rows){if(this.closed)return;this.invalidate();this.lastFingerprint=null;this.revision++;this.screen.resize(cols,rows);clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}
  input(text){if(reply(text||''))return;const menu=parseMenu(this.lines());if(text==='\r'&&menu&&customOption(menu.options[menu.selected]?.label||''))this.customContext=menu.question;this.revision++;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;clearTimeout(this.timer);}
  invalidate(){if(this.current){const entry=this.current;this.current=null;this.lastFingerprint=null;entry.controller.abort();}}
@@ -73,6 +85,9 @@ class NativeInteraction {
   if(this.closed||this.current?.processing)return;const lines=this.lines(),menu=this.menu();
   if(!menu){this.submittedKey=null;if(lines.some(l=>/^\s*[❯>]\s*$/.test(l)))this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(/^\s*[❯>](?:\s|$)/.test(lines[this.screen.buffer.active.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l)))this.onIdle();return;}
   this.onMenu(menu);
+  // Repainting or moving the visible rows does not introduce the next question.
+  // Keep one live card; apply() still validates the latest screen before typing.
+  if(this.current){if(menuKey(this.current.menu)===menuKey(menu)){this.current.menu=menu;return;}this.invalidate();}
   if(menuKey(menu)===this.submittedKey)return;
   this.submittedKey=null;
   if(this.current||menu.fingerprint===this.lastFingerprint)return;

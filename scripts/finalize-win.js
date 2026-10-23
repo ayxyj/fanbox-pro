@@ -8,6 +8,8 @@ const { computeData } = require('app-builder-lib/out/asar/integrity');
   const dist = path.resolve(__dirname, '..', 'dist') + path.sep;
   if (!dir.startsWith(dist)) throw new Error('Expected a packaged directory within dist');
   const pkg = require('../package.json');
+  const verified = await require('./verify-asar').verifyAsar(path.join(dir, 'resources', 'app.asar'));
+  console.log('Verified ASAR file contents:', verified);
   const name = pkg.build.productName;
   const file = path.join(dir, name + '.exe');
   const executable = R.NtExecutable.from(fs.readFileSync(file));

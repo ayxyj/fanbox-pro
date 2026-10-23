@@ -6,7 +6,7 @@
 
 **Windows 本地工作台 · 文件浏览 × 内嵌终端 × Git 仓库管理 × 定时任务**
 
-![Version](https://img.shields.io/badge/version-1.0.3-blue)
+![Version](https://img.shields.io/badge/version-1.0.4-blue)
 ![Windows](https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0078D4)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
 
@@ -29,6 +29,12 @@
 当项目散落在 `D:\code`、`D:\rrs_1104_ai` 等多个目录中，逐个打开仓库查看分支、执行同步、再切换终端会比较繁琐。fanbox-pro 将这些操作集中在一个 Windows 桌面窗口：浏览文件、查看代码、运行终端任务，并集中掌握各仓库的状态。
 
 应用在本机运行，无需注册账号。Git 远端访问使用本机 Git 的 SSH 密钥、凭据和代理配置；Claude Code、Codex 等工具使用各自已有的配置。
+
+## 软件 MCP 管理（1.0.4）
+
+在“设置 → MCP 管理”中填写标准 `mcpServers` JSON，可添加、编辑、删除或停用 stdio / HTTP / SSE 服务器。配置由 Windows 安全存储加密保存，环境变量和认证请求头不会明文写入软件配置文件。
+
+从 FanBox 快捷入口、历史恢复、定时任务以及企业微信 `/claude` 启动的本地 Claude 会话会加载启动时的配置快照；修改后需重新启动 Claude。不会改写全局 Claude 配置，也保留企业微信附件 MCP。手动在 shell 中输入启动命令、远程 SSH 及其他 CLI 暂不自动加载软件 MCP；显式指定 `--mcp-config` 的命令保留自己的配置。详见[管理说明](docs/user-guide/ai-settings.md#软件-mcp-管理)。当前 1.0.4 为本地开发版本，尚未发布。
 
 ## 主要功能
 
@@ -54,7 +60,9 @@
 ### 企业微信与 Claude CLI
 
 - 在软件的 IM 设置中绑定企业微信账号，开启远程操作；通过 `/new 项目名` 创建会话，再发送 `/claude` 启动真实 Claude CLI。
+- 当前本地调试包的企微 `/claude`、Claude 快捷按钮及历史会话恢复默认使用 `--permission-mode auto`；实际模式受模型与组织策略影响，旧 CLI 需退出后重新启动。
 - 终端保留原生显示，企微同步可识别的目录信任、操作确认、单选、多选和文字问题；点击卡片或回复编号后回传当前终端。
+- 同一终端逐题发送：上一题回答并在终端生效后才发送下一题，每题分别有 4 分钟回答时间；同题重绘或位置变化保留当前卡片。
 - 回传按键逐个发送，核对实际焦点后提交，终端离开原问题才提示选择生效；没有收到终端确认时会明确提示，不自动重复提交或反复推送同一问题。
 - 最终结果与限频进度发送至绑定账号，同一桥接会话中从本机终端提交的 Claude 任务也会回传结果。切换到企微不会将终端状态应答误判成用户输入。
 - `/状态` 查看任务状态，`/retry` 重新获取过期或未完成的当前问题；卡片不可用时可按文字提示回复，跨会话可用 `/回答 问题编号 内容`。
@@ -91,9 +99,18 @@
 - 主题入口位于顶部「视图 → 主题」，菜单勾选与当前应用主题一致。
 - 工作区、仓库、自动同步、同步日志和总览页面使用可用宽度；长分支名支持悬浮查看。
 
+### 桌面宠物
+
+- 独立桌面窗口，主软件最小化后仍可显示；左键唤出主窗口，按住左键拖动，右键打开设置。
+- 支持造型、大小、皮肤、自定义动作及企微连接状态提示。手动播放动作在机器人离线时仍可使用，宠物动画关闭时不播放。
+- 当前本地调试包的“重置位置”同时清理拖拽状态、刷新窗口交互区域并保留所选大小。这是手动恢复措施，尚未自动检测长期运行后的交互失效。
+- 使用与排查见[外观和宠物指南](docs/user-guide/appearance.md)。
+
 ## 安装与环境要求
 
 当前发行版本：**1.0.3 · Windows x64**。升级内容见[更新日志](CHANGELOG.md)。
+
+当前开发版本为 1.0.4，已按用户要求升级版本号，尚未发布。本 README 和[用户指南](docs/user-guide/README.md)包含当前工作区的新增功能；线上同版本 Release 是否包含这些变更，请以发布说明为准。
 
 1. 在 [本项目 Releases](https://github.com/ayxyj/fanbox-pro/releases) 下载 `fanbox-pro-1.0.3-x64.exe`。
 2. 运行安装程序，选择安装目录，安装完成后启动 **fanbox-pro**。
@@ -149,7 +166,7 @@
 
 ## 开发与打包
 
-建议在 Windows x64 使用 Node.js 22 LTS、npm 和 Git。`package-lock.json` 已锁定依赖。
+建议在 Windows x64 使用 Node.js 22.12 或更高版本（推荐 22 LTS）、npm 和 Git。`package-lock.json` 已锁定依赖。
 
 ```powershell
 npm ci
@@ -173,7 +190,7 @@ npm run dist:win
 默认产物：
 
 ```text
-dist/fanbox-pro-1.0.3-x64.exe       # NSIS 安装包
+dist/fanbox-pro-1.0.4-x64.exe       # NSIS 安装包
 dist/win-unpacked/fanbox-pro.exe   # 解压目录中的应用
 ```
 

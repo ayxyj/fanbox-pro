@@ -7,6 +7,7 @@ const root=fs.mkdtempSync(path.join(scratch,'appearance-'));
 fs.writeFileSync(path.join(root,'sample.js'),"const message = 'editor test';\n");
 fs.writeFileSync(path.join(root,'定位 测试.sql'),'SELECT 1;');
 fs.writeFileSync(path.join(root,'npm-wrapper.ps1'),"Write-Output 'PS_WRAPPER_OK'; Write-Output ('POLICY:'+ $env:PSExecutionPolicyPreference)");
+if(process.env.FANBOX_TEST_PROFILE_SOURCE){fs.mkdirSync(path.join(root,'electron'),{recursive:true});fs.cpSync(path.join(process.env.FANBOX_TEST_PROFILE_SOURCE,'Local Storage'),path.join(root,'electron','Local Storage'),{recursive:true});}
 const executable=process.argv[2] || path.join(workspace,'node_modules/electron/dist/electron.exe');
 const child=spawn(executable,[...(process.argv[2]?[]:['.']),'--disable-features=CalculateNativeWinOcclusion','--disable-backgrounding-occluded-windows','--disable-renderer-backgrounding','--disable-background-timer-throttling','--remote-debugging-port=14874','--user-data-dir='+path.join(root,'electron')],{cwd:workspace,env:{...process.env,PSExecutionPolicyPreference:'Restricted',GITSYNC_PORT:'14873',GITSYNC_HOME:path.join(root,'data'),TEMP:root,TMP:root},windowsHide:true,stdio:['ignore','pipe','pipe']});
 let logs='',socket,seq=0;const pending=new Map();
@@ -20,9 +21,12 @@ const provider=require('http').createServer((req,res)=>{if(req.headers.authoriza
  assert(target);socket=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>socket.addEventListener('open',r,{once:true}));socket.addEventListener('message',e=>{const m=JSON.parse(e.data);pending.get(m.id)?.(m);pending.delete(m.id);});await delay(2500);
 
  function nativeWindows(minimize=false){
- const script=`Add-Type @"
+ const script=`$ProgressPreference='SilentlyContinue'
+[Console]::OutputEncoding=[System.Text.UTF8Encoding]::new($false)
+Add-Type @"
 using System;using System.Text;using System.Runtime.InteropServices;
 public class PetWindows {
+ [DllImport("user32.dll",EntryPoint="GetWindowLongPtrW")] public static extern IntPtr GetWindowLongPtr(IntPtr h,int n);
  public delegate bool EnumProc(IntPtr h,IntPtr l);
  [DllImport("user32.dll")] public static extern bool EnumWindows(EnumProc f,IntPtr l);
  [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr h,out uint p);
@@ -33,7 +37,7 @@ public class PetWindows {
 }
 "@
 $items=[System.Collections.Generic.List[object]]::new()
-[PetWindows]::EnumWindows({param($h,$l) $ownerId=[uint32]0;[void][PetWindows]::GetWindowThreadProcessId($h,[ref]$ownerId);if($ownerId -eq ${child.pid}){$title=[System.Text.StringBuilder]::new(512);[void][PetWindows]::GetWindowText($h,$title,512);if($title.Length -gt 0){if(${minimize?'$true':'$false'} -and $title.ToString() -ne 'FanBox 桌面宠物'){[void][PetWindows]::ShowWindow($h,6)};$items.Add(@{title=$title.ToString();minimized=[PetWindows]::IsIconic($h);visible=[PetWindows]::IsWindowVisible($h)})}};return $true},[IntPtr]::Zero)|Out-Null
+[PetWindows]::EnumWindows({param($h,$l) $ownerId=[uint32]0;[void][PetWindows]::GetWindowThreadProcessId($h,[ref]$ownerId);if($ownerId -eq ${child.pid}){$title=[System.Text.StringBuilder]::new(512);[void][PetWindows]::GetWindowText($h,$title,512);if($title.Length -gt 0){if(${minimize?'$true':'$false'} -and $title.ToString() -ne 'FanBox 桌面宠物'){[void][PetWindows]::ShowWindow($h,6)};$items.Add(@{title=$title.ToString();minimized=[PetWindows]::IsIconic($h);visible=[PetWindows]::IsWindowVisible($h);topmost=([PetWindows]::GetWindowLongPtr($h,-20).ToInt64() -band 8) -ne 0})}};return $true},[IntPtr]::Zero)|Out-Null
 ConvertTo-Json -InputObject @($items.ToArray()) -Compress`;
  return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{encoding:'utf8'}).trim());
  }
@@ -41,6 +45,18 @@ ConvertTo-Json -InputObject @($items.ToArray()) -Compress`;
  async function connect(url){socket?.close();socket=new WebSocket(url);await new Promise(r=>socket.addEventListener('open',r,{once:true}));socket.addEventListener('message',e=>{const m=JSON.parse(e.data);pending.get(m.id)?.(m);pending.delete(m.id);});}
  let pet;for(let i=0;i<100;i++){pet=(await(await fetch('http://127.0.0.1:14874/json')).json()).find(t=>t.url.endsWith('/desktop-pet.html'));if(pet)break;await delay(100);}assert(pet,'Desktop window absent');
  await delay(800);assert(await evaluate("window.fanboxDesktopPet && !window.fanboxDesktopPet.isDesktop && document.querySelector('.im-pet').hidden"),'Main view must not duplicate pet');
+ await connect(pet.webSocketDebuggerUrl);
+ await evaluate("document.querySelector('[data-hide]').click();true");await delay(300);
+ assert(nativeWindows().some(w=>w.title==='FanBox 桌面宠物'&&!w.visible),'Hide must hide native pet window');
+ await connect(target.webSocketDebuggerUrl);await evaluate("window.remoteUI.imSettings()");
+ await evaluate("document.querySelector('.im-settings [data-pet]').click();true");await delay(400);
+ assert(await evaluate("document.querySelector('.im-pet-panel').hidden"),'Show button must not open settings panel');
+ await connect(pet.webSocketDebuggerUrl);
+ assert(await evaluate("!document.querySelector('.im-pet').hidden && !JSON.parse(localStorage.getItem('fanbox-im-pet-v1')).hidden"),'Show restores pet contents and saved visibility');
+ await evaluate("dispatchEvent(new StorageEvent('storage',{key:'fanbox-im-pet-v1',newValue:JSON.stringify({hidden:true})}));true");await delay(200);
+ assert(await evaluate("!document.querySelector('.im-pet').hidden"),'Delayed stale storage event cannot hide newly shown pet');
+ assert(nativeWindows().some(w=>w.title==='FanBox 桌面宠物'&&w.visible&&w.topmost),'Show restores native pet window with actual Windows topmost flag');
+ await connect(target.webSocketDebuggerUrl);
  const minimized=nativeWindows(true);assert(minimized.some(w=>w.title!=='FanBox 桌面宠物'&&w.minimized),'Main window minimized');assert(minimized.some(w=>w.title==='FanBox 桌面宠物'&&w.visible&&!w.minimized),'Pet remains visible');
  await connect(pet.webSocketDebuggerUrl);assert(await evaluate("window.fanboxDesktopPet.isDesktop && !document.querySelector('.im-pet').hidden"));
  assert(await evaluate("typeof window.fanboxPty==='undefined'"),'Pet must not have terminal access');

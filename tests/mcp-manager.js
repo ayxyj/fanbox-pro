@@ -1,0 +1,33 @@
+'use strict';
+const assert = require('assert/strict'), fs = require('fs'), os = require('os'), path = require('path');
+const {MCPManager, validateServers} = require('../electron/mcp-manager');
+const directory = fs.mkdtempSync(path.join(os.tmpdir(),'fanbox-mcp-test-'));
+let fail = false;
+const store = {data:{}, vault:{decryptString:buffer=>buffer.toString()}, encrypt:value=>Buffer.from(value).toString('base64'), persist(){if(fail)throw Error('disk full');}};
+const manager = new MCPManager(store);
+let channel;
+try {
+  const servers = {local:{command:'node',args:['server.js'],env:{TOKEN:'secret'}},remote:{type:'http',url:'https://example.com/mcp',headers:{Authorization:'Bearer secret'}}};
+  assert.deepEqual(manager.read(),{mcpServers:{},disabled:[]});
+  manager.save({mcpServers:servers,disabled:['remote']});
+  assert.deepEqual(Object.keys(manager.enabled()),['local']);
+  const command = manager.prepare('one','claude.cmd --permission-mode auto');
+  const file = command.match(/--mcp-config "([^"]+)"/)[1];
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)).mcpServers,{local:servers.local});
+  manager.save({mcpServers:{}});
+  assert.deepEqual(JSON.parse(fs.readFileSync(file)).mcpServers,{local:servers.local},'existing snapshot stays stable');
+  assert.equal(manager.prepare('two','claude --resume abc'),'claude --resume abc');
+  assert.equal(manager.prepare('two','codex'),'codex');
+  manager.close('one'); assert.equal(fs.existsSync(file),false);
+  manager.save({mcpServers:servers}); const before = store.data.mcp;
+  fail=true; assert.throws(()=>manager.save({mcpServers:{}}),/disk full/); assert.equal(store.data.mcp,before); fail=false;
+  for(const input of [{fanbox_delivery:{command:'node'}},JSON.parse('{"__proto__":{"command":"node"}}'),{bad:{command:'node',env:{KEY:3}}},{bad:{type:'http',url:'file:///a'}},{bad:{type:'http',url:'https://example.com',headers:{A:'x\ny'}}}])assert.throws(()=>validateServers(input));
+  const {createResultChannel} = require('../electron/cli-result-channel');
+  channel = createResultChannel('claude',()=>{},{runtime:process.execPath,mcpServers:manager.enabled()});
+  const merged=JSON.parse(fs.readFileSync(path.join(channel.directory,'mcp.json'))).mcpServers;
+  assert.equal(merged.local.env.TOKEN,'secret'); assert.ok(merged.fanbox_delivery);
+  channel.close(); channel.close();
+  const explicit='claude --mcp-config "own.json"'; assert.equal(manager.prepare('two',explicit),explicit);
+  store.data.mcp='broken';assert.throws(()=>manager.enabled(),/无法解密/);
+  console.log('MCP configuration, snapshots, isolation, validation, rollback and built-in merge passed');
+} finally {channel?.close();manager.dispose();fs.rmSync(directory,{recursive:true,force:true});}

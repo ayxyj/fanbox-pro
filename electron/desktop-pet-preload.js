@@ -5,7 +5,9 @@ contextBridge.exposeInMainWorld('fanboxDesktopPet',{
   restore:()=>ipcRenderer.invoke('pet:restore'),
   settings:()=>ipcRenderer.invoke('pet:settings'),
   sync:p=>ipcRenderer.invoke('pet:sync',p),
-  drag:phase=>ipcRenderer.invoke('pet:drag',phase)
+  drag:phase=>ipcRenderer.invoke('pet:drag',phase),
+  onVisibility:fn=>{const listener=(_,visible)=>fn(visible);ipcRenderer.on('pet:visibility',listener);return()=>ipcRenderer.removeListener('pet:visibility',listener);},
+  onResetInput:fn=>{const listener=()=>fn();ipcRenderer.on('pet:reset-input',listener);return()=>ipcRenderer.removeListener('pet:reset-input',listener);}
 });
 contextBridge.exposeInMainWorld('fanboxRemote',{
   call:action=>action==='im-state'?ipcRenderer.invoke('pet:state'):Promise.reject(Error('桌面宠物仅允许读取状态')),

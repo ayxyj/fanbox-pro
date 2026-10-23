@@ -25,8 +25,9 @@ const choice = 'Allow this command?\r\n❯ 1. Yes\r\n  2. No\r\nEnter to confirm
   try {
     await cli.start('t','claude');const s=cli.sessions.get('t');s.native.settle=10;s.native.keyDelay=1;s.native.ackTimeout=50;s.native.confirmDelay=5;
     draw(choice);await until(()=>entry());const old=entry();
-    // A clear and a later identical repaint used to abort the card forever.
-    emit('\x1b[2J\x1b[H');await delay(20);emit(choice);await until(()=>entry()&&entry()!==old);
+    // A transient clear followed by the same question keeps the live card.
+    emit('\x1b[2J\x1b[H');await delay(20);emit(choice);await delay(40);assert.equal(entry(),old);
+    cli.userInput('t','x');draw(choice);await until(()=>entry()&&entry()!==old);
     const n=writes.length;
     await service.questionEvent({}, {task_id:'question_'+old.token,event_key:'question:'+old.token+':0'},'alice');
     assert.equal(writes.length,n,'stale cards must never type');

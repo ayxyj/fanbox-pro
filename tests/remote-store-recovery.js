@@ -26,5 +26,17 @@ try {
   const reloaded = new RemoteStore(directory, vault);
   assert.equal(reloaded.get(id).password, 'new');
   assert.equal(reloaded.aiConfig(false).apiKey, 'new-key');
+  const beforeFailure = JSON.stringify(reloaded.data), memoryBefore = reloaded.get(id).password;
+  reloaded.persist = () => { throw Error('disk full'); };
+  for (const mutate of [
+    () => reloaded.save({id, host:'changed', username:'test', password:'wrong', remember:false}),
+    () => reloaded.remove(id),
+    () => reloaded.saveAI({id:ai, baseUrl:'https://example.com/v1', model:'changed',mode:'auto'}),
+    () => reloaded.removeAI(ai)
+  ]) {
+    assert.throws(mutate, /disk full/);
+    assert.equal(JSON.stringify(reloaded.data), beforeFailure, 'failed writes must roll back all in-memory settings');
+    assert.equal(reloaded.get(id).password, memoryBefore, 'failed writes must preserve in-memory credentials');
+  }
   console.log('PASS: unreadable credentials preserve configuration, SSH allows fresh input, AI gives recovery instructions, explicit replacement survives reload.');
 } finally { fs.rmSync(directory, { recursive: true, force: true }); }

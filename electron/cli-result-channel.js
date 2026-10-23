@@ -7,7 +7,7 @@ function nodeRuntime() {
   }
   throw Error('CLI 结果通知需要 Node.js，请安装 Node.js 并重启软件');
 }
-function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval = 500 } = {}) {
+function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval = 500, mcpServers = {} } = {}) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'fanbox-cli-result-'));
   const helper = path.join(directory, 'notify.cjs'), settings = path.join(directory, 'settings.json');
   // All generated command arguments are paths, never user messages. Reject shell metacharacters.
@@ -19,7 +19,7 @@ function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval
     fs.writeFileSync(path.join(directory, 'active'), '1');
     const mcpScript = path.join(directory, 'file-mcp.cjs'), mcpConfig = path.join(directory, 'mcp.json');
     fs.copyFileSync(path.join(__dirname, 'cli-file-mcp.js'), mcpScript);
-    fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { fanbox_delivery: { command: runtime, args: [mcpScript, directory] } } }));
+    fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { ...(name === 'claude' ? require('./mcp-manager').validateServers(mcpServers) : {}), fanbox_delivery: { command: runtime, args: [mcpScript, directory] } } }), { mode: 0o600 });
     if (name === 'codex') args = ' -c "notify=[' + paths.map(p => "'" + p + "'").join(',') + ']"';
     else {
       const command = paths.map(p => '"' + p + '"').join(' ');
@@ -54,6 +54,7 @@ function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval
     fs.writeFileSync(reply + '.tmp', JSON.stringify({ value: allow }), { mode: 0o600 });
     fs.renameSync(reply + '.tmp', reply); return true;
   }, close() {
+    if (closed) return;
     closed = true; clearInterval(timer);
     // Only remove files from the private directory created above. A late hook sees no active marker.
     try { fs.unlinkSync(path.join(directory, 'active')); } catch {}

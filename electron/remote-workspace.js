@@ -12,6 +12,7 @@ const { noteInput } = require('./shell-context');
 function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, terminals, terminalCwds, port, onIMState = () => {} }) {
   const directory = process.env.GITSYNC_HOME || path.join(os.homedir(), '.fanbox-pro-win');
   const store = new RemoteStore(directory, safeStorage);
+  const mcp = new (require('./mcp-manager').MCPManager)(store);
   const history = new ChatHistory(directory), historyRuns = new Map(), historySessions = new Map(), activeHistories = new Map();
   const imScopes = new Map();
   let im; const runEvents = new Map(), terminalRequests = new Map();
@@ -108,6 +109,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     return require('./wecom-files').sendFile(im, route, file, options);
   };
   const cli = new (require('./cli-session').CLISessions)({ target, sendFile,
+    resultChannel: (name, callback) => require('./cli-result-channel').createResultChannel(name, callback, {mcpServers: name === 'claude' ? mcp.enabled() : {}}),
     askNative: async (id, question, signal) => {
       const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
       if (!route || !im.valid(route)) return null;
@@ -150,6 +152,12 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   }
   const handle = (name, fn) => ipcMain.handle('remote:' + name, async (e, args = {}) => { guard(e); try { return { ok: true, value: await fn(args) }; } catch (error) { return { ok: false, error: error.message }; } });
   handle('cli-permission', ({sessionId}) => cli.cyclePermission(sessionId));
+  handle('mcp-read', () => mcp.read());
+  handle('mcp-save', value => mcp.save(value));
+  handle('mcp-prepare', ({sessionId, command}) => {
+    if (!terminals.has(sessionId) || terminals.get(sessionId).remote) throw Error('请选择本地终端');
+    return mcp.prepare(sessionId, command);
+  });
   handle('approval-reply', ({ token, approved }) => {
     const finish = approvals.get(token);
     if (!finish) throw Error('此授权请求已结束');
@@ -278,11 +286,14 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   app.on('before-quit', event => {
     if (quitting) return; event.preventDefault(); quitting = true; im.qr.cancel(); im.stop(); for (const p of terminalRequests.values()) { clearTimeout(p.timer); p.reject(Error('软件正在退出')); } terminalRequests.clear();
     for (const id of ai.runs.keys()) ai.stop(id, 'disconnected');
+    for (const id of cli.sessions.keys()) cli.close(id);
+    mcp.dispose();
     history.flush().catch(() => {}).finally(() => app.quit());
   });
   app.on('will-quit', () => { for (const id of ssh.sessions.keys()) ssh.disconnect(id); for (const id of ai.runs.keys()) ai.stop(id); });
+  app.on('will-quit', () => mcp.dispose());
   return {
-    ssh, guard, authInput,
+    ssh, guard, authInput, prepareCLI: (id, command) => mcp.prepare(id, command), releaseCLI: id => mcp.close(id),
     petState() { const s=im.state();return {status:s.status,error:s.error,enabled:s.enabled,allowExecution:s.allowExecution,lastReceivedAt:s.lastReceivedAt,lastSentAt:s.lastSentAt,pendingApprovals:s.pendingApprovals,healthEvents:s.healthEvents,users:s.users.map(()=>null),pendingUsers:s.pendingUsers.map(()=>null),routes:s.routes.map(r=>({running:r.running}))}; },
     noteInput(id, text) { cli.userInput(id, text); const s = ssh.sessions.get(id) || local.get(id); if (s) noteInput(s, text); },
     localStarted(id, shell, cwd) {
@@ -297,7 +308,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     },
     resized(id, cols, rows) { cli.resize(id, cols, rows); },
     localOutput(id, text) { publishOutput(id, text); const s = local.get(id); if (s) s.output = (s.output + text).slice(-32000); },
-    localClosed(id) { cli.close(id); im?.closed(id); imScopes.delete(id); local.delete(id); history.release(id); activeHistories.delete(id); for (const [runId, controller] of ai.runs) if (controller.sessionId === id) ai.stop(runId, 'disconnected'); },
+    localClosed(id) { mcp.close(id); cli.close(id); im?.closed(id); imScopes.delete(id); local.delete(id); history.release(id); activeHistories.delete(id); for (const [runId, controller] of ai.runs) if (controller.sessionId === id) ai.stop(runId, 'disconnected'); },
   };
 }
 module.exports = { installRemoteWorkspace };

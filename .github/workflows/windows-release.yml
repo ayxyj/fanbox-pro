@@ -40,11 +40,13 @@ jobs:
       - name: Verify CLI and WeCom interactions
         shell: pwsh
         run: |
-          $tests = @('cli-native-delivery', 'cli-native-interaction', 'cli-wecom-native-roundtrip', 'cli-session', 'cli-interactions', 'cli-result-channel', 'cli-wecom-approval', 'cli-trust', 'cli-permission', 'cli-progress', 'wecom-service', 'wecom-files')
+          $tests = @('asar-integrity', 'markdown-math', 'clipboard-text', 'mcp-manager', 'pet-input-recovery', 'pet-window-recovery', 'remote-store-recovery', 'cli-sequential-questions', 'cli-native-delivery', 'cli-native-interaction', 'cli-wecom-native-roundtrip', 'cli-session', 'cli-interactions', 'cli-result-channel', 'cli-wecom-approval', 'cli-trust', 'cli-permission', 'cli-progress', 'wecom-service', 'wecom-files')
           foreach ($test in $tests) {
             node "tests/$test.js"
             if ($LASTEXITCODE -ne 0) { throw "Interaction test failed: $test" }
           }
+      - name: Verify software MCP management
+        run: node tests/mcp-ui.js
       - name: Package Windows app
         shell: pwsh
         run: |

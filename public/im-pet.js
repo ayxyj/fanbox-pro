@@ -93,7 +93,7 @@
   panel.querySelector('[data-type]').value=prefs.type;panel.querySelector('[data-type]').onchange=e=>{prefs.type=e.target.value;save();art();};
   panel.querySelector('[data-size]').value=prefs.size;panel.querySelector('[data-size]').onchange=e=>{prefs.size=Number(e.target.value);save();art();};
   panel.querySelector('[data-motion]').checked=prefs.motion;panel.querySelector('[data-motion]').onchange=e=>{prefs.motion=e.target.checked;save();art();};
-  panel.querySelector('[data-hide]').onclick=()=>{prefs.hidden=true;root.hidden=true;panel.hidden=true;save();if(desktopHost)native(desktopBridge.visible(false));};
+  panel.querySelector('[data-hide]').onclick=()=>{prefs.hidden=true;root.hidden=true;panel.hidden=true;save();if(desktop)native(desktopBridge.sync({size:prefs.size,hidden:true}));else if(desktopHost)native(desktopBridge.visible(false));};
   panel.querySelector('[data-reset]').onclick=()=>{prefs.x=1;prefs.y=1;save();position();if(desktopHost)native(desktopBridge.reset());};
   const builtinActions=[extensions.action({version:1,name:'打招呼',duration:900,iterations:1,keyframes:[{offset:0},{offset:.25,rotate:-12},{offset:.75,rotate:12},{offset:1}]}),extensions.action({version:1,name:'街舞摇摆',duration:2000,iterations:2,keyframes:[{offset:0},{offset:.2,x:-10,y:-4,rotate:-18},{offset:.4,x:10,y:-4,rotate:18},{offset:.6,y:-18,scale:1.1},{offset:.8,x:-8,rotate:-12},{offset:1}]})];
   const note=text=>panel.querySelector('[data-extension-note]').textContent=text;
@@ -129,11 +129,18 @@
   panel.querySelector('[data-template]').onclick=()=>{const url=URL.createObjectURL(new Blob([JSON.stringify(builtinActions[1],null,2)],{type:'application/json'}));const a=document.createElement('a');a.href=url;a.download='pet-street-dance.json';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);};
   extensionOptions();
 
-  character.onpointerdown=e=>{if(e.button!==0)return;if(desktop){drag={x:e.screenX,y:e.screenY};moved=false;character.setPointerCapture(e.pointerId);native(desktopBridge.drag('start'));return;}drag={x:e.clientX,y:e.clientY,left:root.offsetLeft,top:root.offsetTop};moved=false;character.setPointerCapture(e.pointerId);};
+  const capture=e=>{try{character.setPointerCapture(e.pointerId);}catch{/* Capture can fail after a window switch; document handlers still finish the drag. */}};
+  const endDrag=cancelled=>{if(!drag){if(cancelled)moved=false;return;}const id=drag.pointerId;drag=null;if(desktop)native(desktopBridge.drag('end'));else if(moved&&!cancelled)save();if(cancelled)moved=false;try{if(character.hasPointerCapture(id))character.releasePointerCapture(id);}catch{}};
+  character.onpointerdown=e=>{if(e.button!==0)return;endDrag(true);moved=false;if(desktop){drag={x:e.screenX,y:e.screenY,pointerId:e.pointerId};native(desktopBridge.drag('start'));capture(e);return;}drag={x:e.clientX,y:e.clientY,left:root.offsetLeft,top:root.offsetTop,pointerId:e.pointerId};capture(e);};
   character.onpointerleave=()=>{root.style.setProperty('--pet-gaze-x','0px');root.style.setProperty('--pet-gaze-y','0px');};
   character.onpointermove=e=>{if(desktop&&drag){if(Math.abs(e.screenX-drag.x)+Math.abs(e.screenY-drag.y)>5)moved=true;if(moved)native(desktopBridge.drag('move'));return;}if(!drag){if(prefs.motion&&mode!=='offline'&&!matchMedia('(prefers-reduced-motion: reduce)').matches){const r=character.getBoundingClientRect();root.style.setProperty('--pet-gaze-x',((e.clientX-r.left)/r.width*3-1.5)+'px');root.style.setProperty('--pet-gaze-y',((e.clientY-r.top)/r.height*2-1)+'px');}return;}const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>5)moved=true;if(!moved)return;prefs.x=Math.max(0,Math.min(1,(drag.left+dx-8)/Math.max(1,innerWidth-root.offsetWidth-16)));prefs.y=Math.max(0,Math.min(1,(drag.top+dy-8)/Math.max(1,innerHeight-root.offsetHeight-16)));position();};
-  character.onpointerup=()=>{drag=null;if(desktop){native(desktopBridge.drag('end'));return;}if(moved)save();};
-  character.onpointercancel=()=>{drag=null;if(desktop)native(desktopBridge.drag('end'));};
+  character.onpointerup=()=>endDrag(false);
+  character.onpointercancel=()=>endDrag(true);
+  character.onlostpointercapture=()=>{if(drag)endDrag(true);};
+  document.addEventListener('pointermove',e=>{if(drag&&!character.contains(e.target)){if(e.buttons===0)endDrag(true);else character.onpointermove(e);}});
+  document.addEventListener('pointerup',()=>endDrag(false));
+  addEventListener('blur',()=>endDrag(true));
+  desktopBridge?.onResetInput?.(()=>endDrag(true));
   character.onclick=()=>{if(moved){moved=false;return;}if(desktop){native(desktopBridge.restore());return;}panel.hidden=!panel.hidden;position();if(!panel.hidden)refresh();};
   character.oncontextmenu=e=>{if(desktop){e.preventDefault();native(desktopBridge.settings());}};
   document.addEventListener('pointerdown',e=>{if(!panel.contains(e.target)&&!root.contains(e.target))panel.hidden=true;});
@@ -142,9 +149,10 @@
   panel.addEventListener('toggle',position,true);
   new ResizeObserver(()=>{if(!panel.hidden)position();}).observe(panel);
   fanboxRemote.on('im',update);
-  window.imPet={show(){prefs.hidden=false;root.hidden=desktopHost;save();art();refresh();if(desktopHost){native(desktopBridge.visible(true));panel.hidden=false;position();}},refresh};
+  window.imPet={show(){prefs.hidden=false;root.hidden=desktopHost;save();art();refresh();if(desktopHost){panel.hidden=true;native(desktopBridge.visible(true));}},refresh};
+  desktopBridge?.onVisibility?.(visible=>{if(!desktop||typeof visible!=='boolean')return;endDrag(true);prefs.hidden=!visible;root.hidden=!visible;panel.hidden=true;save();art();if(visible)refresh();});
   desktopBridge?.onSettings?.(()=>{panel.hidden=false;position();refresh();});
-  addEventListener('storage',event=>{if(desktop&&event.key===key+'-action'){try{const request=JSON.parse(event.newValue);play(extensions.action(request.action),request.hover===true);}catch{}return;}if(event.key!==key)return;try{Object.assign(prefs,JSON.parse(event.newValue||'{}'));panel.querySelector('[data-motion]').checked=!!prefs.motion;root.hidden=desktopHost||!!prefs.hidden;extensionOptions();art();update();}catch{}});
+  addEventListener('storage',event=>{if(desktop&&event.key===key+'-action'){try{const request=JSON.parse(event.newValue);play(extensions.action(request.action),request.hover===true);}catch{}return;}if(event.key!==key)return;try{Object.assign(prefs,JSON.parse(localStorage.getItem(key)||'{}'));panel.querySelector('[data-motion]').checked=!!prefs.motion;root.hidden=desktopHost||!!prefs.hidden;extensionOptions();art();update();}catch{}});
   art();update();refresh();
   setInterval(()=>{if(!document.hidden)refresh();},15000);
 })();

@@ -74,7 +74,7 @@ class CLISessions {
           this.deliver(id, s, s.name + ' 服务额度不足或触发限流，暂未取得结果。CLI 可能仍在重试；可发送 /stop 中断，或 /aiquit 退出。');
         }
       });
-      t.input(command + s.channel.args + '\r');
+      t.input(command + (name === 'claude' ? ' --permission-mode auto' : '') + s.channel.args + '\r');
       // Starting a real TUI may take several seconds; never send a user prompt to an unverified shell.
       for (let attempt = 0; attempt < 5; attempt++) {
         await this.wait(400);

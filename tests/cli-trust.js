@@ -5,7 +5,7 @@ const turn = () => new Promise(r => setImmediate(r));
 (async () => {
  const fixture = 'Accessing workspace:\r\n\r\n C:\\Users\\jeremyxia\r\n\r\n Quick safety check: Is this a project you created or one you trust?\r\n ❯ 1. Yes, I trust this folder\r\n   2. No, exit';
  let decide, cards=0, signal, directory; const writes=[],listeners=new Set(), notices=[];
- const target={identity:{},environment:{cwd:'C:\\Users\\jeremyxia'},state:{idle:true},input:t=>{writes.push(t);if(t==='claude\r')target.state={name:'claude'};},subscribeOutput:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};
+ const target={identity:{},environment:{cwd:'C:\\Users\\jeremyxia'},state:{idle:true},input:t=>{writes.push(t);if(t==='claude --permission-mode auto\r')target.state={name:'claude'};},subscribeOutput:fn=>{listeners.add(fn);return()=>listeners.delete(fn);}};
  const cli=new CLISessions({target:()=>target,inspect:async()=>target.state,command:n=>n,wait:async()=>{},resultChannel:()=>({args:'',close(){}}),confirmTrust:async(id,dir,s)=>{cards++;directory=dir;signal=s;return new Promise(r=>decide=r);},notify:async(id,t)=>notices.push(t)});
  const emit=t=>{for(const fn of listeners)fn(t);};
  await cli.start('a','claude'); cli.userInput('a','\x1b[1;1R');

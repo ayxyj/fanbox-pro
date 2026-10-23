@@ -35,7 +35,16 @@ Linux 的 `ll` 并非 Windows 通用命令；即便在 Linux 上，它也可能�
 
 终端工具栏提供三个 CLI 图标。空闲终端可原地启动，忙碌时可能新建标签；以实际新标签和进程提示为准。
 
-> 当前版本的本地 Claude 快捷图标使用跳过权限确认的启动参数。希望保留 Claude 默认审批时，请在终端手动输入 `claude`。企业微信 `/claude` 的桥接启动流程与此本地图标不同，仍处理信任与权限交互。
+当前本地调试包中的 Claude 快捷图标、历史会话恢复和企微 `/claude` 默认使用 `--permission-mode auto`。auto 由 Claude 判断操作权限，仍可能出现目录信任、权限请求或补充问题，不等同于跳过全部权限检查。实际模式以 CLI 底部显示为准，模型或组织策略可能限制 auto 的使用。
+
+手动启动可以明确指定模式：
+
+```powershell
+claude --permission-mode auto
+claude --continue --permission-mode auto
+```
+
+若要手动审批，可使用 `claude --permission-mode manual`。已运行的 Claude 不会因软件更新而自动改变启动模式，需退出后重新启动。本次变更针对上述交互入口；定时任务仍由其独立的“全自动”选项控制。
 
 Claude 底部出现 `shift+tab to cycle` 时，可使用工具栏权限图标切换模式。查看切换后的实际状态，不要把“发送按键”当作切换成功。
 

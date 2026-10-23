@@ -56,7 +56,7 @@ class RemoteStore {
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('端口必须为 1–65535');
     if (input.jumpId === id) throw Error('不能将自身作为跳板机');
     if (input.policy && !['read', 'confirm', 'auto'].includes(input.policy.mode)) throw Error('无效的连接权限');
-    const secrets = input.clearCredentials ? {} : this.secret(id, old?.credentials);
+    const secrets = input.clearCredentials ? {} : { ...this.secret(id, old?.credentials) };
     for (const key of ['password', 'passphrase', 'proxyPassword']) if (input[key]) secrets[key] = String(input[key]);
     const p = { id, name: String(input.name || input.host), group: String(input.group || ''), host: String(input.host).trim(), port,
       detectEnvironment: input.detectEnvironment === undefined ? old?.detectEnvironment === true : input.detectEnvironment === true,
@@ -66,14 +66,19 @@ class RemoteStore {
     if (!['xterm','xterm-256color','vt100'].includes(p.terminalType)) throw Error('无效终端类型');
     if (p.proxy && !['socks5', 'http'].includes(p.proxy.type)) throw Error('仅支持 SOCKS5 / HTTP CONNECT 代理');
     if (p.remember && Object.keys(secrets).length) p.credentials = this.encrypt(JSON.stringify(secrets));
+    const previousProfiles = this.data.profiles, previousSecret = this.memory.get(id), hadSecret = this.memory.has(id);
     this.memory.set(id, secrets);
     const i = this.data.profiles.findIndex(p => p.id === id);
-    if (i < 0) this.data.profiles.push(p); else this.data.profiles[i] = p;
-    this.persist(); return id;
+    this.data.profiles = i < 0 ? [...previousProfiles, p] : previousProfiles.map((item, index) => index === i ? p : item);
+    try { this.persist(); } catch (error) { this.data.profiles = previousProfiles; if (hadSecret) this.memory.set(id, previousSecret); else this.memory.delete(id); throw error; }
+    return id;
   }
   remove(id) {
     if (this.data.profiles.some(p => p.jumpId === id)) throw Error('此连接正在被其他连接用作跳板机');
-    this.data.profiles = this.data.profiles.filter(p => p.id !== id); this.memory.delete(id); this.persist();
+    const previous = this.data.profiles;
+    this.data.profiles = previous.filter(p => p.id !== id);
+    try { this.persist(); } catch (error) { this.data.profiles = previous; throw error; }
+    this.memory.delete(id);
   }
   shortcuts(profileId) {
     if (!this.data.profiles.some(p => p.id === profileId)) throw Error('SSH 连接不存在');
@@ -124,9 +129,10 @@ class RemoteStore {
     if (this.data.activeAIId === id) { this.data.activeAIId = ''; try { this.persist(); } catch (error) { this.data.activeAIId = id; throw error; } }
   }
   removeAI(id) {
+    const previous = this.data.aiConfigs, active = this.data.activeAIId;
     this.data.aiConfigs = this.data.aiConfigs.filter(p => p.id !== id);
     if (this.data.activeAIId === id) this.data.activeAIId = '';
-    this.persist();
+    try { this.persist(); } catch (error) { this.data.aiConfigs = previous; this.data.activeAIId = active; throw error; }
   }
   modelConnection(input) {
     const old = this.data.aiConfigs.find(p => p.id === input.id) || {};
@@ -159,11 +165,13 @@ class RemoteStore {
       if (!config.selectedModels.some(item=>item.id===model)) config.selectedModels.push({id:model});
     }
     if (config.selectedModels.length > 100) throw Error('最多保存 100 个模型');
+    const previous = { configs: this.data.aiConfigs, active: this.data.activeAIId, ai: this.data.ai };
     const index = this.data.aiConfigs.findIndex(p => p.id === id);
-    if (index < 0) this.data.aiConfigs.push(config); else this.data.aiConfigs[index] = config;
+    this.data.aiConfigs = index < 0 ? [...previous.configs, config] : previous.configs.map((item, i) => i === index ? config : item);
     if (input.activate || (index < 0 && this.data.aiConfigs.length === 1 && input.activate !== false)) this.data.activeAIId = id;
     if (input.mode) this.data.ai = { mode: input.mode, interactive: !!input.interactive };
-    if (persist) this.persist(); return id;
+    if (persist) try { this.persist(); } catch (error) { this.data.aiConfigs = previous.configs; this.data.activeAIId = previous.active; this.data.ai = previous.ai; throw error; }
+    return id;
   }
 }
 module.exports = { RemoteStore };

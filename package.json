@@ -1,6 +1,6 @@
 {
   "name": "fanbox-pro",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "fanbox-pro — Windows file browser, embedded terminal, Git repository management and scheduled tasks",
   "bin": {
     "fanbox-pro": "server.js"
@@ -85,12 +85,24 @@
       "!experiments{,/**/*}",
       "!design-demos{,/**/*}",
       "!素材{,/**/*}",
-      "!tests{,/**/*}"
+      "!tests{,/**/*}",
+      "!assets{,/**/*}",
+      "!design{,/**/*}",
+      "!scripts{,/**/*}",
+      "!src-vendor{,/**/*}",
+      "!index.html",
+      "!.icon.html",
+      "!PKGBUILD"
+    ],
+    "electronLanguages": [
+      "en-US",
+      "zh-CN",
+      "zh-TW"
     ]
   },
   "type": "commonjs",
   "engines": {
-    "node": ">=18"
+    "node": ">=22.12.0"
   },
   "dependencies": {
     "@wecom/aibot-node-sdk": "^1.0.7",
@@ -106,10 +118,10 @@
     "zmodem.js": "^0.1.10"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.0",
+    "@electron/rebuild": "4.2.1",
     "@milkdown/crepe": "^7.21.2",
-    "electron": "^33.2.0",
-    "electron-builder": "^25.1.8",
+    "electron": "42.11.18",
+    "electron-builder": "26.15.3",
     "esbuild": "^0.28.0",
     "highlight.js": "^11.11.1",
     "marked": "^12.0.2",
@@ -123,5 +135,10 @@
   "homepage": "https://github.com/ayxyj/fanbox-pro",
   "bugs": {
     "url": "https://github.com/ayxyj/fanbox-pro/issues"
+  },
+  "overrides": {
+    "micromark-extension-math": {
+      "katex": "0.19.0"
+    }
   }
 }

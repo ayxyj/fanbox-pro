@@ -101,7 +101,12 @@ function createWindow() {
   // 外部链接走系统浏览器，不在 app 里开新窗口
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/.test(url)) { shell.openExternal(url); return { action: 'deny' }; }
-    return { action: 'allow' };
+    return { action: 'deny' };
+  });
+  win.webContents.on('will-navigate', (event, url) => {
+    let allowed = false;
+    try { const target = new URL(url); allowed = target.origin === `http://127.0.0.1:${PORT}` && target.pathname === '/'; } catch {}
+    if (!allowed) { event.preventDefault(); if (/^https?:/.test(url) && !url.startsWith(`http://127.0.0.1:${PORT}/`)) shell.openExternal(url); }
   });
 
   win.webContents.once('did-finish-load', () => { if(!desktopPet) desktopPet=require('./desktop-pet').createDesktopPet({port:PORT,getMain:()=>win,getState:()=>remoteWorkspace.petState()}); });
@@ -329,7 +334,7 @@ function buildMenu() {
       { type: 'separator' }, { role: 'resetZoom' }, { role: 'zoomIn' }, { role: 'zoomOut' },
       { type: 'separator' }, { role: 'togglefullscreen', label: M('全屏', 'Full Screen') },
     ] },
-    { label: M('设置', 'Settings'), submenu: [{ label: M('AI 配置…', 'AI Configuration…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:settings'); } }, { label: M('IM 远程干预与通知…', 'IM Remote Control…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:im-settings'); } }] },
+    { label: M('设置', 'Settings'), submenu: [{ label: M('MCP 管理…', 'MCP Management…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:mcp-settings'); } }, { label: M('AI 配置…', 'AI Configuration…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:settings'); } }, { label: M('IM 远程干预与通知…', 'IM Remote Control…'), click: () => { if (win && !win.isDestroyed()) win.webContents.send('remote:im-settings'); } }] },
   ];
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   if(process.platform === 'win32' && win) win.setMenuBarVisibility(false);
@@ -347,7 +352,7 @@ ipcMain.on('theme:changed', (event, value) => {
 function assertWindowSender(event) {
   if(!win || win.isDestroyed() || event.sender!==win.webContents)throw Error('Invalid window');
 }
-ipcMain.handle('clipboard:write-text',(event,text)=>{assertWindowSender(event);if(typeof text!=='string' || text.length>16*1024*1024)throw Error('Invalid clipboard text');clipboard.writeText(text);return true;});
+ipcMain.handle('clipboard:write-text',(event,text)=>{assertWindowSender(event);if(typeof text!=='string' || text.length>16*1024*1024)throw Error('Invalid clipboard text');return require('./clipboard-text').writeClipboardText(clipboard,text);});
 ipcMain.handle('clipboard:read-text',event=>{assertWindowSender(event);return clipboard.readText();});
 ipcMain.handle('clipboard:native-edit',(event,command)=>{assertWindowSender(event);const commands={copy:'copy',paste:'paste',selectAll:'selectAll','copy-selection':'copy'};if(typeof command==='string' && Object.hasOwn(commands,command))event.sender[commands[command]]();});
 ipcMain.handle('theme:vibrancy',(event,enabled)=>{assertWindowSender(event);if(typeof enabled!=='boolean')return {ok:false,error:'无效参数'};if(process.platform!=='win32' || !win.setBackgroundMaterial)return {ok:false,error:'当前系统不支持 Mica'};const build=Number(os.release().split('.')[2]);if(build<22621)return {ok:false,error:'Mica 需要 Windows 11 22H2 或以上版本'};try{win.setBackgroundMaterial(enabled?'mica':'none');win.setBackgroundColor(enabled?'#00000000':'#0b0c0a');return {ok:true};}catch(err){return {ok:false,error:err.message};}});
@@ -403,6 +408,7 @@ ipcMain.handle('pty:spawn', async (e, { id, cwd, cols, rows, autorun, shell: req
   if (!/UTF-8/i.test(env.LC_ALL || env.LC_CTYPE || env.LANG || '')) env.LANG = 'zh_CN.UTF-8';
   let p;
   try {
+    if (autorun) autorun = remoteWorkspace.prepareCLI(id, String(autorun));
     const isPowerShell = process.platform === 'win32' && /^(powershell|pwsh)(\.exe)?$/i.test(path.basename(shellPath));
     // npm installs .ps1 command wrappers. Apply policy only to this terminal process,
     // including scheduled/autorun sessions; never change machine or user settings.
@@ -418,7 +424,7 @@ ipcMain.handle('pty:spawn', async (e, { id, cwd, cols, rows, autorun, shell: req
       cwd: startCwd,
       env,
     });
-  } catch (err) { return { ok: false, error: err.message }; }
+  } catch (err) { remoteWorkspace.releaseCLI(id); return { ok: false, error: err.message }; }
   terminals.set(id, p);
   terminalCwds.set(id, startCwd);
   remoteWorkspace.localStarted(id, shellPath, startCwd);

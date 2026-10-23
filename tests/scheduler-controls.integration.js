@@ -3,7 +3,7 @@ const assert=require('node:assert/strict'),fs=require('fs'),path=require('path')
 const {Store}=require('../gitsync/store');const {TaskScheduler}=require('../gitsync/tasks');const api=require('../gitsync/api');
 const scratch=path.resolve(__dirname,'../dist/test-data');fs.mkdirSync(scratch,{recursive:true});const root=fs.mkdtempSync(path.join(scratch,'scheduler-controls-'));
 const server=fs.readFileSync(path.resolve(__dirname,'../server.js'),'utf8');
-const cronSource=server.slice(server.indexOf('const CRON_FILE ='),server.indexOf('const server = http.createServer'));
+const cronSource=server.slice(server.indexOf('const CRON_FILE ='),server.indexOf("const htmlPreview = require('./html-preview')"));
 function cronContext(dir) {
  let tick;const commands=[];
  const context={fs,path,crypto,process:{platform:process.platform,pid:process.pid},console,CONFIG_DIR:dir,HOME:dir,global:{__fanboxAgent:{create:async options=>{commands.push(options.autorun);return {ok:true,id:'test-terminal'};}}},setInterval:fn=>{tick=fn;}};

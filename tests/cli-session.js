@@ -6,13 +6,13 @@ const { CLISessions } = require('../electron/cli-session');
   function terminal(id) {
     const t = { identity: {}, pendingInput: '', state: { idle: true }, writes: [], listeners: new Set(), interrupts: 0,
       subscribeOutput(fn) { this.listeners.add(fn); return () => this.listeners.delete(fn); },
-      input(text) { this.writes.push(text); if (/^(claude|codex|codebuddy)\r$/.test(text)) this.state = { name: text.trim(), idle: false }; if (text === '\x03' && ++this.interrupts >= 2 && !this.stuck) this.state = { idle: true }; },
+      input(text) { this.writes.push(text); const launch=text.match(/^(claude|codex|codebuddy)(?: --permission-mode auto)?\r$/);if (launch) this.state = { name: launch[1], idle: false }; if (text === '\x03' && ++this.interrupts >= 2 && !this.stuck) this.state = { idle: true }; },
       emit(text) { for (const fn of this.listeners) fn(text); }
     }; terminals.set(id, t); return t;
   }
   const a = terminal('a'), b = terminal('b');
   const cli = new CLISessions({ target: id => terminals.get(id), inspect: async t => t.state, command: name => name, wait: async () => {}, resultChannel: (name, receive) => { const c = { args: '', receive, close() { this.closed = true; } }; channels.push(c); return c; }, notify: async (id, text) => notices.push({ id, text }) });
-  await cli.start('a', 'claude'); assert.deepEqual(a.writes, ['claude\r']);
+  await cli.start('a', 'claude'); assert.deepEqual(a.writes, ['claude --permission-mode auto\r']);
   await cli.start('b', 'codex'); assert.deepEqual(b.writes, ['codex\r']);
   const prompt = '  hello & whoami\n second line  ';
   await cli.run('a', prompt); assert.equal(a.writes[1], '\x1b[200~' + prompt + '\x1b[201~'); assert.equal(a.writes[2], '\r'); assert.equal(b.writes.length, 1);
