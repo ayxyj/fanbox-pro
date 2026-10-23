@@ -65,6 +65,7 @@ ConvertTo-Json -InputObject @($items.ToArray()) -Compress`;
  await evaluate("document.querySelector('[data-action]').value='builtin:1';document.querySelector('[data-action]').dispatchEvent(new Event('change'));true");
  await delay(200);await connect(pet.webSocketDebuggerUrl);
  assert(await evaluate("JSON.parse(localStorage.getItem('fanbox-im-pet-v1')).selectedAction==='builtin:1'"));
+ await connect(target.webSocketDebuggerUrl);await evaluate("document.querySelector('[data-type]').value='capybara';document.querySelector('[data-type]').dispatchEvent(new Event('change'));true");await delay(300);await connect(pet.webSocketDebuggerUrl);assert(await evaluate("JSON.parse(localStorage.getItem('fanbox-im-pet-v1')).type==='capybara' && !document.querySelector('.pet-tail') && !!document.querySelector('[fill=\"#594738\"]')"),'Capybara selection reaches desktop and renders its muzzle');
  await evaluate("document.querySelector('.im-pet-character').dispatchEvent(new PointerEvent('pointerenter'));true");
  assert(await evaluate("document.querySelector('.pet-body').getAnimations().some(a=>a.effect.getTiming().duration===2000)"),'Hover plays selected dance');
  console.log(await evaluate(`(()=>{

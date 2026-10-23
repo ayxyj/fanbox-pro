@@ -18,6 +18,11 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  document.getElementById('terminal-panel').classList.remove('hidden');document.getElementById('terminal-resizer').classList.remove('hidden');
  const entry=state.entries.find(e=>e.name==='long.sql');await onItemClick(entry);
  })()`);
+ await evaluate("document.getElementById('preview-dock').click();true");
+ const firstDock=await evaluate("previewIsBottom()");
+ await evaluate("document.getElementById('preview-dock').click();true");
+ assert.notEqual(await evaluate("previewIsBottom()"),firstDock,'Preview button switches layout independently');
+ await evaluate("localStorage.removeItem('fb_preview_dock');applyPreviewSize();true");
  const records=[];
  for(const dock of ['bottom','right'])for(const size of [280,420]) {
   const metrics=await evaluate(`(async()=>{
