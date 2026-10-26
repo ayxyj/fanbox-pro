@@ -7,8 +7,8 @@ function createDesktopPet({ port, getMain, getState }) {
   const area=screen.getPrimaryDisplay().workArea;
   const pet=new BrowserWindow({width:120,height:120,x:area.x+area.width-140,y:area.y+area.height-140,frame:false,transparent:true,backgroundColor:'#00000000',alwaysOnTop:true,skipTaskbar:true,resizable:false,maximizable:false,minimizable:false,hasShadow:false,show:false,focusable:true,webPreferences:{preload:path.join(__dirname,'desktop-pet-preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true,backgroundThrottling:false}});
   let dragging=null,timer,inputRefreshTimer,inputRestoreSize;
-  const raise=()=>{if(!pet.isDestroyed()){pet.setAlwaysOnTop(true,'screen-saver');pet.moveTop();}};
-  const showPet=()=>{pet.showInactive();raise();};
+  const raise=()=>{if(!pet.isDestroyed()){pet.setAlwaysOnTop(true,'screen-saver');pet.moveTop();pet.setSkipTaskbar(true);}};
+  const showPet=()=>{pet.setSkipTaskbar(true);pet.showInactive();raise();};
   const mainWindow=getMain(),raiseVisible=()=>{if(!pet.isDestroyed()&&pet.isVisible())raise();};
   pet.on('show',raise);
   mainWindow?.on?.('focus',raiseVisible);
@@ -18,7 +18,7 @@ function createDesktopPet({ port, getMain, getState }) {
   const petGuard=e=>{if(pet.isDestroyed()||e.sender!==pet.webContents||e.senderFrame!==pet.webContents.mainFrame||e.senderFrame.url!==`http://127.0.0.1:${port}/desktop-pet.html`)throw Error('不允许访问桌面宠物');};
   const mainGuard=e=>{const main=getMain();if(!main||e.sender!==main.webContents||e.senderFrame!==main.webContents.mainFrame||new URL(e.senderFrame.url).origin!==`http://127.0.0.1:${port}`)throw Error('不允许访问桌面宠物设置');};
   const restore=()=>{const main=getMain();if(!main||main.isDestroyed())return;if(main.isMinimized())main.restore();main.show();main.moveTop();main.focus();};
-  const resetInput=()=>{dragging=null;if(inputRestoreSize){pet.setBounds(clamp({...pet.getBounds(),...inputRestoreSize}));inputRestoreSize=null;}pet.setIgnoreMouseEvents(false);pet.setFocusable(true);pet.webContents.send('pet:reset-input');};
+  const resetInput=()=>{dragging=null;if(inputRestoreSize){pet.setBounds(clamp({...pet.getBounds(),...inputRestoreSize}));inputRestoreSize=null;}pet.setIgnoreMouseEvents(false);pet.setFocusable(true);pet.setSkipTaskbar(true);pet.webContents.send('pet:reset-input');};
   const refreshInputSurface=()=>{
     clearTimeout(inputRefreshTimer);
     const {width,height}=pet.getBounds();

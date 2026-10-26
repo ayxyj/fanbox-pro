@@ -339,7 +339,7 @@ kbd {
 #preview-max { display: flex; align-items: center; justify-content: center; flex: 0 0 30px; width: 30px; height: 30px; background: none; border: 1px solid var(--border); border-radius: var(--radius); color: var(--text-dim); cursor: pointer; }
 #preview-max:hover { color: var(--text); border-color: var(--accent); }
 #preview-max.on { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
-#preview:has(.imgedit-tools) #preview-max { display: none; }
+#preview:not(.preview-fullscreen):has(.imgedit-tools) #preview-max { display: none; }
 .dock-bottom #preview { border-left: 1px solid var(--border); }
 .dock-right #preview { border-top: 1px solid var(--border); }
 /* 标题 + 操作按钮 + 关闭 全部并到一行，省掉一整行高度 */
@@ -1207,3 +1207,9 @@ body { transition: background-color 0.28s ease, color 0.28s ease; }
 #filemgmt.preview-bottom #preview{border-top:1px solid var(--border)}#filemgmt.preview-right #preview{border-top:0;border-left:1px solid var(--border)}
 #filemgmt.preview-bottom #preview-resizer{cursor:row-resize}#filemgmt.preview-right #preview-resizer{cursor:col-resize}
 #preview-dock{flex:0 0 30px;width:30px;height:30px;background:none;border:1px solid var(--border);border-radius:var(--radius);color:var(--text-dim);cursor:pointer}#preview-dock:hover{color:var(--text);border-color:var(--accent)}
+
+/* Preview maximizes within the workspace, just like the terminal; no fixed overlay clipped by ancestors. */
+#main-body.preview-max > #filemgmt{display:flex!important;flex:1 1 0;min-width:0;min-height:0;width:100%;height:100%}
+#main-body.preview-max #content,#main-body.preview-max #preview-resizer,#main-body.preview-max > #terminal-panel,#main-body.preview-max > #terminal-resizer{display:none!important}
+#main-body.preview-max #preview.preview-fullscreen{position:relative;inset:auto;flex:1 1 0!important;width:100%;height:100%;border:0;animation:none;min-height:0;min-width:0}
+.preview-head{flex:0 0 auto;min-height:46px;box-sizing:border-box}.preview-actions{min-width:0;overflow-x:auto}

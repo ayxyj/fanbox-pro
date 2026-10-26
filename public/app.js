@@ -901,7 +901,7 @@ function bindSidebarResizer() {
   });
 }
 // 预览尺寸随 dock 翻转：终端在右→预览在下方用高度，否则用宽度
-function previewIsBottom() { const saved = localStorage.getItem('fb_preview_dock'); return saved ? saved === 'bottom' : term.dock === 'right'; }
+function previewIsBottom() { return term.dock === 'right'; }
 function applyPreviewSize() {
   const pv = $('#preview');
   if (!pv || pv.classList.contains('hidden')) return;
@@ -987,6 +987,7 @@ function togglePreviewMax(force) {
   if (on && term.maximized) term.toggleMax(false);
   previewMaximized = on;
   preview.classList.toggle('preview-fullscreen', on);
+  $('#main-body').classList.toggle('preview-max', on);
   const button = $('#preview-max');
   button.classList.toggle('on', on);
   button.title = on ? '恢复预览大小' : '预览全屏';
@@ -2077,7 +2078,7 @@ function bindEvents() {
   $('#btn-back').onclick = goBack;
   $('#btn-up').onclick = goUp;
   $('#preview-close').onclick = closePreview;
-  $('#preview-dock').onclick = () => { localStorage.setItem('fb_preview_dock', previewIsBottom() ? 'right' : 'bottom'); applyPreviewSize(); requestAnimationFrame(() => { mona.editor?.layout(); term.fitActive(); }); };
+  $('#preview-dock').onclick = () => term.setDock(term.dock === 'bottom' ? 'right' : 'bottom');
   $('#preview-max').onclick = () => togglePreviewMax();
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-terminal').onclick = () => term.toggle();
@@ -2349,6 +2350,7 @@ const term = {
     this.fitActive();
   },
   setDock(d) {
+    if (previewMaximized) togglePreviewMax(false);
     if (this.maximized) this.toggleMax(false); // 铺满下切布局看不出任何变化，先退出铺满让分屏可见
     animateLayout(); this.dock = d; localStorage.setItem('fb_term_dock', d); this.applyDock();
   },
