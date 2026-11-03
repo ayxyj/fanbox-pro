@@ -23,6 +23,13 @@
   const body = panel.querySelector('.remote-body'), status = panel.querySelector('.remote-status');
   let data, tab = 'connections', revision = 0, selected = '', directory = '.', logFrame = null, filePage = 0;
   let dirtyEditor = () => false;
+  document.addEventListener('pointerdown', event => {
+    const options = body.querySelector('.chat-options');
+    if (options?.open && !options.contains(event.target) && !event.target.closest('[data-permission-pill]')) options.open = false;
+  }, true);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') { const options = body.querySelector('.chat-options'); if (options) options.open = false; }
+  });
   const transfers = new Map(), chats = new Map();
   const chat = id => { if (!chats.has(id)) chats.set(id, { items: [], prompt: '', context: false, progress: '', policy: null }); return chats.get(id); };
   window.fanboxRemote.on('auth', challenge => {
@@ -61,16 +68,92 @@
     if (dirtyEditor() && !confirm('放弃远程文件尚未保存的修改？')) return false;
     dirtyEditor = () => false; panel.hidden = true; divider.hidden = true; main.classList.remove('remote-page-open'); term.fitActive(); return true;
   }
-  async function openAI(id = term.active) { selected = id; term.open(); term.activate(id); await open('ai'); term.fitActive(); }
+  async function openAI(id = term.active) { const old = body.querySelector('.remote-prompt'); if (old) { old.disabled = true; old.blur(); } ++revision; selected = id; term.open(); term.activate(id); await open('ai'); term.fitActive(); }
   window.remoteUI = { open: wrap(open), openAI: wrap(openAI), settings: wrap(modelSettings), shortcutMenu, close };
   panel.querySelector('[data-close]').onclick = close;
   panel.querySelectorAll('[data-tab]').forEach(button => button.onclick = wrap(() => open(button.dataset.tab)));
   window.fanboxRemote.on('settings', wrap(modelSettings));
   const navigation = document.createElement('details'); navigation.id = 'ssh-nav-section'; navigation.className = 'nav-section'; navigation.open = false;
-  navigation.innerHTML = '<summary class="nav-title">SSH 连接</summary><div class="ssh-manager-row"><button data-ssh-manager aria-expanded="false"><span data-manager-arrow>▸</span> 会话管理</button><button data-ssh-add title="新建 SSH 连接" aria-label="新建 SSH 连接">＋</button></div><div data-session-tree hidden></div>';
+  navigation.innerHTML = '<summary class="nav-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/></svg>SSH 连接</summary><div class="ssh-manager-row"><button data-ssh-manager aria-expanded="false"><span data-manager-arrow>▸</span> 会话管理</button><button data-ssh-add title="新建 SSH 连接" aria-label="新建 SSH 连接">＋</button></div><div data-session-tree hidden></div><div class="ssh-manager-row"><button data-sidebar-history aria-expanded="false"><span data-history-arrow>▸</span> 会话历史</button></div><div data-history-tree hidden></div>';
   document.getElementById('gs-nav-section').before(navigation);
   const expandedGroups = new Set(); let managerExpanded = false;
   navigation.querySelector('[data-ssh-manager]').onclick = wrap(async () => { managerExpanded = !managerExpanded; await refresh(); });
+  navigation.querySelector('[data-sidebar-history]').onclick = wrap(async () => {
+    const tree = navigation.querySelector('[data-history-tree]'); tree.hidden = !tree.hidden;
+    navigation.querySelector('[data-sidebar-history]').setAttribute('aria-expanded', String(!tree.hidden));
+    navigation.querySelector('[data-history-arrow]').textContent = tree.hidden ? '▸' : '▾';
+    if (!tree.hidden) await drawHistoryTree();
+  });
+  window.fanboxRemote.on('history-changed', wrap(async () => {
+    if (!navigation.querySelector('[data-history-tree]').hidden) await drawHistoryTree();
+  }));
+  let previewHistoryId = '';
+  async function removeHistory(record, wholeTarget) {
+    const approved = await window.fanboxUI.confirm({
+      title: wholeTarget ? '删除主机全部历史？' : '删除此历史？',
+      description: wholeTarget ? '将删除此分组下所有聊天记录，保留 SSH 连接配置。' : '将删除此段聊天记录。',
+      facts: [['删除范围', wholeTarget ? record.targetLabel : record.title]],
+      note: '删除后无法恢复，正在运行的任务必须先停止。', approveLabel: '删除历史', danger: true
+    });
+    if (!approved) return;
+    const result = await api('history-remove', wholeTarget ? { targetLabel: record.targetLabel } : { id: record.id });
+    for (const [sessionId, current] of chats) if (result.ids.includes(current.conversationId)) chats.delete(sessionId);
+    if (result.ids.includes(previewHistoryId)) { previewHistoryId = ''; close(); }
+    else if (tab === 'ai' && !panel.hidden) await render();
+    await drawHistoryTree(); notify('历史已删除');
+  }
+  const expandedHistoryTargets = new Set();
+  async function drawHistoryTree() {
+    const tree = navigation.querySelector('[data-history-tree]');
+    const result = await api('history-all');
+    tree.replaceChildren();
+    const groups = new Map();
+    for (const record of result.records) {
+      const groupKey = record.targetLabel || record.targetKey;
+      if (!groups.has(groupKey)) {
+        const folder = document.createElement('details'); folder.className = 'history-terminal';
+        folder.open = expandedHistoryTargets.has(groupKey);
+        folder.ontoggle = () => { if (!folder.isConnected) return; folder.open ? expandedHistoryTargets.add(groupKey) : expandedHistoryTargets.delete(groupKey); };
+        const summary = document.createElement('summary'); summary.textContent = record.targetLabel || '历史会话'; summary.title = summary.textContent;
+        summary.oncontextmenu = event => { event.preventDefault(); event.stopPropagation(); popupMenu(event, [{ label: '删除此主机全部历史', danger: true, fn: wrap(() => removeHistory(record, true)) }]); };
+        const entries = document.createElement('div'); entries.className = 'history-conversations';
+        folder.append(summary, entries); tree.append(folder); groups.set(groupKey, entries);
+      }
+      const button = document.createElement('button'); button.className = 'history-entry';
+      button.textContent = record.title || '未命名对话'; button.title = (record.title || '未命名对话') + '\n' + new Date(record.updatedAt).toLocaleString();
+      button.oncontextmenu = event => { event.preventDefault(); event.stopPropagation(); popupMenu(event, [{ label: '删除此历史', danger: true, fn: wrap(() => removeHistory(record, false)) }]); };
+      button.onclick = wrap(() => showHistory(record)); groups.get(groupKey).append(button);
+    }
+    if (!result.records.length) tree.textContent = '暂无历史记录';
+    for (const warning of result.warnings) { const text = document.createElement('p'); text.textContent = warning; tree.append(text); }
+  }
+  async function showHistory(entry) {
+    const record = await api('history-preview', { id: entry.id });
+    previewHistoryId = record.id;
+    ++revision; panel.hidden = false; divider.hidden = false; main.classList.add('remote-page-open');
+    if (term.maximized) term.toggleMax(false);
+    tab = 'history'; panel.classList.add('chat-page', 'history-page'); body.classList.add('is-chat');
+    body.innerHTML = '<div class="history-preview-header"><div class="history-preview-heading"><span>历史记录</span><strong></strong></div><button data-history-continue title="加载历史到对应终端，继续发送消息"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M5 12h14m-6-6 6 6-6 6"/></svg>继续此对话</button></div><div class="remote-log history-transcript"></div>';
+    body.querySelector('strong').textContent = record.title || '历史对话';
+    const log = body.querySelector('.remote-log');
+    for (const item of record.items) {
+      const node = document.createElement('article'); node.className = 'chat-message chat-' + item.kind;
+      const author = document.createElement('div'); renderChatAuthor(author, item.kind); node.append(author);
+      const text = document.createElement('div'); text.className = 'chat-message-text'; text.textContent = item.text || item.diagnostic || ''; node.append(text);
+      if (item.reasoning) { const details = document.createElement('details'), summary = document.createElement('summary'), content = document.createElement('div'); summary.textContent = '分析'; content.textContent = item.reasoning; details.append(summary, content); node.append(details); }
+      log.append(node);
+    }
+    if (!record.items.length) log.textContent = '此历史尚无消息';
+    const button = body.querySelector('[data-history-continue]');
+    button.onclick = wrap(async () => {
+      const latest = (await api('history-all')).records.find(r => r.id === entry.id);
+      if (!latest?.sessionId) throw Error('请先连接此历史对应的 SSH 服务器或本地终端，再点击加载并继续');
+      await restoreConversation(entry.id, false, latest.sessionId);
+    });
+    log.scrollTop = 0;
+    requestAnimationFrame(() => term.fitActive());
+    notify(entry.targetLabel + (entry.sessionId ? ' · 可加载继续' : ' · 查看历史；继续前请连接对应目标'));
+  }
   navigation.querySelector('[data-ssh-add]').onclick = wrap(async event => { event.stopPropagation(); await refresh(); profileForm(); });
   async function connectProfile(id, forceNew = false) {
     const existing = term.sessions.find(s => s.sshProfile === id && !s.dead);
@@ -108,10 +191,15 @@
   });
   async function render() {
     const rev = ++revision;
+    const oldPrompt = body.querySelector('.remote-prompt');
+    if (oldPrompt) { oldPrompt.disabled = true; oldPrompt.blur(); }
+    body.querySelector('[data-run]')?.setAttribute('disabled', '');
+    panel.classList.remove('history-page');
     panel.querySelectorAll('[data-tab]').forEach(button => button.classList.toggle('active', button.dataset.tab === tab));
     if (tab === 'connections') connections();
     else if (tab === 'files') await files(rev);
     else await aiView(rev);
+    if (rev !== revision) return;
     body.classList.toggle('is-chat', tab === 'ai'); panel.classList.toggle('chat-page', tab === 'ai');
     requestAnimationFrame(() => term.fitActive());
   }
@@ -308,38 +396,70 @@
     container.querySelectorAll('[data-retry]').forEach(b => b.onclick = wrap(() => { const t = transfers.get(b.dataset.retry); return transfer(t.direction, t.direction === 'upload' ? t.remote.slice(0, t.remote.lastIndexOf('/')) || '/' : t.remote, t); }));
   }
   async function aiView(rev) {
-    const targetOptions = chooseTarget(false), current = chat(selected);
+    const targetOptions = chooseTarget(false), sessionId = selected, current = chat(sessionId);
     if (selected && !current.conversationId && !current.runId) {
-      const record = await api('history-open', { sessionId: selected });
+      const record = await api('history-open', { sessionId });
       current.conversationId = record.id; current.items = record.items; current.visibleCount = 100;
       if (rev !== revision) return;
     }
-    body.innerHTML = `<div class="ai-session-bar" role="tablist" aria-label="AI 会话">${sessions(false).map(session => `<button role="tab" aria-selected="${session.id === selected}" data-chat-session="${session.id}" title="${escape(session.title)}">${escape(session.title)}<small>${session.sshProfile ? 'SSH' : escape(session.shell || 'Shell')}</small></button>`).join('')}<button data-chat-add title="打开其他会话" aria-label="打开其他会话">＋</button></div><div class="remote-log" aria-label="AI 对话" tabindex="0"></div><div class="chat-progress" role="status" hidden></div><div class="chat-composer"><div data-target-confirm hidden class="target-confirm-hint"></div><textarea class="remote-prompt" placeholder="输入消息，Enter 发送" aria-label="AI 任务"></textarea><div class="chat-input-actions"><details class="chat-options"><summary title="会话选项" aria-label="会话选项">☰</summary><div class="chat-options-menu"><div class="remote-target" data-environment>正在读取目标…</div><div class="chat-model">${escape(data.ai.name || '请在设置中配置模型')} · ${escape(data.ai.model || '')}</div><div class="remote-form">${targetOptions}${select('mode', '执行权限', [['read', '仅建议'], ['confirm', '确认后执行'], ['auto', '自动执行']], 'confirm', true)}${check('interactive', '允许 AI 交互式终端', false)}${check('context', '发送终端最近 16 KB 内容', current.context)}</div><div class="chat-menu-actions"><button data-takeover title="接管终端" aria-label="接管终端">⌨ <span>接管终端</span></button><button data-clear title="清空当前对话" aria-label="清空当前对话">↻ <span>清空对话</span></button><button data-chat-files title="远程文件" aria-label="远程文件">▤ <span>远程文件</span></button><button data-chat-exit title="返回文件浏览" aria-label="返回文件浏览">↩ <span>返回文件浏览</span></button></div></div></details><button data-permission-pill class="permission-pill" title="设置当前会话执行权限">读取权限…</button><span class="chat-input-hint">Shift + Enter 换行</span><button data-stop title="停止 AI" aria-label="停止 AI">■</button><button data-run title="发送消息" aria-label="发送消息">↑</button></div></div>`;
+    if (rev !== revision || selected !== sessionId) return;
+    body.dataset.chatSession = sessionId;
+    body.innerHTML = `<div class="ai-session-bar" role="tablist" aria-label="AI 会话">${sessions(false).map(session => `<button role="tab" aria-selected="${session.id === selected}" data-chat-session="${session.id}" title="${escape(session.title)}">${escape(session.title)}<small>${session.sshProfile ? 'SSH' : escape(session.shell || 'Shell')}</small></button>`).join('')}<button data-chat-add title="打开其他会话" aria-label="打开其他会话">＋</button><button data-chat-close title="关闭聊天面板，返回文件浏览" aria-label="关闭聊天面板">✕</button></div><div class="remote-log" aria-label="AI 对话" tabindex="0"></div><div class="chat-progress" role="status" hidden></div><div class="chat-composer"><div class="chat-resize-handle" role="separator" aria-label="调整聊天输入框高度" aria-orientation="horizontal" tabindex="0" title="拖动调整输入框高度"></div><div data-target-confirm hidden class="target-confirm-hint"></div><textarea class="remote-prompt" placeholder="输入消息，Enter 发送" aria-label="AI 任务"></textarea><div class="chat-input-actions"><details class="chat-options"><summary title="会话选项" aria-label="会话选项">☰</summary><div class="chat-options-menu"><div class="remote-target" data-environment>正在读取目标…</div><div class="chat-model">${escape(data.ai.name || '请在设置中配置模型')} · ${escape(data.ai.model || '')}</div><div class="remote-form">${targetOptions}${select('mode', '执行权限', [['read', '仅建议'], ['confirm', '确认后执行'], ['auto', '自动执行']], 'confirm', true)}${check('interactive', '允许 AI 交互式终端', true)}${check('upload', '允许上传本地文件', true)}${check('context', '发送终端最近 16 KB 内容', current.context)}</div><label class="chat-parameter" title="包含模型思考消耗；不能超过服务支持的上限">输出<select data-chat-budget aria-label="最大输出 tokens"><option value="">沿用配置</option><option value="8192">8K</option><option value="16384">16K</option><option value="32768">32K</option></select></label></div></details><button data-permission-pill class="permission-pill" title="设置当前会话执行权限">读取权限…</button><span class="chat-input-hint">Shift + Enter 换行</span><button data-stop title="停止 AI" aria-label="停止 AI">■</button><button data-run title="发送消息" aria-label="发送消息">↑</button></div></div>`;
     body.querySelectorAll('[data-chat-session]').forEach(b => b.onclick = wrap(() => openAI(b.dataset.chatSession)));
-    body.querySelector('.ai-session-bar').insertAdjacentHTML('beforeend', '<button data-chat-history title="查看、继续或删除历史对话" aria-label="会话历史">◷ 会话历史</button><button data-chat-new title="新建对话" aria-label="新建对话">✎ 新对话</button>');
-    bind('[data-chat-history]', historyDialog);
-    bind('[data-chat-new]', newConversation);
     bind('[data-chat-add]', event => { event.stopPropagation(); const r = event.currentTarget.getBoundingClientRect(); popupMenu({ clientX: r.left, clientY: r.bottom }, [...sessions(false).map(session => ({ label: session.title + ' · ' + session.id, fn: wrap(() => openAI(session.id)) })), { label: '新建本地终端会话', fn: wrap(async () => { const session = await term.openInDir(state.cwd); if (session) await openAI(session.id); }) }, { label: 'SSH 会话管理', fn: wrap(async () => { managerExpanded = true; await refresh(); await open('connections'); }) }]); });
     bind('[data-permission-pill]', () => { body.querySelector('.chat-options').open = !body.querySelector('.chat-options').open; });
-    bind('[data-chat-files]', () => open('files')); bind('[data-chat-exit]', close);
-    const prompt = body.querySelector('.remote-prompt'); prompt.value = current.prompt; prompt.oninput = () => { current.prompt = prompt.value; };
+    bind('[data-chat-close]', close);
+    const prompt = body.querySelector('.remote-prompt'); prompt.value = current.prompt; prompt.oninput = () => { if (selected === sessionId) current.prompt = prompt.value; };
+    requestAnimationFrame(() => {
+      if (rev === revision && selected === sessionId && !panel.hidden && tab === 'ai' && prompt.isConnected) prompt.focus({ preventScroll: true });
+    });
+    const budget = body.querySelector('[data-chat-budget]');
+    current.modelOptions ||= {};
+    budget.value = current.modelOptions.maxTokens || '';
+    budget.onchange = () => { current.modelOptions.maxTokens = Number(budget.value) || undefined; };
+    const handle = body.querySelector('.chat-resize-handle');
+    const resizePrompt = height => {
+      const max = Math.max(40, Math.min(window.innerHeight * .5, body.clientHeight - 150));
+      const size = Math.round(Math.max(40, Math.min(max, height)));
+      prompt.style.height = size + 'px';
+      handle.setAttribute('aria-valuenow', String(size));
+      return size;
+    };
+    resizePrompt(Number(localStorage.getItem('fb_chat_prompt_height')) || 76);
+    handle.onpointerdown = event => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const startY = event.clientY, startHeight = prompt.getBoundingClientRect().height;
+      handle.setPointerCapture(event.pointerId);
+      handle.onpointermove = move => {
+        const size = resizePrompt(startHeight + startY - move.clientY);
+        localStorage.setItem('fb_chat_prompt_height', String(size));
+      };
+      handle.onlostpointercapture = () => { handle.onpointermove = null; };
+      handle.onpointerup = () => { handle.onpointermove = null; handle.releasePointerCapture(event.pointerId); };
+    };
+    handle.onkeydown = event => {
+      if (!['ArrowUp', 'ArrowDown'].includes(event.key)) return;
+      event.preventDefault();
+      const size = resizePrompt(prompt.getBoundingClientRect().height + (event.key === 'ArrowUp' ? 10 : -10));
+      localStorage.setItem('fb_chat_prompt_height', String(size));
+    };
     prompt.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); wrap(startAI)(); } };
     body.querySelector('[name=context]').onchange = event => { current.context = event.target.checked; };
     body.querySelector('[name=target]').onchange = wrap(event => openAI(event.target.value));
-    const updatePolicy = wrap(async () => { current.policy = await api('policy', { id: selected, policy: { mode: body.querySelector('[name=mode]').value, interactive: body.querySelector('[name=interactive]').checked } }); drawLog(); notify('权限已更新，执行中的任务也会重新检查权限'); });
+    const updatePolicy = wrap(async () => { current.policy = await api('policy', { id: selected, policy: { mode: body.querySelector('[name=mode]').value, interactive: body.querySelector('[name=interactive]').checked, upload: body.querySelector('[name=upload]').checked } }); drawLog(); notify('权限已更新，执行中的任务也会重新检查权限'); });
+    body.querySelector('[name=upload]').onchange = updatePolicy;
     body.querySelector('[name=mode]').onchange = updatePolicy; body.querySelector('[name=interactive]').onchange = updatePolicy; body.querySelector('[name=interactive]').setAttribute('role', 'switch');
     bind('[data-run]', startAI); bind('[data-stop]', async () => { if (chat(selected).runId) await api('ai-stop', { id: chat(selected).runId }); });
-    bind('[data-takeover]', async () => { if (chat(selected).runId) await api('ai-takeover', { id: chat(selected).runId }); term.open(); term.activate(selected); term.sessions.find(s => s.id === selected)?.xterm.focus(); });
-    bind('[data-clear]', newConversation);
-    body.querySelector('[data-clear]').title = '新建对话（保留历史）'; body.querySelector('[data-clear] span').textContent = '新建对话'; drawLog();
+    drawLog();
     if (!selected) { body.querySelector('[data-environment]').textContent = '请打开本地终端或连接 SSH 会话。'; return; }
     const [env, policy] = await Promise.all([api('target', { id: selected }), api('policy', { id: selected })]); if (rev !== revision) return;
-    current.policy = policy; drawLog();
+    current.policy = policy; body.querySelector('[name=upload]').checked = !!policy.upload; drawLog();
     body.querySelector('[name=mode]').value = policy.mode; body.querySelector('[name=interactive]').checked = policy.interactive;
     body.querySelector('[data-environment]').textContent = `${env.host} · ${env.os} · ${env.shell}\n命令直接在右侧终端执行，继承当前目录和环境。${env.interactiveTargetUnknown ? '\n检测到手动环境切换，执行前需重新确认目标。' : ''}`;
-    if (sessions(true).some(s=>s.id===selected)) {
+    if (sessions(true).some(s=>s.id===selected) && (env.os === 'unknown' || env.interactiveTargetUnknown)) {
       const hint=body.querySelector('[data-target-confirm]');hint.hidden=false;body.querySelector('.chat-options-menu').append(hint);
-      hint.innerHTML='<span>'+escape(env.os==='unknown'?'执行前会自动识别系统；特殊终端也可手动确认。':'当前系统：'+env.os+' · '+env.shell)+'</span><button type="button" data-confirm-system>确认当前系统</button>';
+      hint.innerHTML='<span>'+escape(env.os==='unknown'?'执行前会自动识别系统，无需手动确认；识别失败时可在此选择。':'当前系统：'+env.os+' · '+env.shell)+'</span><button type="button" data-confirm-system>确认当前系统</button>';
       hint.querySelector('button').onclick=()=>{
         const sessionId=selected,d=modal('确认当前 SSH 目标系统');
         d.querySelector('.dialog-content').innerHTML='<p>请确认右侧终端已经登录目标服务器，并停在 Shell 命令提示符。请选择实际目标系统，而不是堡垒机系统。本次设置仅用于当前连接。</p><form class="remote-form">'+select('kind','目标系统 / Shell',[['linux','Linux / Bash'],['macos','macOS / Zsh'],['cmd','Windows / CMD'],['powershell','Windows / PowerShell']],'linux',true)+'<div class="remote-actions full"><button type="submit">确认并应用</button><button type="button" data-cancel>取消</button></div></form>';
@@ -354,45 +474,17 @@
     if (!item) { item = { key, kind, text, reasoning: '' }; current.items.push(item); }
     return item;
   }
-  async function restoreConversation(id, fresh = false) {
-    if (!selected) throw Error('请先打开目标终端');
-    const sessionId = selected, current = chat(sessionId);
+  async function restoreConversation(id, fresh = false, targetSession = selected) {
+    if (!targetSession) throw Error('请先打开目标终端');
+    const sessionId = targetSession, current = chat(sessionId);
     if (current.runId) throw Error('请先停止当前 AI 任务');
     const record = await api('history-open', { sessionId, id, fresh });
     current.conversationId = record.id; current.items = record.items; current.lastRunId = ''; current.prompt = ''; current.visibleCount = 100;
-    if (selected === sessionId) await render();
-  }
-  async function newConversation() { await restoreConversation(undefined, true); }
-  async function historyDialog() {
-    if (!selected) throw Error('请先选择对应的终端会话');
-    const historySession = selected;
-    const dialog = modal('会话历史'), content = dialog.querySelector('.dialog-content');
-    const action = fn => async () => { try { await fn(); } catch (error) { dialog.querySelector('.dialog-error').textContent = error.message; } };
-    const draw = async () => {
-      const result = await api('history-list', { sessionId: historySession });
-      content.innerHTML = result.warnings.map(w => `<p class="dialog-error">${escape(w)}</p>`).join('') + '<div class="history-table-wrap"><table class="remote-files history-table"><thead><tr><th>会话</th><th>更新时间</th><th>状态</th><th>操作</th></tr></thead><tbody>' + (result.records.map(r => `<tr><td>${escape(r.title)}</td><td>${escape(new Date(r.updatedAt).toLocaleString())}</td><td>${r.running ? '运行中' : '已保存'}</td><td><button data-history-read="${r.id}">查看</button><button data-history-resume="${r.id}" ${r.running ? 'disabled' : ''}>继续</button><button data-history-delete="${r.id}" ${r.running ? 'disabled' : ''}>删除</button></td></tr>`).join('') || '<tr><td colspan="4">当前会话暂无历史记录</td></tr>') + '</tbody></table></div>';
-      content.querySelectorAll('[data-history-resume]').forEach(button => {
-        const record = result.records.find(r => r.id === button.dataset.historyResume);
-        if (record.boundSessionId && record.boundSessionId !== selected) { button.disabled = true; button.textContent = '已绑定其他终端'; button.title = '可查看记录；继续对话请回到原终端，或关闭原终端后再恢复'; }
-        button.onclick = action(async () => { await restoreConversation(button.dataset.historyResume); dialog.close(); });
-      });
-      content.querySelectorAll('[data-history-delete]').forEach(button => button.onclick = action(async () => { const id = button.dataset.historyDelete; const record = result.records.find(r => r.id === id); if (!await window.fanboxUI.confirm({ title: '删除会话记录', description: '确定删除这段会话的聊天记录吗？', facts: [['会话', record?.title || '未命名会话']], note: '删除后无法恢复。仅删除聊天记录，不会删除 SSH 连接配置或项目文件。', approveLabel: '删除记录', danger: true })) return; await api('history-delete', { id, sessionId: historySession }); for (const current of chats.values()) if (current.conversationId === id) { current.conversationId = ''; current.items = []; } await draw(); }));
-      content.querySelectorAll('[data-history-read]').forEach(button => button.onclick = action(async () => {
-        const record = await api('history-read', { id: button.dataset.historyRead, sessionId: historySession });
-        content.innerHTML = '<button data-history-back>← 返回历史列表</button><div class="history-transcript"></div>';
-        const transcript = content.querySelector('.history-transcript');
-        for (const item of record.items) {
-          const node = document.createElement('article'); node.className = 'chat-message chat-' + item.kind;
-          const author = document.createElement('div'); renderChatAuthor(author, item.kind); node.append(author); const messageBody = document.createElement('div'); messageBody.className = 'chat-content'; node.append(messageBody);
-          if (item.reasoning) { const details = document.createElement('details'), summary = document.createElement('summary'), text = document.createElement('div'); summary.textContent = '思考 / 分析'; text.textContent = item.reasoning; details.append(summary, text); messageBody.append(details); }
-          const text = document.createElement('div'); text.className = 'chat-message-text'; text.textContent = item.text; messageBody.append(text); transcript.append(node);
-        }
-        content.querySelector('[data-history-back]').onclick = action(draw);
-      }));
-    };
-    dialog.addEventListener('close', () => { if (!panel.hidden && tab === 'ai') wrap(render)(); }); await draw();
+    await openAI(sessionId);
+    notify('历史对话已加载，可发送新消息继续；此前命令不会自动重复执行');
   }
   function drawLog() {
+    if (tab !== 'ai') return;
     const current = chat(selected), element = body.querySelector('.remote-log');
     if (!panel.hidden && tab === 'ai') current.unread = false;
     if (element) {
@@ -413,7 +505,13 @@
             element.append(node);
           }
           const details = node.querySelector('.chat-reasoning'); details.hidden = !item.reasoning;
-          const analysis = details.querySelector('div'); if (!analysis.textContent && item.reasoning) details.open = true; if (analysis.textContent !== item.reasoning) analysis.textContent = item.reasoning;
+          const analysis = details.querySelector('div'); if (!analysis.textContent && item.reasoning) details.open = false; if (analysis.textContent !== item.reasoning) analysis.textContent = item.reasoning;
+          if (item.diagnostic && !node.querySelector('.chat-diagnostic')) {
+            const details = document.createElement('details'); details.className = 'chat-diagnostic';
+            const summary = document.createElement('summary'); summary.textContent = '回复未完成 · 查看原因和模型返回';
+            const text = document.createElement('pre'); text.textContent = item.diagnostic;
+            details.append(summary, text); node.querySelector('.chat-content').append(details);
+          }
           const content = node.querySelector('.chat-message-text'); if (content.textContent !== item.text) content.textContent = item.text;
           node.classList.toggle('is-thinking', !!item.thinking);
         }
@@ -431,7 +529,11 @@
         progress.innerHTML = '<span data-progress-text></span><button data-wait title="继续等待" aria-label="继续等待">◷</button><button data-resume title="让 AI 继续" aria-label="让 AI 继续">▶</button><button data-progress-takeover title="接管终端，保留运行中的命令" aria-label="接管终端">⌨</button>';
         progress.querySelector('[data-wait]').onclick = () => { notify('正在持续监听，不会重复执行命令'); };
         progress.querySelector('[data-resume]').onclick = wrap(() => api('ai-resume', { id: chat(selected).runId }));
-        progress.querySelector('[data-progress-takeover]').onclick = () => body.querySelector('[data-takeover]').click();
+        progress.querySelector('[data-progress-takeover]').onclick = wrap(async () => {
+          const sessionId = selected, runId = chat(sessionId).runId;
+          if (runId) await api('ai-takeover', { id: runId });
+          term.open(); term.activate(sessionId); term.sessions.find(s => s.id === sessionId)?.xterm.focus();
+        });
       }
       progress.querySelector('[data-progress-text]').textContent = current.progress || '正在连接模型…';
       progress.querySelector('[data-resume]').hidden = !current.paused;
@@ -448,6 +550,7 @@
     const stop = body.querySelector('[data-stop]'); if (stop) { stop.disabled = !current.runId; stop.hidden = !current.runId; stop.title = '停止命令及 AI（发送 Ctrl+C）'; stop.setAttribute('aria-label', stop.title); }
   }
   async function startAI() {
+    if (body.dataset.chatSession !== selected || body.querySelector('.remote-prompt')?.disabled) throw Error('正在切换会话，请稍候再发送');
     if (chat(selected).runId) throw Error('当前会话已有任务在执行'); if (!selected) throw Error('请选择目标会话');
     const current = chat(selected), prompt = current.prompt.trim(); if (!prompt) return;
     let context = ''; const session = term.sessions.find(s => s.id === selected);
@@ -456,7 +559,7 @@
     const id = crypto.randomUUID(), sessionId = selected; current.runId = id; current.lastRunId = id; current.paused = false; current.unread = false;
     addItem(current, 'user', prompt); current.progress = '正在连接模型…'; current.prompt = ''; body.querySelector('.remote-prompt').value = ''; drawLog();
     let outcome = 'AI 本轮已结束，请在右侧终端查看命令结果';
-    try { const result = await api('ai-run', { id, sessionId, conversationId: current.conversationId, prompt, context: context.slice(-16000) }); current.conversationId = result.conversationId || current.conversationId; if (result.pending) { outcome = '命令未确认结束，已暂停后续执行；请查看终端或接管'; addItem(current, 'notice', outcome); } else if (result.noToolsReason) { outcome = result.noToolsReason; addItem(current, 'notice', result.noToolsReason + (result.noToolsReason.includes('权限') || result.noToolsReason.includes('仅建议') ? '。点击输入框旁的权限按钮可设置。' : '。如果您要求执行操作，请检查模型是否支持工具调用。')); } }
+    try { const result = await api('ai-run', { id, sessionId, conversationId: current.conversationId, modelOptions: current.modelOptions, prompt, context: context.slice(-16000) }); current.conversationId = result.conversationId || current.conversationId; if (result.pending) { outcome = '命令未确认结束，已暂停后续执行；请查看终端或接管'; addItem(current, 'notice', outcome); } else if (result.noToolsReason) { outcome = result.noToolsReason; addItem(current, 'notice', result.noToolsReason + (result.noToolsReason.includes('权限') || result.noToolsReason.includes('仅建议') ? '。点击输入框旁的权限按钮可设置。' : '。如果您要求执行操作，请检查模型是否支持工具调用。')); } }
     catch (error) { outcome = error.message; addItem(current, 'error', error.message); throw error; }
     finally { current.runId = ''; current.paused = false; current.unread = selected !== sessionId || panel.hidden; current.items.forEach(item => item.thinking = false); if (selected === sessionId) notify(outcome); drawLog(); }
   }
@@ -478,6 +581,15 @@
       if (selected === message.sessionId) notify(current.progress);
     }
     else if (message.type === 'analysis-start') { const item = addItem(current, 'assistant', '', key); item.thinking = true; }
+    else if (message.type === 'metrics') {
+      const usage = message.usage;
+      const input = usage?.input_tokens ?? usage?.prompt_tokens;
+      const output = usage?.output_tokens ?? usage?.completion_tokens;
+      const reasoning = usage?.completion_tokens_details?.reasoning_tokens;
+      const text = `${message.model} · 输出上限 ${message.maxTokens || '服务默认'} · 推理 ${message.reasoningEffort || '服务默认'}${input != null ? ' · 输入 ' + input : ''}${output != null ? ' · 输出 ' + output : ''}${reasoning != null ? ' · 思考 ' + reasoning : ''}`;
+      addItem(current, 'notice', text, key + '-metrics');
+    }
+    else if (message.type === 'diagnostic') { const item = addItem(current, 'notice', '', key + '-diagnostic'); item.diagnostic = message.text; }
     else if (message.type === 'analysis-end') { const item = current.items.find(item => item.key === key); if (item) item.thinking = false; }
     else if (message.type === 'command') addItem(current, 'command', message.text);
     else if (message.type === 'message' || message.type === 'text-delta') { const item = addItem(current, 'assistant', '', key); item.text = (item.text + message.text).slice(-100000); }

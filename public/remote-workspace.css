@@ -103,3 +103,58 @@
 .im-settings footer{display:flex;align-items:center;justify-content:flex-end;gap:16px}
 .im-settings [data-save-result]{flex:1;text-align:left;overflow-wrap:anywhere}.save-success{color:var(--accent)}.save-failure{color:#df665d}
 .target-confirm-hint{display:flex;align-items:center;justify-content:space-between;gap:10px;font-size:12px;padding:9px 12px;background:var(--bg-3);border-radius:7px;margin-bottom:8px}.target-confirm-hint[hidden]{display:none}.target-confirm-hint button{flex:none;cursor:pointer}
+
+/* Keep the conversation flexible and the composer inside the panel. */
+.remote-workspace.chat-page .remote-body{height:auto;min-height:0;min-width:0}
+.remote-workspace.chat-page .remote-status{flex-shrink:0}
+.remote-workspace.chat-page .chat-composer{box-sizing:border-box}
+
+.chat-page .chat-composer{max-height:none}
+.chat-page textarea.remote-prompt{max-height:50vh;box-sizing:border-box}
+.chat-resize-handle{position:absolute;top:-5px;left:10px;right:10px;height:10px;cursor:ns-resize;touch-action:none;z-index:2;border-radius:5px}
+.chat-resize-handle::after{content:'';position:absolute;left:calc(50% - 20px);top:4px;width:40px;height:3px;background:var(--border);border-radius:3px}
+.chat-resize-handle:hover::after,.chat-resize-handle:focus-visible::after{background:var(--accent)}
+
+.chat-input-actions{flex-wrap:wrap}
+.chat-parameter{display:flex;align-items:center;gap:4px;font-size:11px;color:var(--text-dim)}
+.chat-parameter select{font-size:11px;padding:3px;max-width:100px}
+.chat-diagnostic summary{cursor:pointer;color:var(--text-dim)}
+.chat-diagnostic pre{white-space:pre-wrap;overflow-wrap:anywhere;max-height:300px;overflow:auto;font-size:11px}
+
+.ssh-manager-row [data-sidebar-history]{flex:1;text-align:left;font-family:inherit;font-weight:400;font-size:12px!important;padding:7px 8px}
+[data-history-tree]{padding:4px 8px 4px 20px;font-size:12px;overflow-wrap:anywhere}
+[data-history-tree] summary{cursor:pointer;padding:6px 0;color:var(--text-dim)}
+[data-history-tree] .history-entry{display:block;width:100%;padding:6px 8px;text-align:left;font:inherit;border:0;background:transparent;color:var(--text-dim);cursor:pointer;border-radius:5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-history-tree] .history-entry:hover{background:var(--bg-3);color:var(--text)}
+
+/* Sidebar hierarchy: history > terminal > conversation. */
+#ssh-nav-section [data-sidebar-history]{font:400 12px/1.5 var(--font-ui);color:var(--text-dim);background:transparent;border:0;border-radius:7px;padding:7px 8px;text-align:left;box-shadow:none}
+#ssh-nav-section [data-sidebar-history]:hover{background:var(--bg-3);color:var(--text)}
+#ssh-nav-section [data-history-tree]{padding:0 0 0 16px;font:400 12px/1.5 var(--font-ui);min-width:0}
+#ssh-nav-section .history-terminal{min-width:0}
+#ssh-nav-section .history-terminal>summary{display:flex;align-items:center;gap:5px;list-style:none;padding:6px 8px;font:400 12px/1.5 var(--font-ui);white-space:nowrap;overflow:hidden;color:var(--text-dim)}
+#ssh-nav-section .history-terminal>summary::-webkit-details-marker{display:none}
+#ssh-nav-section .history-terminal>summary::before{content:'▸';flex:0 0 10px;font-size:10px}
+#ssh-nav-section .history-terminal[open]>summary::before{content:'▾'}
+#ssh-nav-section .history-conversations{padding-left:16px;min-width:0}
+#ssh-nav-section [data-history-tree] .history-entry{box-sizing:border-box;font:400 12px/1.5 var(--font-ui)!important;letter-spacing:normal;padding:6px 8px;max-width:100%;min-width:0;color:var(--text-dim)}
+
+#ssh-nav-section [data-sidebar-history]{display:flex;align-items:center;gap:8px}
+
+/* Indent each history level from its parent, including disclosure arrows. */
+#ssh-nav-section [data-history-tree]{padding:0 0 0 32px!important;box-sizing:border-box;width:100%}
+#ssh-nav-section .history-conversations{padding-left:20px!important;box-sizing:border-box}
+#ssh-nav-section .history-terminal>summary{min-width:0;text-overflow:ellipsis}
+
+.remote-workspace.history-page .remote-body{display:grid;grid-template-rows:auto minmax(0,1fr);overflow:hidden;min-height:0}
+.remote-workspace.history-page .remote-log{grid-row:2;max-height:none;min-height:0;overflow-y:auto}
+
+.history-preview-header{grid-row:1;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;border-bottom:1px solid var(--border);min-width:0;background:var(--bg)}
+.history-preview-heading{display:flex;flex-direction:column;gap:4px;min-width:0}
+.history-preview-heading>span{font:400 11px/1.4 var(--font-ui);color:var(--text-dim)}
+.history-preview-heading>strong{font:600 14px/1.5 var(--font-ui);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.remote-workspace .history-preview-header [data-history-continue]{display:inline-flex;align-items:center;justify-content:center;gap:7px;flex:none;margin-left:auto;padding:8px 12px;border-radius:8px;background:var(--accent);color:var(--accent-ink);border:1px solid transparent;font:600 12px/1.5 var(--font-ui);cursor:pointer;white-space:nowrap}
+.remote-workspace .history-preview-header [data-history-continue]:hover{filter:brightness(1.08)}
+.remote-workspace .history-preview-header [data-history-continue]:focus-visible{outline:2px solid var(--accent);outline-offset:3px}
+
+.ai-session-bar [data-chat-close]{margin-left:auto;position:sticky;right:0;background:var(--bg);flex:none;width:30px;align-self:center}

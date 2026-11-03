@@ -32,10 +32,10 @@ async function requestModelResponse(config, messages, tools, signal, onDelta, to
       if (converted.at(-1)?.role === role) converted.at(-1).content.push(...content);
       else converted.push({ role, content });
     }
-    payload = { model: config.model, max_tokens: 4096, system: messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), messages: converted,
+    payload = { model: config.model, max_tokens: 8192, system: messages.filter(m => m.role === 'system').map(m => m.content).join('\n'), messages: converted,
       ...(tools.length ? { tool_choice: { type: 'auto' }, tools: tools.map(t => ({ name: t.function.name, description: t.function.description, input_schema: t.function.parameters })) } : {}) };
   } else {
-    payload = { model: config.model, messages: messages.map(({ anthropicContent, finishReason, reasoning, ...m }) => m), ...(tools.length ? { tools, tool_choice: 'auto' } : {}) };
+    payload = { model: config.model, messages: messages.map(({ anthropicContent, finishReason, reasoning, usage, ...m }) => m), ...(tools.length ? { tools, tool_choice: 'auto' } : {}) };
   }
   if (onDelta) payload.stream = true;
   const settings = config.selectedModels?.find(item=>item.id===config.model);
@@ -69,19 +69,21 @@ async function requestModelResponse(config, messages, tools, signal, onDelta, to
   }
   if (!anthropic) {
     if (!body.choices?.[0]?.message) throw Error('模型返回格式不兼容');
-    return { ...body.choices[0].message, finishReason: body.choices[0].finish_reason, reasoning: body.choices[0].message.reasoning_content || '' };
+    return { ...body.choices[0].message, usage: body.usage, finishReason: body.choices[0].finish_reason, reasoning: body.choices[0].message.reasoning_content || '' };
   }
   if (!Array.isArray(body.content)) throw Error('Claude 返回格式不兼容');
-  return { role: 'assistant', finishReason: body.stop_reason, reasoning: body.content.filter(b => b.type === 'thinking').map(b => b.thinking || '').join('\n'), content: body.content.filter(b => b.type === 'text').map(b => b.text).join('\n'), anthropicContent: body.content,
+  return { role: 'assistant', usage: body.usage, finishReason: body.stop_reason, reasoning: body.content.filter(b => b.type === 'thinking').map(b => b.thinking || '').join('\n'), content: body.content.filter(b => b.type === 'text').map(b => b.text).join('\n'), anthropicContent: body.content,
     tool_calls: body.content.filter(b => b.type === 'tool_use').map(b => ({ id: b.id, type: 'function', function: { name: b.name, arguments: JSON.stringify(b.input) } })) };
 }
 async function readStream(response, anthropic, onDelta, touch) {
   const decoder = new TextDecoder(), blocks = [], calls = new Map();
-  let pending = '', total = 0, content = '', reasoning = '', finished = false, finishReason;
+  let pending = '', total = 0, content = '', reasoning = '', finished = false, finishReason, usage;
   const emit = (type, text) => { if (text) onDelta?.(type, text); };
   const accept = event => {
     if (event === '[DONE]') { finished = true; return; }
     const item = JSON.parse(event);
+    if (item.usage) usage = { ...usage, ...item.usage };
+    if (item.message?.usage) usage = { ...usage, ...item.message.usage };
     if (item.error || item.type === 'error') throw Error('模型流式响应出错，请检查模型服务后重试');
     if (anthropic) {
       const index = item.index;
@@ -96,7 +98,7 @@ async function readStream(response, anthropic, onDelta, touch) {
         else if (d.type === 'signature_delta') b.signature = (b.signature || '') + d.signature;
         else if (d.type === 'input_json_delta') b.partialJSON = (b.partialJSON || '') + d.partial_json;
       } else if (item.type === 'content_block_stop') {
-        const b = blocks[index]; if (b?.partialJSON !== undefined) { b.input = JSON.parse(b.partialJSON); delete b.partialJSON; }
+        const b = blocks[index]; if (b?.partialJSON !== undefined) { try { b.input = JSON.parse(b.partialJSON); } catch { b.input = {}; b.incompleteJSON = b.partialJSON; } delete b.partialJSON; }
       } else if (item.type === 'message_delta') finishReason = item.delta?.stop_reason;
       else if (item.type === 'message_stop') finished = true;
     } else {
@@ -126,8 +128,9 @@ async function readStream(response, anthropic, onDelta, touch) {
     }
   }
   if (!finished) throw Error('模型响应中途断开，未执行未完成的工具调用，请重试');
-  if (anthropic) return { content: blocks.filter(Boolean), stop_reason: finishReason };
-  return { choices: [{ finish_reason: finishReason, message: { role: 'assistant', content, ...(reasoning ? { reasoning_content: reasoning } : {}), ...(calls.size ? { tool_calls: [...calls.values()] } : {}) } }] };
+  if (anthropic && !['max_tokens', 'length'].includes(finishReason) && blocks.some(b => b?.incompleteJSON !== undefined)) throw Error('模型工具参数不完整，未执行');
+  if (anthropic) return { content: blocks.filter(Boolean), stop_reason: finishReason, usage };
+  return { usage, choices: [{ finish_reason: finishReason, message: { role: 'assistant', content, ...(reasoning ? { reasoning_content: reasoning } : {}), ...(calls.size ? { tool_calls: [...calls.values()] } : {}) } }] };
 }
 module.exports = { requestModel };
 

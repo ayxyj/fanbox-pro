@@ -397,6 +397,12 @@ ipcMain.handle('pty:spawn', async (e, { id, cwd, cols, rows, autorun, shell: req
   const startCwd = cwd && fs.existsSync(cwd) ? cwd : os.homedir();
   // GUI 启动的 app 不继承 shell 的 locale，zsh 会把中文路径按字节转义成 \M-^@ 乱码 → 兜底 UTF-8
   const env = { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor', CLICOLOR: '1', FANBOX: '1' };
+  // Claude's fullscreen renderer keeps only the current screen in xterm's alternate
+  // buffer. Use its supported classic renderer so local and WeCom-driven turns
+  // remain in the terminal's native scrollback. Set before the shell starts:
+  // Claude reads this option before loading settings.json env entries.
+  env.CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN = '1';
+  env.CLAUDE_CODE_NO_FLICKER = '0';
   // A GUI terminal must not inherit the command runner's non-colour output policy.
   delete env.NO_COLOR;
   if (env.FORCE_COLOR === '0') delete env.FORCE_COLOR;

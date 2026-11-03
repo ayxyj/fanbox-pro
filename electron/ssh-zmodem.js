@@ -76,7 +76,18 @@ class SSHZmodem {
   status(job, text, force = false) {
     if (!force && Date.now() - job.lastStatus < 1000) return;
     job.lastStatus = Date.now();
-    this.terminal(Buffer.from('\r\x1b[2K[ZMODEM] ' + text.replace(/[\x00-\x1f\x7f]/g, ' ') + '\r\n'));
+    if (!force) {
+      const ratio = job.total > 0 ? Math.max(0, Math.min(1, job.bytes / job.total)) : 0;
+      const filled = Math.floor(ratio * 16);
+      const size = bytes => (bytes / 1048576).toFixed(1) + 'MB';
+      const line = '[' + '#'.repeat(filled) + '-'.repeat(16 - filled) + '] ' + Math.floor(ratio * 100) + '% ' + size(job.bytes || 0) + '/' + (job.total ? size(job.total) : '?');
+      this.terminal(Buffer.from('\r\x1b[2K' + line));
+      job.progressLine = true;
+    } else {
+      // Finish the live line before printing a durable completion/error message.
+      this.terminal(Buffer.from((job.progressLine ? '\r\x1b[2K' : '\r\n') + '[ZMODEM] ' + text.replace(/[\x00-\x1f\x7f]/g, ' ') + '\r\n'));
+      job.progressLine = false;
+    }
     this.progress({ id: job.id, direction: job.direction, status: text, transferred: job.bytes || 0, total: job.total || 0 });
   }
   cancel(reason = '已取消传输') {
@@ -137,7 +148,9 @@ class SSHZmodem {
         await wait(ended); await wait(Promise.all(tasks)); check();
       }
       if (session.aborted()) throw Error('远端取消了传输');
-      this.status(job, '本次传输结束', true);
+      // Per-file completion is already shown. The peer may have printed its
+      // next prompt during close(), so do not append another terminal message.
+      this.progress({ id: job.id, direction: job.direction, status: '本次传输结束', transferred: job.bytes || 0, total: job.total || 0 });
     } catch (error) {
       this.cancel(error.message || String(error));
       this.status(job, error.message || String(error), true);

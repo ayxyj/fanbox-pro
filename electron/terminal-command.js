@@ -10,8 +10,11 @@ function terminalCommand(target, command, { signal, timeout = 60000, reminderAft
   const token = 'fanbox-' + randomUUID(), shell = target.environment.shell;
   let payload, completion;
   if (/^(?:.*\/)?(?:bash|zsh|sh|dash|ksh)$/.test(shell)) {
+    // Keep multiline commands on one physical terminal input line.
     const quoted = "'" + command.replace(/'/g, "'\\''") + "'";
-    payload = `eval ${quoted}; printf '\\033]777;${token};%s\\007' "$?"\r`;
+    const encoded = Array.from(Buffer.from(command, 'utf8'), byte => '\\' + byte.toString(8).padStart(3, '0')).join('');
+    const wireQuoted = /[\r\n]/.test(command) ? `"$(printf '%b' '${encoded}')"` : quoted;
+    payload = `eval ${wireQuoted}; printf '\\033]777;${token};%s\\007' "$?"\r`;
     completion = new RegExp('\x1b\\]777;' + token + ';(-?\\d+)\x07');
   } else if (shell === 'powershell') {
     payload = `. { ${command} }; Write-Host ('__' + '${token};' + [int](-not $?) + '__')\r`;

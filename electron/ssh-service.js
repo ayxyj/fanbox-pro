@@ -200,7 +200,7 @@ class SSHService {
     if (Buffer.byteLength(text, 'utf8') > 2 * 1024 * 1024) throw Error('文本超过 2 MB');
     const sftp = await this.sftp(id), stat = await call(sftp, 'stat', filename);
     if (stat.mtime !== expected.mtime || stat.size !== expected.size || expected.hash && (await this.read(id, filename)).hash !== expected.hash) throw Error('远端文件已变化，请重新打开后再保存');
-    if (!await this.confirm('覆盖远程文件', `${this.get(id).profile.host}\n${filename}`)) throw Error('已取消保存');
+    if (!overwriteAuthorized && !await this.confirm('覆盖远程文件', `${this.get(id).profile.host}\n${filename}`)) throw Error('已取消保存');
     // Write a sibling first: a dropped connection must not truncate the original file.
     const { Readable } = require('stream'), temp = filename + '.fanbox-' + crypto.randomUUID();
     try {
@@ -214,7 +214,16 @@ class SSHService {
     try { await call(sftp, 'ext_openssh_rename', from, to); }
     catch (e) { if (e.code !== 8 && !/does not support this extended request/.test(e.message)) throw e; await call(sftp, 'rename', from, to); }
   }
-  async transfer({ id, sessionId, direction, local, remote }) {
+  async ensureDirectory(sessionId, directory) {
+    const sftp = await this.sftp(sessionId);
+    let current = '/';
+    for (const component of directory.split('/').filter(Boolean)) {
+      current = path.posix.join(current, component);
+      try { const stat = await call(sftp, 'stat', current); if (!stat.isDirectory()) throw Error('远端路径不是目录：' + current); }
+      catch (error) { if (error.code !== 2) throw error; await call(sftp, 'mkdir', current); }
+    }
+  }
+  async transfer({ id, sessionId, direction, local, remote, overwriteAuthorized = false }) {
     if (this.transfers.has(id)) throw Error('传输任务已存在');
     const abort = new AbortController(), task = { sessionId, abort }; this.transfers.set(id, task);
     let sftp;
@@ -225,7 +234,7 @@ class SSHService {
       sftp = await this.sftp(sessionId);
       if (direction === 'upload') {
         const stat = fs.statSync(local); task.total = stat.size;
-        try { await call(sftp, 'stat', remote); if (!await this.confirm('覆盖远程文件', `${this.get(sessionId).profile.host}\n${remote}`)) throw Error('已取消覆盖'); } catch (e) { if (e.code !== 2) throw e; }
+        try { await call(sftp, 'stat', remote); if (!overwriteAuthorized && !await this.confirm('覆盖远程文件', `${this.get(sessionId).profile.host}\n${remote}`)) throw Error('已取消覆盖'); } catch (e) { if (e.code !== 2) throw e; }
       } else task.total = (await call(sftp, 'stat', remote)).size;
       const source = direction === 'upload' ? fs.createReadStream(local) : sftp.createReadStream(remote);
       const destination = direction === 'upload' ? sftp.createWriteStream(temp, { flags: 'wx' }) : fs.createWriteStream(temp, { flags: 'wx' });

@@ -34,3 +34,6 @@ pkg/
 # fanbox-pro local profiles
 .fanbox-pro-win/
 .fanbox-pro/
+
+# Local distribution archive
+/fanbox-pro-win.zip

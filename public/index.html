@@ -28,17 +28,17 @@
       </button>
 
       <details class="nav-section" id="quick-entry-section" open>
-        <summary class="nav-title">快速入口</summary>
+        <summary class="nav-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m13 2-9 12h7l-1 8 10-12h-7z"/></svg>快速入口</summary>
         <ul id="roots-list" class="nav-list"></ul>
       </details>
 
       <details class="nav-section" id="favorites-section">
-        <summary class="nav-title">收藏</summary>
+        <summary class="nav-title"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m12 3 2.8 5.7 6.2.9-4.5 4.4 1.1 6.2-5.6-3-5.6 3 1.1-6.2L3 9.6l6.2-.9z"/></svg>收藏</summary>
         <ul id="favs-list" class="nav-list"></ul>
       </details>
 
       <details class="nav-section" id="agent-projects-section">
-        <summary class="nav-title" title="最近被 Claude Code / Codex 处理过的项目，点击展开或收起">Agent 项目</summary>
+        <summary class="nav-title" title="最近被 Claude Code / Codex 处理过的项目，点击展开或收起"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="4" y="7" width="16" height="14" rx="3"/><path d="M12 3v4M8 12h.01M16 12h.01M8 17h8"/></svg>Agent 项目</summary>
         <ul id="agent-projects-list" class="nav-list"></ul>
       </details>
 
@@ -132,6 +132,8 @@
               <button id="term-codex" class="agent-launch" title="启动 Codex：空闲终端就地启动，正跑着任务则新开标签"><svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" fill-rule="evenodd"><path clip-rule="evenodd" d="M8.086.457a6.105 6.105 0 013.046-.415c1.333.153 2.521.72 3.564 1.7a.117.117 0 00.107.029c1.408-.346 2.762-.224 4.061.366l.063.03.154.076c1.357.703 2.33 1.77 2.918 3.198.278.679.418 1.388.421 2.126a5.655 5.655 0 01-.18 1.631.167.167 0 00.04.155 5.982 5.982 0 011.578 2.891c.385 1.901-.01 3.615-1.183 5.14l-.182.22a6.063 6.063 0 01-2.934 1.851.162.162 0 00-.108.102c-.255.736-.511 1.364-.987 1.992-1.199 1.582-2.962 2.462-4.948 2.451-1.583-.008-2.986-.587-4.21-1.736a.145.145 0 00-.14-.032c-.518.167-1.04.191-1.604.185a5.924 5.924 0 01-2.595-.622 6.058 6.058 0 01-2.146-1.781c-.203-.269-.404-.522-.551-.821a7.74 7.74 0 01-.495-1.283 6.11 6.11 0 01-.017-3.064.166.166 0 00.008-.074.115.115 0 00-.037-.064 5.958 5.958 0 01-1.38-2.202 5.196 5.196 0 01-.333-1.589 6.915 6.915 0 01.188-2.132c.45-1.484 1.309-2.648 2.577-3.493.282-.188.55-.334.802-.438.286-.12.573-.22.861-.304a.129.129 0 00.087-.087A6.016 6.016 0 015.635 2.31C6.315 1.464 7.132.846 8.086.457zm-.804 7.85a.848.848 0 00-1.473.842l1.694 2.965-1.688 2.848a.849.849 0 001.46.864l1.94-3.272a.849.849 0 00.007-.854l-1.94-3.393zm5.446 6.24a.849.849 0 000 1.695h4.848a.849.849 0 000-1.696h-4.848z"></path></svg></button>
               <button id="file-follow" title="文件跟随：跟着当前终端 tab 的 agent，它改哪个文件，文件区和预览就跟到哪；html/md 边写边出实时预览（手动浏览即自动停）"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>文件跟随</button>
               <button id="term-locate" title="把文件区跳到终端当前所在目录"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><line x1="12" y1="2" x2="12" y2="5"/><line x1="12" y1="19" x2="12" y2="22"/><line x1="2" y1="12" x2="5" y2="12"/><line x1="19" y1="12" x2="22" y2="12"/></svg>定位文件</button>
+              <button id="term-font-down" type="button" aria-label="缩小终端字体" title="缩小终端字体（Ctrl＋滚轮向下）">A↓</button>
+              <button id="term-font-up" type="button" aria-label="放大终端字体" title="放大终端字体（Ctrl＋滚轮向上）">A↑</button>
               <button id="term-newtab" title="新终端">＋</button>
               <button id="term-max" title="终端铺满"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 3 21 3 21 9"/><polyline points="9 21 3 21 3 15"/><line x1="21" y1="3" x2="14" y2="10"/><line x1="3" y1="21" x2="10" y2="14"/></svg></button>
               <button id="term-dock" title="切换 上下 / 左右 布局">⇆</button>

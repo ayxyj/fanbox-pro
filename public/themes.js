@@ -66,7 +66,7 @@
   }
   function terminalOptions() {
     const p = variant?.terminal || {};
-    return { fontFamily:p.fontFamily || getComputedStyle(root).getPropertyValue('--font-mono').trim() || 'monospace', fontSize:p.fontSize || 13, fontWeight:p.fontWeight || 'normal' };
+    return { fontFamily:p.fontFamily || getComputedStyle(root).getPropertyValue('--font-mono').trim() || 'monospace', fontSize:Math.max(8, Math.min(32, Number(localStorage.getItem('fb_terminal_font_size')) || p.fontSize || 13)), fontWeight:p.fontWeight || 'normal' };
   }
   function refresh() { window.fanboxApplyTheme?.(localStorage.getItem('fb_theme') || 'terminal'); }
   function setMode(value) {

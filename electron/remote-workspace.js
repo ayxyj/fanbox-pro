@@ -97,11 +97,11 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   const local = new Map();
   const target = id => {
     if (ssh.sessions.has(id)) {
-      const s = ssh.get(id); return { detectEnvironment: signal => ssh.detectEnvironment(id,signal), pendingInput: s.zmodem?.job ? '文件传输中' : s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id), identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => ssh.input(id, text), output: () => s.output };
+      const s = ssh.get(id); return { detectEnvironment: signal => ssh.detectEnvironment(id,signal), pendingInput: s.zmodem?.job ? '文件传输中' : s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => ssh.input(id, text), output: () => s.output };
     }
     const p = terminals.get(id), s = local.get(id);
     if (!p || !s) throw Error('终端已关闭，请重新选择');
-    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id), identity: p, size: () => ({cols:p.cols,rows:p.rows}), environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
+    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: p, size: () => ({cols:p.cols,rows:p.rows}), environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
   };
   const sendFile = async (id, file, options = {}) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
@@ -194,10 +194,10 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     const t = target(id);
     if (policy) {
       if (!['read', 'confirm', 'auto'].includes(policy.mode)) throw Error('无效权限');
-      policies.set(id, { mode: policy.mode, interactive: !!policy.interactive });
+      policies.set(id, { mode: policy.mode, interactive: !!policy.interactive, upload: !!policy.upload });
     }
     const current = { ...ai.policy(t), ...policies.get(id) };
-    return { mode: current.mode, interactive: current.interactive };
+    return { mode: current.mode, interactive: current.interactive, upload: !!current.upload };
   });
   handle('ai-clear', ({ id }) => ai.clear(id));
   handle('pick-key', async () => { const result = await dialog.showOpenDialog(getWindow(), { title: '选择 SSH 私钥', properties: ['openFile'] }); return result.filePaths[0] || ''; });
@@ -219,6 +219,24 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     if (record.targetKey !== key || [...history.bindings].some(([session, conversation]) => conversation === id && session !== sessionId)) throw Error('该历史不属于当前会话');
     return record;
   };
+  handle('history-all', async () => ({ records: (await history.list()).map(record => {
+    const boundSessionId = [...history.bindings].find(([, id]) => id === record.id)?.[0];
+    const sessionId = boundSessionId || [...terminals.keys()].find(id => { try { return historyTarget(id).key === record.targetKey; } catch { return false; } });
+    return { ...record, sessionId: sessionId || '' };
+  }), warnings: [...history.errors.values()] }));
+  handle('history-preview', ({ id }) => history.get(id));
+  handle('history-remove', async ({ id, targetKey, targetLabel }) => {
+    if ([id, targetKey, targetLabel].filter(Boolean).length !== 1) throw Error('请选择历史或主机分组');
+    const records = id ? [await history.get(id)] : targetLabel ? (await history.list()).filter(r => r.targetLabel === targetLabel) : (await history.list(targetKey));
+    const ids = new Set(records.map(r => r.id));
+    const owners = [...history.bindings].filter(([, recordId]) => ids.has(recordId));
+    if (records.some(r => r.running) || owners.some(([sessionId]) => historySessions.has(sessionId) || [...ai.runs.values()].some(run => run.sessionId === sessionId))) throw Error('该历史中仍有运行任务，请先停止再删除');
+    for (const record of records) await history.remove(record.id);
+    for (const [sessionId] of owners) { ai.clear(sessionId); activeHistories.delete(sessionId); }
+    emit('remote:history-changed', {});
+    return { ids: [...ids] };
+  });
+
   handle('history-list', async ({ sessionId }) => ({ records: (await history.list(historyTarget(sessionId).key)).map(record => ({ ...record, boundSessionId: [...history.bindings].find(([, id]) => id === record.id)?.[0] || '' })).filter(record => !record.boundSessionId || record.boundSessionId === sessionId), warnings: [...history.errors.values()] }));
   handle('history-read', ({ id, sessionId }) => checkHistory(sessionId, id));
   handle('history-open', async ({ sessionId, id, fresh }) => {
@@ -243,13 +261,13 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
       const t = target(sessionId);
       if (activeHistories.get(sessionId) !== record.id || ai.history.get(sessionId)?.identity !== t.identity) ai.history.set(sessionId, { identity: t.identity, messages: history.context(record) });
       activeHistories.set(sessionId, record.id);
-      await history.begin(record.id, String(args.prompt)); historyRuns.set(id, record.id);
+      await history.begin(record.id, String(args.prompt)); emit('remote:history-changed', {}); historyRuns.set(id, record.id);
       if (options.onEvent) { runEvents.set(id, options.onEvent); policies.set(sessionId, { mode: options.permission, interactive: true }); emit('remote:im-task', { id, sessionId, conversationId: record.id, prompt: args.prompt }); }
       let result;
       try { result = await ai.run({ ...args, id, confirmAction: options.confirm, authorized: options.authorized, sendFile: options.authorized ? (file, authorized) => sendFile(sessionId, file, { authorized, turn: id }) : undefined }); }
       catch (error) { await history.finish(record.id, error.message); throw error; }
       await history.finish(record.id, null, result); return { ...result, conversationId: record.id };
-    } finally { if (options.onEvent) emit('remote:im-task-done', { id, sessionId }); runEvents.delete(id); historyRuns.delete(id); historySessions.delete(sessionId); }
+    } finally { if (options.onEvent) emit('remote:im-task-done', { id, sessionId }); runEvents.delete(id); historyRuns.delete(id); historySessions.delete(sessionId); emit('remote:history-changed', {}); }
   }
   handle('ai-run', args => runAI(args)); handle('ai-stop', ({ id }) => ai.stop(id));
   handle('ai-takeover', ({ id }) => ai.takeover(id)); handle('ai-resume', ({ id }) => ai.resume(id));

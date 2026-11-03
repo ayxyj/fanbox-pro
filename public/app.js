@@ -2098,6 +2098,8 @@ function bindEvents() {
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
   $('#term-newtab').onclick = () => term.newTab();
+  $('#term-font-up').onclick = () => term.zoomFont(1);
+  $('#term-font-down').onclick = () => term.zoomFont(-1);
   for (const [id, direction] of [['term-tabs-left',-1],['term-tabs-right',1]]) $('#'+id).onclick=()=>$('#term-tabs').scrollBy({left:direction*Math.max(100,$('#term-tabs').clientWidth*.75),behavior:'smooth'});
   $('#term-tabs-all').onclick=(event)=>{
     event.stopPropagation();
@@ -2291,6 +2293,14 @@ function applyTheme(skin, rerender = true) {
 // 不命中只是退化成「任务完成」标题，不会漏响）
 const TERM_ASK_RE = /(Do you want to (proceed|continue|make this edit|allow|use this)|Would you like to proceed|Ready to code\?|created or one you trust\?|tell (Claude|Codex) what to do differently|Yes, and don't ask again|Allow Codex to (run|apply|create)|Codex wants to|[❯›][ \t]*1\.[ \t]*Yes)/;
 const term = {
+  zoomFont(delta) {
+    const active = this.sessions.find(s => s.id === this.active);
+    const current = active?.xterm.options.fontSize || window.fbThemes.terminalOptions().fontSize;
+    const size = Math.max(8, Math.min(32, current + delta));
+    localStorage.setItem('fb_terminal_font_size', String(size));
+    this.sessions.forEach(s => { s.xterm.options.fontSize = size; });
+    this.fitActive();
+  },
   sessions: [], seq: 0, active: null, maximized: false,
   dock: localStorage.getItem('fb_term_dock') || 'bottom',
   available() { return !!(window.fanboxPty && window.Terminal && !window.__noXterm); },
@@ -2590,6 +2600,12 @@ const term = {
     xterm.open(host);
     window.fbTerminalClipboard.attach(xterm,host);
     attachTerminalScrolling(xterm, host);
+    host.addEventListener('wheel', event => {
+      if (!event.ctrlKey || !event.deltaY) return;
+      event.preventDefault();
+      event.stopImmediatePropagation();
+      this.zoomFont(event.deltaY < 0 ? 1 : -1);
+    }, { capture: true, passive: false });
     // WebGL 渲染加速（大输出/TUI 不掉帧），失败或上下文丢失回退 DOM
     if (!window.__noWebgl && window.WebglAddon) {
       try {

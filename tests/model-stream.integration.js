@@ -26,6 +26,14 @@ const server = http.createServer(async (req,res) => {
  {choices:[{delta:{tool_calls:[{index:0,id:'call-1',type:'function',function:{name:'execute_command',arguments:'{"command":"'}}]}}]},
  {choices:[{delta:{tool_calls:[{index:0,function:{arguments:'pwd"}'}}]},finish_reason:'tool_calls'}]},'[DONE]'
  ];
+ if(body.model==='budget') frames=req.url.endsWith('/messages') ? [
+ {type:'message_start',message:{usage:{input_tokens:100}}},
+ {type:'content_block_start',index:0,content_block:{type:'tool_use',id:'cut',name:'execute_command',input:{}}},
+ {type:'content_block_delta',index:0,delta:{type:'input_json_delta',partial_json:'{"command":"'}},
+ {type:'content_block_stop',index:0},
+ {type:'message_delta',delta:{stop_reason:'max_tokens'},usage:{output_tokens:8192}},
+ {type:'message_stop'}
+ ] : [{choices:[{delta:{},finish_reason:'length'}],usage:{prompt_tokens:100,completion_tokens:8192,completion_tokens_details:{reasoning_tokens:8192}}},'[DONE]'];
  if(body.model==='truncated')frames=frames.slice(0,-1);
  const data=Buffer.from(frames.map(frame=>'data: '+(typeof frame==='string'?frame:JSON.stringify(frame))+'\r\n\r\n').join(''));
  for(let i=0;i<data.length;i+=7){res.write(data.subarray(i,i+7));await new Promise(r=>setTimeout(r,1));}res.end();
@@ -37,6 +45,10 @@ const server = http.createServer(async (req,res) => {
   const message=await requestModel({protocol,baseUrl,model:'fixture'},messages,[],signal,(type,text)=>deltas.push({type,text}));
   assert.equal(message.content,'正在检查。');assert.equal(message.reasoning,'核对目标。');assert.equal(message.tool_calls[0].function.arguments,'{"command":"pwd"}');assert(deltas.some(d=>d.type==='reasoning'));assert(requests.at(-1).stream);
   if(protocol==='anthropic'){assert.equal(message.anthropicContent[0].signature,'fixture-signature');messages.push(message,{role:'tool',tool_call_id:'call-1',content:'{"output":"/"}'});await requestModel({protocol,baseUrl,model:'fixture'},messages,[],signal,()=>{});assert.equal(requests.at(-1).messages[1].content[0].signature,'fixture-signature');}
+  const budget=await requestModel({protocol,baseUrl,model:'budget'},messages,[],signal,()=>{});
+  assert.equal(budget.finishReason,protocol==='anthropic'?'max_tokens':'length');
+  assert.equal(budget.usage[protocol==='anthropic'?'output_tokens':'completion_tokens'],8192);
+  if(protocol==='anthropic') assert.equal(budget.usage.input_tokens,100);
   await assert.rejects(requestModel({protocol,baseUrl,model:'truncated'},messages,[],signal,()=>{}),/中途断开/);
  }
  console.log('PASS: OpenAI/Claude SSE, UTF-8 and frame splitting, analysis/text deltas, tool JSON assembly, signed analysis preservation, incomplete stream rejection.');

@@ -14,12 +14,13 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  const ready=await evaluate(String.raw`(async()=>{
  document.getElementById('guide-ok')?.click();await navigate(${JSON.stringify(fixtures)});
  document.getElementById('terminal-panel').classList.remove('hidden');document.getElementById('terminal-resizer').classList.remove('hidden');term.applyDock();
- const command="Write-Output ('ENV-COLOR:'+$(if($env:NO_COLOR){$env:NO_COLOR}else{'none'})+'|'+$env:TERM+'|'+$env:COLORTERM);Write-Output ([char]27+'[31mCOLOR-RED'+[char]27+'[0m '+[char]27+'[38;5;42mCOLOR-256'+[char]27+'[0m '+[char]27+'[38;2;12;180;90mCOLOR-RGB'+[char]27+'[0m');Write-Output 'COLOR-READY'";
+ const command="Write-Output ('ENV-COLOR:'+$(if($env:NO_COLOR){$env:NO_COLOR}else{'none'})+'|'+$env:TERM+'|'+$env:COLORTERM);Write-Output ('CLAUDE-SCROLLBACK:'+$env:CLAUDE_CODE_DISABLE_ALTERNATE_SCREEN+'|'+$env:CLAUDE_CODE_NO_FLICKER);Write-Output ([char]27+'[31mCOLOR-RED'+[char]27+'[0m '+[char]27+'[38;5;42mCOLOR-256'+[char]27+'[0m '+[char]27+'[38;2;12;180;90mCOLOR-RGB'+[char]27+'[0m');Write-Output 'COLOR-READY'";
  const s=await term.newTab(state.cwd,command,{shell:'powershell'});window.scrollTestSession=s;
  const pause=ms=>new Promise(r=>setTimeout(r,ms));
  const text=()=>{let out='';const b=s.xterm.buffer.active;for(let i=0;i<b.length;i++)out+=b.getLine(i).translateToString(true)+'\n';return out;};
  for(let i=0;i<150&&!text().includes('COLOR-READY');i++)await pause(100);
  const output=text();if(!output.includes('ENV-COLOR:none|xterm-256color|truecolor'))throw Error('Colour environment wrong: '+output);
+ if(!output.includes('CLAUDE-SCROLLBACK:1|0'))throw Error('Claude native scrollback environment missing: '+output);
  let colours=[];const b=s.xterm.buffer.active;for(let i=0;i<b.length;i++){const line=b.getLine(i),row=line.translateToString(true);if(row.startsWith('COLOR-RED'))for(const word of ['COLOR-RED','COLOR-256','COLOR-RGB']){const cell=line.getCell(row.indexOf(word));colours.push({word,palette:cell.isFgPalette(),rgb:cell.isFgRGB(),colour:cell.getFgColor()});}}
  if(colours.length!==3 || colours[0].colour!==1 || colours[1].colour!==42 || colours[2].colour!==0x0cb45a)throw Error('ANSI colours lost: '+JSON.stringify(colours));
  await pause(500);s.xterm.reset();
