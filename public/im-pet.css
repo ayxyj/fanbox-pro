@@ -42,3 +42,26 @@
 @keyframes pet-shadow{0%,100%{transform:scaleX(1);opacity:.8}50%{transform:scaleX(.92);opacity:.6}}
 @keyframes pet-hover-tilt{to{transform:rotate(-9deg) translateY(-2px)}}
 @keyframes pet-dream{0%,100%{opacity:.3;transform:translateY(2px)}50%{opacity:.9;transform:translateY(-3px)}}
+
+.pet-usage-summary{display:block;width:160px;position:relative;left:50%;transform:translateX(-50%);white-space:pre-line;font:11px/17px "Segoe UI",sans-serif;text-align:center;background:rgba(28,30,40,.9);color:#eee;border:1px solid #ffffff30;border-radius:7px;padding:3px 5px;cursor:pointer;box-sizing:border-box}
+
+.pet-usage-summary{width:max-content;max-width:none;white-space:nowrap;background:transparent;border:0;border-radius:0;padding:0;color:inherit;font-size:11px;line-height:18px}
+.pet-usage-summary[hidden]{display:none}
+
+.im-pet-panel header{cursor:grab;touch-action:none;user-select:none;position:sticky;top:0;background:var(--bg);z-index:1;padding-bottom:8px}.im-pet-panel header:active{cursor:grabbing}
+
+.im-pet.pet-hide-usage .pet-usage-summary{display:none}
+
+.pet-wake-settings{margin-top:16px;border:1px solid var(--border);border-radius:10px;overflow:hidden}
+.pet-wake-settings>summary{padding:12px;font-weight:600;background:var(--bg-2)}
+.pet-wake-body{padding:12px;display:flex;flex-direction:column;gap:12px}
+.pet-wake-switch{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.pet-wake-switch span{font-weight:500}.pet-wake-switch small{display:block;font-weight:400;margin-top:3px;font-size:11px}
+.pet-wake-switch input{width:16px;height:16px;accent-color:var(--accent,#a78bfa);flex-shrink:0}
+.pet-wake-cron{display:flex;flex-direction:column;gap:7px}.pet-wake-cron>span{display:flex;justify-content:space-between;gap:6px}.pet-wake-cron small{font-size:10px}
+.im-pet-panel .pet-wake-cron input{box-sizing:border-box;width:100%;min-width:0;background:var(--bg-2);color:var(--text);border:1px solid var(--border);border-radius:7px;padding:9px 10px;font:12px/1.5 Consolas,monospace}
+.pet-wake-cron input:focus{outline:2px solid var(--accent,#a78bfa);outline-offset:1px}
+.pet-wake-presets{display:flex;gap:5px;flex-wrap:wrap}.im-pet-panel .pet-wake-presets button{font-size:10px;padding:4px 6px}
+.pet-wake-body .im-pet-actions{margin:0;display:grid;grid-template-columns:1fr 1fr}.im-pet-panel [data-wake-save]{background:var(--accent,#8b5cf6);color:#fff;border-color:transparent}
+.pet-wake-body [data-wake-note]{margin:0;line-height:1.6;overflow-wrap:anywhere}.pet-wake-body [data-wake-note]:empty{display:none}
+.pet-wake-help{display:block;font-size:11px;line-height:1.7}

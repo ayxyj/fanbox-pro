@@ -37,9 +37,9 @@ const IGNORE_DIRS = new Set([
 const TEXT_EXT = new Set([
   'txt', 'md', 'markdown', 'js', 'jsx', 'ts', 'tsx', 'mjs', 'cjs', 'json', 'json5',
   'html', 'htm', 'css', 'scss', 'less', 'py', 'rb', 'go', 'rs', 'java', 'kt', 'swift',
-  'c', 'h', 'cpp', 'hpp', 'cc', 'm', 'mm', 'sh', 'bash', 'zsh', 'fish', 'sql', 'yml',
+  'c', 'h', 'cpp', 'hpp', 'cc', 'm', 'mm', 'sh', 'bash', 'zsh', 'fish', 'bat', 'cmd', 'ps1', 'psm1', 'psd1', 'sql', 'hql', 'yml',
   'yaml', 'toml', 'ini', 'env', 'conf', 'xml', 'svg', 'vue', 'astro', 'php', 'lua',
-  'r', 'dart', 'gradle', 'properties', 'gitignore', 'dockerfile', 'makefile', 'log',
+  'r', 'dart', 'gradle', 'properties', 'gitignore', 'gitattributes', 'gitattri', 'dockerfile', 'makefile', 'log',
   'csv', 'tsv', 'gql', 'graphql', 'prisma', 'plist', 'tex', 'rtf', 'srt', 'vtt', 'ass',
 ]);
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif', 'heic', 'heif', 'tiff', 'tif']);
@@ -64,6 +64,8 @@ const MIME = {
 // ---------- 工具函数 ----------
 
 function ext(name) {
+  name = path.basename(name);
+  if (/^\.(gitignore|gitattributes|gitattri)$/i.test(name)) return name.slice(1).toLowerCase();
   const i = name.lastIndexOf('.');
   if (i <= 0) return '';
   return name.slice(i + 1).toLowerCase();
@@ -72,8 +74,9 @@ function ext(name) {
 // 从一组文件/目录名推断项目类型（签名文件），供当前目录徽章 + 子目录浅探共用
 function projectOf(names) {
   if (names.has('package.json')) return 'node';
+  if (['pom.xml', 'build.gradle', 'build.gradle.kts', 'settings.gradle', 'settings.gradle.kts', '.classpath'].some(name => names.has(name))) return 'java';
+  if (['requirements.txt', 'pyproject.toml', 'setup.py', 'setup.cfg', 'Pipfile', 'poetry.lock', 'uv.lock', 'environment.yml'].some(name => names.has(name))) return 'python';
   if (names.has('index.html')) return 'web';
-  if (names.has('requirements.txt') || names.has('pyproject.toml')) return 'python';
   if (names.has('Cargo.toml')) return 'rust';
   if (names.has('go.mod')) return 'go';
   if (names.has('.git')) return 'git';
@@ -490,6 +493,16 @@ function trashPath(p) {
     try { target = resolvePath(p); } catch { return resolve({ ok: false, error: '非法路径' }); }
     let isDir = false;
     try { isDir = fs.lstatSync(target).isDirectory(); } catch { return resolve({ ok: false, error: '文件不存在' }); }
+    if (PLATFORM === 'win32') {
+      if (process.versions.electron) {
+        require('electron').shell.trashItem(target).then(() => resolve({ok:true}), error => resolve({ok:false,error:error.message}));
+      } else {
+        const method = isDir ? 'DeleteDirectory' : 'DeleteFile';
+        const script = `$ErrorActionPreference='Stop'; Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::${method}('${target.replace(/'/g, "''")}','OnlyErrorDialogs','SendToRecycleBin')`;
+        execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], {windowsHide:true}, error => resolve(error ? {ok:false,error:error.message} : {ok:true}));
+      }
+      return;
+    }
     let cmd;
     if (PLATFORM === 'darwin') {
       // 路径走 argv，不拼进单引号 AppleScript 字面量——避免含 ' 的文件名删除失败/注入

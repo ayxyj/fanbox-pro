@@ -1,3 +1,7 @@
 html,body{margin:0;width:100%;height:100%;overflow:hidden;background:transparent!important}
-.im-pet{left:16px!important;top:16px!important}
 .im-pet-panel{display:none!important}
+/* The group stays at the right edge; the pet is centered over its caption. */
+.im-pet{left:auto!important;right:8px!important;top:24px!important;transform:none;width:max-content;max-width:288px;display:flex;flex-direction:column;align-items:center;pointer-events:none}
+.im-pet[hidden]{display:none}
+.im-pet-character{width:var(--pet-size,88px);flex:none;pointer-events:auto}
+.pet-usage-summary{position:static;left:auto;right:auto;top:auto;transform:none;width:max-content;max-width:288px;white-space:normal;overflow-wrap:anywhere;padding:2px 6px;line-height:18px;text-align:center;color:#eee;text-shadow:0 1px 3px #000;pointer-events:auto}

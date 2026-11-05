@@ -6,8 +6,8 @@ const { redact } = require('./im-redact');
 const os = require('os'), fs = require('fs');
 const clean = text => String(text || '').replace(/\x1b\][^\x07]*(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(0,64000);
 class WecomService {
-  constructor({ store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, retryCLIInteraction, stopCLI = () => {}, leaveCLI = () => {}, closeCLI = () => {}, activeCLI, cliStatus = () => null, releaseSession = () => {}, Client = WSClient }) {
-    Object.assign(this, { store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, retryCLIInteraction, stopCLI, leaveCLI, closeCLI, activeCLI, cliStatus, releaseSession, Client });
+  constructor({ wake, store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, retryCLIInteraction, stopCLI = () => {}, leaveCLI = () => {}, closeCLI = () => {}, activeCLI, cliStatus = () => null, releaseSession = () => {}, Client = WSClient }) {
+    Object.assign(this, { wake, store, emit, createTerminal, runAI, stopAI, target, isClaude, startCLI, cycleCLIPermission, runCLI, retryCLIInteraction, stopCLI, leaveCLI, closeCLI, activeCLI, cliStatus, releaseSession, Client });
     this.focus = new Map(); this.numbers = new Map(); this.completedApprovals = new Map();
     this.healthEvents = []; this.lastReceivedAt = 0; this.lastSentAt = 0;
     this.routes = new Map(); this.pendingUsers = new Map(); this.approvals = new Map(); this.seen = new Set(this.config().recent || []); this.generation = 0; this.status = 'disabled';
@@ -16,7 +16,7 @@ class WecomService {
   config() { return { botId: '', enabled: false, allowExecution: false, mode: 'ai', shell: 'cmd', cwd: os.homedir(), permission: 'confirm', notifications: { success: true, failure: true, progress: true }, users: [], ...this.store.data.im }; }
   state() {
     const { secret, recent, conversations, ...config } = this.config();
-    return { ...config, hasSecret: !!secret, lastReceivedAt: this.lastReceivedAt, lastSentAt: this.lastSentAt, pendingApprovals: this.approvals.size, healthEvents: this.healthEvents.slice(-20), status: this.status, error: this.lastError || '', pendingUsers: [...this.pendingUsers.values()], routes: [...this.routes.values()].map(r => ({ id: r.id, number: r.number, project: r.project, focused: this.focus.get(r.userid) === r.key, userid: r.userid, sessionId: r.sessionId, running: r.busy, mode: r.mode })) };
+    return { ...config, wakeVisible: this.wake?.config().visible === true, hasSecret: !!secret, lastReceivedAt: this.lastReceivedAt, lastSentAt: this.lastSentAt, pendingApprovals: this.approvals.size, healthEvents: this.healthEvents.slice(-20), status: this.status, error: this.lastError || '', pendingUsers: [...this.pendingUsers.values()], routes: [...this.routes.values()].map(r => ({ id: r.id, number: r.number, project: r.project, focused: this.focus.get(r.userid) === r.key, userid: r.userid, sessionId: r.sessionId, running: r.busy, mode: r.mode })) };
   }
   health(message) { this.healthEvents.push({at:Date.now(),message}); if(this.healthEvents.length>20)this.healthEvents.shift(); }
   reconnect() {
@@ -121,6 +121,20 @@ class WecomService {
     this.seen.add(dedupe); while (this.seen.size > 1000) this.seen.delete(this.seen.values().next().value);
     this.store.data.im.recent = [...this.seen]; this.store.persist();
     
+    if (text === '/halo on' || text === '/halo off') {
+      if (body.chattype !== 'single') return;
+      try {
+        this.wake.setVisible(text === '/halo on');
+        this.changed();
+        await this.send(userid, text === '/halo on' ? '已展示企微唤醒设置' : '已隐藏企微唤醒设置（定时任务设置保持不变）');
+      } catch(e) { await this.send(userid, e.message); }
+      return;
+    }
+    if (text === '/halo') {
+      if (body.chattype !== 'single') return;
+      try { await this.send(userid, await this.wake.run()); } catch(e) { await this.send(userid, e.message); }
+      return;
+    }
     const decision = /^\/(批准|拒绝) ([a-f0-9]{12})$/.exec(text);
     if (decision) {
       const pending = this.approvals.get(decision[2]);

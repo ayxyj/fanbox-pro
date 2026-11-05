@@ -312,7 +312,7 @@ function renderBreadcrumb() {
     if (i === 0 && /^[a-z]:/i.test(c.path)) {
       const select = document.createElement('select'); select.className = 'drive-select'; select.title = '切换盘符';
       select.add(new Option(c.name + ' ▾', c.path));
-      const load = async () => { try { const data = await api('/api/drives'); if (!select.isConnected) return; select.replaceChildren(); for (const drive of data.drives || []) select.add(new Option(drive.name, drive.path)); select.value = c.path; } catch { toast('无法读取盘符', true); } };
+      const load = async () => { try { const data = await api('/api/drives'); if (!select.isConnected) return; select.replaceChildren(); for (const drive of data.drives || []) select.add(new Option(drive.name, drive.path)); const current = [...select.options].find(option => option.value.slice(0, 2).toLowerCase() === c.path.slice(0, 2).toLowerCase()); if (current) select.value = current.value; else { const root = c.path.slice(0, 2).toUpperCase() + String.fromCharCode(92); select.add(new Option(root.slice(0, 2), root)); select.value = root; } } catch { toast('无法读取盘符', true); } };
       load(); select.onchange = () => navigate(select.value); bc.appendChild(select); return;
     }
     el.onclick = () => navigate(c.path);
@@ -359,10 +359,7 @@ function renderStatusbar() {
   const files = list.length - dirs;
   const bytes = list.reduce((a, e) => a + (e.isDir ? 0 : e.size || 0), 0);
   sb.classList.remove('hidden');
-  sb.innerHTML = `<span>${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}</span><span class="sb-links">${state.project ? '<a id="sb-rel" title="版本号→CHANGELOG→打包→push→Release 一条龙，在终端跑">发版</a>' : ''}<a id="sb-mem" title="这个文件夹里 AI 干过什么：历史会话、改过的文件、一键续上">项目记忆</a><a id="sb-du" title="算上子目录的真实磁盘占用">占用透视</a></span>`;
-  $('#sb-du').onclick = () => diskPanel(state.cwd);
-  $('#sb-mem').onclick = () => memoryPanel(state.cwd);
-  const rel = $('#sb-rel'); if (rel) rel.onclick = () => releasePanel();
+  sb.innerHTML = `<span>${list.length} 项${dirs ? ` · ${dirs} 文件夹` : ''}${files ? ` · ${files} 文件 ${fmtSize(bytes)}` : ''}</span>`;
 }
 function renderFiles() {
   fileTree.updateControls();
@@ -458,7 +455,7 @@ function thumbHtml(e) {
   return `<span class="svg-icon">${iconSvg(e, sz)}</span>`;
 }
 // 项目类型徽章：文件夹卡片上标 node/web/py… 一眼认出 AI 起的项目
-const PROJ_LABEL = { node: 'node', web: 'web', python: 'py', rust: 'rs', go: 'go', git: 'git' };
+const PROJ_LABEL = { node: 'node', web: 'web', java: 'java', python: 'py', rust: 'rs', go: 'go', git: 'git' };
 function projBadge(e) {
   if (!e.isDir || !e.project || !PROJ_LABEL[e.project]) return '';
   return `<span class="proj-tag proj-${e.project}">${PROJ_LABEL[e.project]}</span>`;
@@ -582,11 +579,11 @@ async function openPreview(e, background = false) {
   renderPreviewFoot(e);
   const k = e.kind;
   if (k === 'image') {
-    // 预览用中等缩略图（秒开）。heic/heif/tiff 浏览器无法直接渲染原图，统一走 sips 缩略图端点
+    // Browser-supported formats load directly; do not wait for external thumbnail tools.
     const exi = (e.name.split('.').pop() || '').toLowerCase();
     const nativeImg = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'bmp', 'ico', 'avif'].includes(exi);
     const fallback = nativeImg ? `/api/raw?path=${encodeURIComponent(e.path)}&v=${e.mtime || 0}` : `/api/thumb?path=${encodeURIComponent(e.path)}&w=1600&v=${e.mtime || 0}`;
-    body.innerHTML = `<img class="pv-img" src="/api/thumb?path=${encodeURIComponent(e.path)}&w=1000&v=${e.mtime || 0}" title="点击放大" onerror="this.onerror=null;this.src='${fallback}'">`;
+    body.innerHTML = `<img class="pv-img" decoding="async" src="${fallback}" title="点击放大">`;
     body.querySelector('.pv-img').onclick = () => lightbox(e.path, nativeImg, e.mtime);
   } else if (k === 'video') {
     body.innerHTML = `<video controls src="/api/raw?path=${encodeURIComponent(e.path)}"></video>`;
@@ -749,7 +746,6 @@ function renderPreviewActions(e) {
   const clip = window.fanboxClipboard;
   // 图标为主、文字精简：主操作「打开」留字，其余只留图标 + tooltip
   const acts = [
-    { icon: ic('link', 'currentColor', 14), label: '打开', title: '默认应用打开', cls: 'primary', fn: () => openWith(e.path, 'default') },
     ...(e.kind === 'text' && !isMdName(e.name) ? [{ icon: ic('edit3', 'currentColor', 15), title: '编辑文本', fn: () => enterEditMode(e) }] : []), // md 预览即编辑，无需入口
     ...(e.kind === 'text' ? [{ icon: ic('gitbranch', 'currentColor', 15), title: '查看改动（HEAD vs 当前）', fn: () => showDiff(e) }] : []),
     ...(e.kind === 'image' ? [{ icon: ic('edit3', 'currentColor', 15), title: '编辑图片', fn: () => enterImageEdit(e) }] : []),
@@ -763,7 +759,7 @@ function renderPreviewActions(e) {
     const b = document.createElement('button');
     b.className = (a.cls || '') + (a.label ? '' : ' icon-only');
     // 有可见文字的按钮不需气泡；纯图标按钮用 data-tip 即时气泡（不再用慢吞吞的原生 title）
-    if (!a.label && a.title) b.dataset.tip = a.title;
+    if (a.title) { b.title = a.title; b.setAttribute('aria-label', a.title); }
     b.innerHTML = a.label ? `${a.icon}<span>${a.label}</span>` : a.icon;
     b.onclick = a.fn;
     box.appendChild(b);
@@ -907,7 +903,11 @@ function applyPreviewSize() {
   if (!pv || pv.classList.contains('hidden')) return;
   $('#filemgmt').classList.toggle('preview-bottom', previewIsBottom());
   $('#filemgmt').classList.toggle('preview-right', !previewIsBottom());
-  pv.style.flexBasis = (previewIsBottom() ? (state.previewH || 340) : state.previewW) + 'px';
+  const fm = $('#filemgmt');
+  const size = previewIsBottom()
+    ? Math.min(state.previewH || 340, Math.max(180, fm.clientHeight - 186))
+    : Math.min(state.previewW, Math.max(220, fm.clientWidth - 286));
+  pv.style.flexBasis = size + 'px';
 }
 // 离散布局切换时短暂开启过渡（拖拽时不开，保证跟手）
 function animateLayout() {
@@ -972,6 +972,7 @@ function ensureFileAreaSize() {
   }
 }
 function showPreviewPanel() {
+  if (previewMaximized) togglePreviewMax(false);
   const wasHidden = $('#preview').classList.contains('hidden');
   $('#preview').classList.remove('hidden');
   $('#preview-resizer').classList.remove('hidden');
@@ -1446,12 +1447,12 @@ async function doRename(e) {
 async function doTrash(e) {
   // 文件秒删（花叔的选择），但删整个文件夹给一次轻确认——误删项目目录代价高
   if (e.isDir) {
-    const ok = await confirmDialog(`把文件夹「${e.name}」移到废纸篓？可从废纸篓恢复。`);
+    const ok = await confirmDialog(`删除文件夹「${e.name}」？删除后可从系统回收站恢复。`);
     if (!ok) return;
   }
   const r = await apiPost('/api/trash', { path: e.path });
-  if (r.error) { toast('删除失败：' + r.error + '（首次需在弹窗里允许控制 Finder）', true); return; }
-  toast('已移到废纸篓，可从废纸篓恢复');
+  if (r.error) { toast('删除失败：' + r.error, true); return; }
+  toast(window.fanboxEnv?.platform === 'win32' ? '已删除，可从回收站恢复' : '已移到废纸篓，可从废纸篓恢复');
   if (state.selected === e.path) closePreview();
   await refresh();
 }
@@ -1725,7 +1726,7 @@ function showContextMenu(ev, e) {
   items.push({ sep: true });
   items.push({ label: isFav(e.path) ? '取消收藏' : '收藏', fn: () => toggleFav(e) });
   items.push({ label: '重命名…', fn: () => doRename(e) });
-  items.push({ label: '移到废纸篓', danger: true, fn: () => doTrash(e) });
+  items.push({ label: window.fanboxEnv?.platform === 'win32' ? '删除' : '移到废纸篓', danger: true, fn: () => doTrash(e) });
   popupMenu(ev, items);
 }
 // 在鼠标位置弹一个菜单（右键菜单与空白处双击菜单共用）
@@ -2083,23 +2084,31 @@ function bindEvents() {
   $('#cmdk-trigger').onclick = () => cmdk.open();
   $('#btn-terminal').onclick = () => term.toggle();
   $('#term-claude').onclick = () => term.launchAgent('claude --permission-mode auto');
-  $('#term-permission').onclick = async () => {
-    const button = $('#term-permission'); button.disabled = true;
-    try {
-      if (!term.active) throw Error('请先选择 Claude 终端');
-      const r = await window.fanboxRemote.call('cli-permission', {sessionId:term.active});
-      if (!r.ok) throw Error(r.error);
-      toast(r.value);
-    } catch (e) { toast(e.message); } finally { button.disabled = false; }
-  };
   $('#term-codebuddy').onclick = () => term.launchAgent('codebuddy');
   $('#term-codex').onclick = () => term.launchAgent('codex');
   usagePanel.bind();
+  $('#skills-entry').hidden = true;
+  const usageSection = $('#usage-sec');
+  const statisticsDialog = document.createElement('dialog');
+  statisticsDialog.className = 'statistics-dialog';
+  statisticsDialog.setAttribute('aria-labelledby', 'usage-dialog-title');
+  statisticsDialog.innerHTML = '<header><div><h2 id="usage-dialog-title">Agent 用量</h2><p>查看配额使用情况与本机 Token 统计</p></div><button type="button" aria-label="关闭">✕</button></header>';
+  usageSection.querySelector('#usage-toggle').hidden = true;
+  statisticsDialog.addEventListener('close', () => { usagePanel.expanded = false; usagePanel.apply(); });
+  statisticsDialog.append(usageSection); document.body.append(statisticsDialog);
+  statisticsDialog.querySelector('button').onclick = event => { event.preventDefault(); event.stopPropagation(); statisticsDialog.close(); };
+  statisticsDialog.addEventListener('cancel', event => { event.preventDefault(); statisticsDialog.close(); });
+  statisticsDialog.addEventListener('keydown', event => { event.stopPropagation(); if (event.key === 'Escape') { event.preventDefault(); statisticsDialog.close(); } });
+  statisticsDialog.addEventListener('click', event => { if (event.target === statisticsDialog) { const rect = statisticsDialog.getBoundingClientRect(); if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) statisticsDialog.close(); } });
+  const openStatistics = view => {
+    if (view === 'skills') skillsView.show();
+    else if (view === 'usage') { usagePanel.expanded = true; usagePanel.apply(); if (!statisticsDialog.open) statisticsDialog.showModal(); }
+  };
+  window.fanboxStatisticsUI = { open: openStatistics };
+
   shotTray.init();
   $('#skills-entry').onclick = () => skillsView.show();
   $('#term-newtab').onclick = () => term.newTab();
-  $('#term-font-up').onclick = () => term.zoomFont(1);
-  $('#term-font-down').onclick = () => term.zoomFont(-1);
   for (const [id, direction] of [['term-tabs-left',-1],['term-tabs-right',1]]) $('#'+id).onclick=()=>$('#term-tabs').scrollBy({left:direction*Math.max(100,$('#term-tabs').clientWidth*.75),behavior:'smooth'});
   $('#term-tabs-all').onclick=(event)=>{
     event.stopPropagation();
@@ -2411,15 +2420,8 @@ const term = {
     const labels = {claude:'Claude',codebuddy:'CodeBuddy',codex:'Codex'};
     const windows = window.fanboxEnv?.platform === 'win32';
     const shell = windows ? (agent === 'codebuddy' ? 'cmd' : 'powershell') : undefined;
-    const sameDir = p => windows ? p?.replaceAll('\\','/').replace(/\/$/,'').toLowerCase() === dir.replaceAll('\\','/').replace(/\/$/,'').toLowerCase() : p === dir;
-    for (const s of this.sessions) {
-      if (s.dead || s.agent !== agent || !sameDir(s.repoDir || s.startDir)) continue;
-      if (s.agentStartingUntil > Date.now() || !await this.isPlainShell(s)) { this.open(); this.activate(s.id); return s; }
-      s.agent = null;
-    }
-    let sess = cur && sameDir(cur.cwd || cur.startDir) && (!shell || cur.shell === shell) && await this.isPlainShell(cur) ? cur : null;
-    if (sess && (sess.dead || sess.agentStartingUntil > Date.now())) sess = null;
-    if (!sess) sess = await this.openInDir(dir, {shell});
+    const reusable = cur && !cur.dead && await this.isPlainShell(cur);
+    const sess = reusable && !cur.dead ? cur : await this.openInDir(dir, {shell});
     if (!sess || sess.dead) { toast('终端启动失败', true); return; }
     let prepared = command;
     if (agent === 'claude' && window.fanboxRemote) {
@@ -2454,6 +2456,7 @@ const term = {
       const r = await window.fanboxPty.proc(s.id);
       if (!r || !r.ok || !r.proc) return false;
       if (r.busy === true || s.agentStartingUntil > Date.now()) return false;
+      if (r.busy === false) return true;
       const name = String(r.proc).replaceAll('\\','/').split('/').pop().replace(/^-/, '').toLowerCase();
       return ['zsh', 'bash', 'fish', 'sh', 'dash', 'tcsh', 'nu', 'pwsh', 'pwsh.exe', 'powershell', 'powershell.exe', 'cmd', 'cmd.exe'].includes(name);
     } catch { return false; }
@@ -2549,11 +2552,16 @@ const term = {
   },
   // 定位文件区到活动终端的真实目录
   async locateCwd() {
-    if (!this.active) return;
-    if (this.sessions.find(s => s.id === this.active)?.sshProfile) { window.remoteUI?.open('files'); return; }
-    const r = await window.fanboxPty.cwd(this.active);
-    if (r && r.ok && r.cwd) navigate(r.cwd);
-    else toast('取终端目录失败', true);
+    const id = this.active;
+    const session = this.sessions.find(s => s.id === id);
+    if (!session) return;
+    if (session.sshProfile) return;
+    let directory = session.cwd || session.repoDir || session.startDir;
+    try {
+      const result = await window.fanboxPty.cwd(id);
+      if (result?.ok && result.cwd) { directory = result.cwd; session.cwd = directory; }
+    } catch { /* Newly created or exited terminals retain their known directory. */ }
+    if (this.active === id && this.sessions.includes(session) && directory && directory !== state.cwd) navigate(directory);
   },
   // 项目身份色：路径稳定哈希到色相——同一项目的标签色点永远一个色，扫一眼即配对
   hueOf(p) { let h = 0; for (let i = 0; i < (p || '').length; i++) h = (h * 31 + p.charCodeAt(i)) >>> 0; return h % 360; },
@@ -2770,6 +2778,7 @@ const term = {
   },
   activate(id) {
     this.active = id;
+    this.locateCwd();
     window.dispatchEvent(new CustomEvent('terminal-active', { detail: id }));
     this.sessions.forEach((s) => s.host.classList.toggle('show', s.id === id));
     const cur = this.sessions.find((x) => x.id === id);
@@ -2785,6 +2794,11 @@ const term = {
       // 延迟刷新标题（避开双击窗口：双击的第二下若撞上 renderTabs 重建会丢 dblclick 事件）
       setTimeout(() => this.refreshCwd(s), 600);
     }
+  },
+  closeAll() {
+    this.active = null;
+    for (const session of [...this.sessions]) this.closeTab(session.id);
+    this.renderTabs();
   },
   closeTab(id) {
     const i = this.sessions.findIndex((x) => x.id === id);
@@ -2943,14 +2957,6 @@ const term = {
     $('#context-menu')?.classList.add('terminal-tab-menu');
   },
   renderTabs() {
-    const current = this.sessions.find(s=>s.id===this.active);
-    const target = $('#term-target');
-    if (target) {
-      const directory = current?.repoDir || current?.cwd || current?.startDir || state.cwd || '';
-      const label = baseOf(directory.replaceAll('\\','/'));
-      if (target.textContent !== label) target.textContent = label;
-      if (target.title !== directory) target.title = directory;
-    }
     const bar = $('#term-tabs');
     const signature = JSON.stringify([this.active, state.theme, this.sessions.map(s =>
       [s.id, s.dead, s.status, s.unread, s.cwd, s.startDir, s.repoDir, s.title, s.agent])]);
@@ -2971,7 +2977,7 @@ const term = {
       }
       const className = 'term-tab' + (s.id === this.active ? ' active' : '') + (s.unread ? ' unread' : '');
       if (tab.className !== className) tab.className = className;
-      const label = this.tabLabel(s), title = (s.title || label)+'\n'+(s.repoDir || s.cwd || s.startDir || '')+'\n双击：文件区跳到该目录';
+      const label = this.tabLabel(s), title = (s.title || label)+'\n'+(s.repoDir || s.cwd || s.startDir || '')+'\n点击：文件区跳到该目录';
       if (tab.title !== title) tab.title = title;
       const text = tab.querySelector('.tab-label');
       if (text.textContent !== label) text.textContent = label;
@@ -3037,29 +3043,30 @@ const usagePanel = {
     let h = '';
     if (d.codex) {
       const c = d.codex;
-      h += `<div class="usage-agent">Codex${c.planType ? ` <i class="usage-plan">${escapeHtml(c.planType)}</i>` : ''}</div>`;
-      if (c.primary) h += this.bar('5h 窗口', c.primary.usedPercent, c.primary.stale ? '窗口已重置，跑一次 Codex 才有新数' : '');
+      h += `<section class="usage-card"><div class="usage-agent">Codex${c.planType ? ` <i class="usage-plan">${escapeHtml(c.planType)}</i>` : ''}</div>`;
+      if (c.primary) h += this.bar('近 5 小时', c.primary.usedPercent, c.primary.stale ? '窗口已重置，跑一次 Codex 才有新数' : '');
       if (c.secondary) h += this.bar('周配额', c.secondary.usedPercent, c.secondary.stale ? '窗口已重置，跑一次 Codex 才有新数' : this.fmtReset(c.secondary.resetsAt));
-      h += `<div class="usage-sub">快照：${this.ago(c.capturedAt)}的 Codex 会话</div>`;
+      h += `<div class="usage-sub">快照：${this.ago(c.capturedAt)}的 Codex 会话</div></section>`;
     }
     if (d.claude) {
       const c = d.claude;
-      h += `<div class="usage-agent">Claude Code</div>`;
+      h += `<section class="usage-card"><div class="usage-agent">Claude Code</div>`;
       if (c.official) {
         // 官方限额窗口（和 Claude Code /usage 面板同源）：5h 滚动窗口 + 周配额，优先展示
-        if (c.official.fiveHour) h += this.bar('5h 窗口', c.official.fiveHour.usedPercent, this.fmtReset(c.official.fiveHour.resetsAt));
+        if (c.official.fiveHour) h += this.bar('近 5 小时', c.official.fiveHour.usedPercent, this.fmtReset(c.official.fiveHour.resetsAt));
         if (c.official.sevenDay) h += this.bar('周配额', c.official.sevenDay.usedPercent, this.fmtReset(c.official.sevenDay.resetsAt));
       }
       if (c.last5h) {
         // 本地 token 统计照常保留（拿不到官方数据时就只剩这块）
         h += `<div class="usage-trio">
-          <span><b>${this.fmtTok(c.last5h.total)}</b>近5h</span>
+          <span><b>${this.fmtTok(c.last5h.total)}</b>近 5 小时</span>
           <span><b>${this.fmtTok(c.today.total)}</b>今日</span>
           <span><b>${this.fmtTok(c.week.total)}</b>本周</span>
         </div>
         <div class="usage-sub">token 总量 · 本地会话日志统计</div>`;
       }
     }
+    if (d.claude) h += '</section>';
     if (!d.codex && !d.claude) h = '<div class="usage-sub">没找到 Claude Code / Codex 的本机会话记录</div>';
     box.innerHTML = h;
   },
@@ -3304,8 +3311,8 @@ const mona = {
       js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'javascript', ts: 'typescript', tsx: 'typescript',
       json: 'json', json5: 'json', jsonc: 'json', md: 'markdown', markdown: 'markdown', html: 'html', htm: 'html', vue: 'html',
       css: 'css', scss: 'scss', less: 'less', py: 'python', go: 'go', rs: 'rust', java: 'java', rb: 'ruby', php: 'php',
-      c: 'c', cpp: 'cpp', cc: 'cpp', h: 'cpp', hpp: 'cpp', cs: 'csharp', sh: 'shell', bash: 'shell', zsh: 'shell',
-      yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini', conf: 'ini', xml: 'xml', sql: 'sql', swift: 'swift', lua: 'lua', kt: 'kotlin', dart: 'dart', r: 'r',
+      c: 'c', cpp: 'cpp', cc: 'cpp', h: 'cpp', hpp: 'cpp', cs: 'csharp', bat: 'bat', cmd: 'bat', ps1: 'powershell', psm1: 'powershell', psd1: 'powershell', sh: 'shell', bash: 'shell', zsh: 'shell',
+      yml: 'yaml', yaml: 'yaml', toml: 'ini', ini: 'ini', conf: 'ini', xml: 'xml', sql: 'sql', hql: 'sql', swift: 'swift', lua: 'lua', kt: 'kotlin', dart: 'dart', r: 'r',
     };
     return m[ex] || 'plaintext';
   },

@@ -2,6 +2,7 @@
 const {contextBridge,ipcRenderer}=require('electron');
 contextBridge.exposeInMainWorld('fanboxDesktopPet',{
   isDesktop:true,
+  interactive:value=>ipcRenderer.send('pet:hit-test',value),
   restore:()=>ipcRenderer.invoke('pet:restore'),
   settings:()=>ipcRenderer.invoke('pet:settings'),
   sync:p=>ipcRenderer.invoke('pet:sync',p),

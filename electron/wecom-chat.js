@@ -15,7 +15,7 @@ const HELP = `📱 Code Chat 桥接命令
 • /help — 显示本帮助
 • /stop — 停止聚焦会话的任务
 直接发消息 = 续聊聚焦会话；引用桥接推送 = 切到那个会话续聊。
-权限请求直接点击卡片上的“批准 / 拒绝”。`;
+权限请求直接点击卡片上的“批准 / 拒绝”。`.split("\n").join("\n\n");
 module.exports = {
   ownRoutes(userid) { return [...this.routes.values()].filter(r => r.userid === userid); },
   focused(userid) { return this.routes.get(this.focus.get(userid)); },

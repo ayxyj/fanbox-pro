@@ -441,6 +441,11 @@ function gsPopup(x, y, items) {
     ? '<div class="ctx-sep"></div>'
     : `<div class="ctx-item${it.danger ? ' danger' : ''}" data-i="${i}">${escapeHtml(it.label)}</div>`).join('');
   document.body.appendChild(el);
+  el.style.maxHeight = Math.max(0, window.innerHeight - 48) + 'px';
+  el.style.overflowY = 'auto';
+  const bounds = el.getBoundingClientRect();
+  el.style.left = Math.max(8, Math.min(x, window.innerWidth - bounds.width - 8)) + 'px';
+  el.style.top = Math.max(40, Math.min(y, window.innerHeight - bounds.height - 8)) + 'px';
   el.querySelectorAll('.ctx-item').forEach((c) => {
     c.onclick = () => { el.remove(); items[+c.dataset.i].fn(); };
   });

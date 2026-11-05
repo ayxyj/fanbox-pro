@@ -1,0 +1,415 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>fanbox-pro · 项目汇报</title><style>
+:root {
+    --bg: #060a15;
+    --panel: rgba(19, 31, 56, 0.65);
+    --panel2: rgba(13, 22, 42, 0.7);
+    --line: rgba(86, 160, 255, 0.18);
+    --line2: rgba(86, 160, 255, 0.35);
+    --primary: #4cc3ff;
+    --accent: #37e0d0;
+    --violet: #8b8cf7;
+    --text: #eaf1ff;
+    --dim: #9db0d6;
+    --faint: #5e6f96;
+    --grad: linear-gradient(120deg, #4cc3ff, #8b8cf7);
+    --grad2: linear-gradient(120deg, #37e0d0, #4cc3ff);
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body { height: 100%; }
+body {
+    background: #02050c; color: var(--text);
+    font-family: 'PingFang SC', 'Microsoft YaHei', 'Segoe UI', sans-serif;
+    overflow: hidden; -webkit-font-smoothing: antialiased;
+}
+.slide-deck { position: absolute; inset: 0; width: 100vw; height: 100vh; overflow: hidden; background: var(--bg); }
+@media (min-width: 769px) {
+    .slide-deck { max-width: calc(100vh * 16 / 9); max-height: calc(100vw * 9 / 16); margin: auto; }
+}
+.slide-deck::before {
+    content: ''; position: absolute; inset: 0; z-index: 0;
+    background:
+        radial-gradient(ellipse 75% 55% at 85% -10%, rgba(76,195,255,0.16), transparent 62%),
+        radial-gradient(ellipse 55% 50% at 4% 110%, rgba(139,140,247,0.16), transparent 62%),
+        radial-gradient(ellipse 40% 30% at 50% 50%, rgba(55,224,208,0.04), transparent 70%),
+        linear-gradient(rgba(76,195,255,0.05) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(76,195,255,0.05) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+}
+.hud-frame { position: absolute; inset: 14px; z-index: 2; pointer-events: none; }
+.hud-frame i { position: absolute; width: 26px; height: 26px; border-color: rgba(76,195,255,.45); border-style: solid; border-width: 0; }
+.hud-frame i:nth-child(1) { top: 0; left: 0; border-top-width: 2px; border-left-width: 2px; }
+.hud-frame i:nth-child(2) { top: 0; right: 0; border-top-width: 2px; border-right-width: 2px; }
+.hud-frame i:nth-child(3) { bottom: 0; left: 0; border-bottom-width: 2px; border-left-width: 2px; }
+.hud-frame i:nth-child(4) { bottom: 0; right: 0; border-bottom-width: 2px; border-right-width: 2px; }
+
+.slide { position: absolute; z-index: 1; width: 100%; height: 100%; padding: 40px 56px 70px; display: flex; flex-direction: column; opacity: 0; visibility: hidden; transition: opacity .4s ease; overflow: hidden; }
+.slide.active { opacity: 1; visibility: visible; }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+@keyframes grow { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+.slide.active .st > * { opacity: 0; animation: fadeUp .5s ease-out forwards; }
+.slide.active .st > *:nth-child(1) { animation-delay: .04s; }
+.slide.active .st > *:nth-child(2) { animation-delay: .11s; }
+.slide.active .st > *:nth-child(3) { animation-delay: .18s; }
+.slide.active .st > *:nth-child(4) { animation-delay: .25s; }
+
+.head { flex-shrink: 0; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; padding-bottom: 12px; margin-bottom: 16px; border-bottom: 1px solid var(--line); position: relative; }
+.head::after { content: ''; position: absolute; left: 0; bottom: -1px; width: 120px; height: 2px; background: var(--grad); box-shadow: 0 0 10px rgba(76,195,255,.8); transform-origin: left; }
+.slide.active .head::after { animation: grow .6s .2s ease-out both; }
+.head-tag { display: inline-flex; align-items: center; gap: 10px; font-size: 11px; letter-spacing: 4px; color: var(--accent); font-weight: 700; margin-bottom: 8px; }
+.head-tag::before { content: ''; width: 24px; height: 2px; background: var(--grad2); }
+.head-title { font-size: clamp(22px, 2.7vw, 36px); font-weight: 800; line-height: 1.25; letter-spacing: .5px; }
+.hl { background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.head-sub { margin-top: 6px; color: var(--dim); font-size: clamp(12px, 1.05vw, 14.5px); line-height: 1.6; }
+.head-sec b { font-family: 'Consolas', monospace; font-size: clamp(26px, 2.8vw, 40px); font-weight: 800; color: transparent; -webkit-text-stroke: 1.2px rgba(76,195,255,.5); line-height: 1; display: block; }
+.head-sec small { font-size: 10px; color: var(--faint); letter-spacing: 3px; }
+.body { flex: 1; min-height: 0; display: flex; gap: 14px; }
+.col { display: flex; flex-direction: column; gap: 12px; min-width: 0; justify-content: center; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 14px 18px; position: relative; overflow: hidden; display: flex; flex-direction: column; justify-content: center; gap: 8px; backdrop-filter: blur(8px); transition: transform .25s ease, border-color .25s ease; }
+.card:hover { transform: translateY(-3px); border-color: rgba(76,195,255,.5); }
+.card::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--grad); opacity: .6; }
+.card h3 { font-size: clamp(14px, 1.3vw, 18px); font-weight: 700; display: flex; align-items: center; gap: 10px; }
+.card p { font-size: clamp(12.5px, 1.05vw, 14.5px); color: var(--dim); line-height: 1.7; }
+.card ul { list-style: none; }
+.card li { font-size: clamp(12.5px, 1.02vw, 14px); color: var(--dim); line-height: 1.68; padding-left: 15px; position: relative; margin-bottom: 4px; }
+.card li:last-child { margin-bottom: 0; }
+.card li::before { content: '▸'; position: absolute; left: 0; top: 0; color: var(--accent); font-size: 11px; }
+.card li b, .card p b { color: var(--text); font-weight: 600; }
+.ico { width: 36px; height: 36px; border-radius: 10px; flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center; font-size: 17px; background: linear-gradient(135deg, rgba(76,195,255,.2), rgba(139,140,247,.15)); border: 1px solid rgba(76,195,255,.35); }
+.badge { font-family: 'Consolas', monospace; font-size: 11px; font-weight: 700; color: var(--accent); border: 1px solid rgba(55,224,208,.4); border-radius: 6px; padding: 2px 9px; background: rgba(55,224,208,.08); flex-shrink: 0; }
+.vline { padding-top: 8px; border-top: 1px dashed rgba(76,195,255,.18); font-size: clamp(11px, .95vw, 13px); color: var(--accent); line-height: 1.55; }
+.vline::before { content: '✦ 价值 · '; font-weight: 700; opacity: .85; }
+
+.has-image .body { gap: 16px; }
+.has-image .cards { flex: 0 0 37%; display: flex; flex-direction: column; gap: 12px; justify-content: center; min-width: 0; }
+.visual { flex: 1; min-width: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; background: var(--panel2); border: 1px solid var(--line); border-radius: 12px; padding: 10px; }
+.visual img { width: 100%; flex: 1; min-height: 0; object-fit: contain; border-radius: 7px; cursor: zoom-in; }
+.visual small { flex-shrink: 0; color: var(--faint); font-size: 11px; text-align: center; }
+
+.grid2 { display: grid; grid-template-columns: 1fr 1fr; grid-auto-rows: 1fr; gap: 12px; flex: 1; min-height: 0; }
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); grid-auto-rows: 1fr; gap: 12px; flex: 1; min-height: 0; }
+
+.cover { align-items: center; justify-content: center; text-align: center; }
+.ring { position: relative; width: 96px; height: 96px; margin-bottom: 30px; }
+.ring::before, .ring::after { content: ''; position: absolute; inset: 0; border-radius: 28px; }
+.ring::before { border: 1px solid rgba(76,195,255,.4); transform: rotate(45deg); animation: spin 14s linear infinite; }
+.ring::after { border: 1px dashed rgba(139,140,247,.35); inset: -12px; border-radius: 34px; animation: spin 24s linear infinite reverse; }
+@keyframes spin { to { transform: rotate(405deg); } }
+.logo-core { position: absolute; inset: 9px; border-radius: 20px; background: var(--grad); display: flex; align-items: center; justify-content: center; font-family: 'Consolas', monospace; font-size: 31px; font-weight: 800; color: #06101f; box-shadow: 0 0 56px rgba(76,195,255,.55); }
+.cover h1 { font-size: clamp(52px, 8vw, 100px); font-weight: 800; letter-spacing: 3px; line-height: 1.05; background: linear-gradient(120deg, #f2f7ff 25%, #4cc3ff 60%, #8b8cf7 95%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+.cover .sub { margin-top: 16px; font-size: clamp(17px, 2vw, 26px); font-weight: 600; letter-spacing: 8px; }
+.cover .chips { margin-top: 26px; display: flex; gap: 10px; flex-wrap: wrap; justify-content: center; }
+.cover .chips span { font-size: clamp(10.5px, .95vw, 13px); color: var(--dim); border: 1px solid var(--line2); border-radius: 30px; padding: 5px 16px; background: rgba(19,31,56,.55); letter-spacing: 2px; }
+.cover .chips span::before { content: '◆ '; color: var(--accent); font-size: 8px; vertical-align: 2px; }
+.cover .meta { margin-top: 42px; display: flex; align-items: center; gap: 16px; color: var(--dim); font-size: clamp(11px, 1vw, 14px); letter-spacing: 3px; }
+.cover .meta i { width: 60px; height: 1px; display: inline-block; }
+.cover .meta i:first-child { background: linear-gradient(90deg, transparent, var(--primary)); }
+.cover .meta i:last-child { background: linear-gradient(90deg, var(--primary), transparent); }
+
+.toc { display: flex; gap: 28px; flex: 1; min-height: 0; align-items: stretch; }
+.toc-side { flex: 0 0 190px; display: flex; flex-direction: column; justify-content: center; padding-right: 26px; position: relative; }
+.toc-side::after { content: ''; position: absolute; right: 0; top: 20%; bottom: 20%; width: 1px; background: var(--grad); opacity: .6; }
+.toc-side b { font-size: clamp(28px, 2.8vw, 40px); font-weight: 800; display: block; }
+.toc-side small { color: var(--faint); letter-spacing: 7px; font-size: clamp(10px, .9vw, 12px); margin-top: 8px; display: block; }
+.toc-list { flex: 1; display: flex; flex-direction: column; gap: 11px; justify-content: center; }
+.toc-item { display: flex; align-items: center; gap: 20px; flex: 1; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 0 24px; transition: all .25s; cursor: pointer; position: relative; overflow: hidden; }
+.toc-item::before { content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 3px; background: var(--grad); opacity: 0; transition: opacity .25s; }
+.toc-item:hover { border-color: rgba(76,195,255,.55); transform: translateX(10px); background: rgba(76,195,255,.07); }
+.toc-item:hover::before { opacity: 1; }
+.toc-item .no { font-family: 'Consolas', monospace; font-size: clamp(24px, 2.4vw, 36px); font-weight: 800; background: var(--grad); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; width: 56px; flex-shrink: 0; }
+.toc-item h3 { font-size: clamp(15px, 1.4vw, 19px); font-weight: 700; margin-bottom: 3px; }
+.toc-item small { color: var(--dim); font-size: clamp(11px, .95vw, 13px); }
+.toc-item .arrow { margin-left: auto; color: var(--faint); font-size: 20px; flex-shrink: 0; }
+.toc-item:hover .arrow { transform: translateX(5px); color: var(--primary); }
+
+.thanks { justify-content: center; align-items: center; text-align: center; }
+.thanks h1 { font-size: clamp(42px, 6.5vw, 78px); font-weight: 800; letter-spacing: 7px; background: linear-gradient(120deg, #f2f7ff 25%, #4cc3ff 60%, #8b8cf7 95%); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+
+.zoomable { cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; z-index: 2000; display: none; align-items: center; justify-content: center; background: rgba(2,5,12,.88); backdrop-filter: blur(6px); cursor: zoom-out; }
+.lightbox.open { display: flex; }
+.lightbox img { max-width: 88vw; max-height: 88vh; border-radius: 14px; border: 1px solid rgba(76,195,255,.4); box-shadow: 0 0 60px rgba(76,195,255,.35), 0 30px 80px rgba(0,0,0,.6); }
+
+.progress-bar { position: fixed; top: 0; left: 0; height: 3px; background: var(--grad); transition: width .35s; z-index: 1000; }
+.nav-controls { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); display: flex; align-items: center; gap: 16px; z-index: 1000; }
+.nav-btn { width: 40px; height: 40px; border-radius: 50%; border: 1px solid rgba(76,195,255,.4); background: rgba(14,24,48,.9); color: var(--text); font-size: 16px; cursor: pointer; transition: all .2s; }
+.nav-btn:hover { background: rgba(76,195,255,.25); }
+.slide-counter { color: var(--dim); font-size: 13px; font-family: 'Consolas', monospace; }
+.footer-brand { position: fixed; bottom: 28px; right: 38px; z-index: 1000; font-family: 'Consolas', monospace; font-size: 11.5px; color: var(--faint); letter-spacing: 3px; }
+.sec-rail { position: fixed; left: 22px; top: 50%; transform: translateY(-50%); z-index: 1000; display: flex; flex-direction: column; gap: 14px; }
+.sec-rail i { width: 8px; height: 8px; border-radius: 50%; background: rgba(76,195,255,.2); border: 1px solid rgba(76,195,255,.35); cursor: pointer; transition: all .25s; }
+.sec-rail i.on { background: var(--primary); box-shadow: 0 0 12px rgba(76,195,255,.9); transform: scale(1.3); }
+
+@media (max-width: 768px) {
+    .slide { padding: 24px 18px 70px; }
+    .has-image .body, .toc { flex-direction: column; }
+    .has-image .cards { flex: 1; }
+    .toc-side { display: none; }
+    .grid2, .grid3 { grid-template-columns: 1fr; }
+    .sec-rail, .hud-frame { display: none; }
+}
+</style><main id="deck" class="slide-deck"><div class="hud-frame"><i></i><i></i><i></i><i></i></div>
+
+<!-- 封面 -->
+<section class="slide cover">
+  <div class="st" style="display:flex;flex-direction:column;align-items:center">
+    <div class="ring"><div class="logo-core">FB</div></div>
+    <h1>fanbox-pro</h1>
+    <div class="sub">Windows 本地开发工作台</div>
+    <div class="chips"><span>文件与编辑</span><span>AGENT 项目</span><span>SSH 远程</span><span>GIT 仓库</span><span>定时任务</span><span>企业微信集成</span></div>
+    <div class="meta"><i></i><span>项目汇报分享 · 2026.11</span><i></i></div>
+  </div>
+</section>
+
+<!-- 总览 -->
+<section class="slide">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">OVERVIEW / 平台总览</div>
+      <div class="head-title">一个工作台，<span class="hl">组织全部开发入口</span></div>
+      <div class="head-sub">fanbox-pro 是运行在 Windows 桌面的本地开发工作台：把文件、AI、远程机器、代码仓库与定时任务集中到一个窗口，左侧导航即工作地图。</div>
+    </div>
+    <div class="head-sec"><b>06</b><small>核心模块</small></div>
+  </div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card"><h3><span class="ico">📂</span>文件与编辑</h3><p><b>快速入口</b>管理常用目录；内置编辑器渲染 README / Markdown，配合 AI 与终端即改即验。</p><div class="vline">打开项目 3 秒内可见，文档即门面</div></div>
+      <div class="card"><h3><span class="ico">🤖</span>AGENT 项目</h3><p>为每个项目建立 <b>代码空间</b>（automelt2、team-space、rs-hiveforge…），记录任务、会话与 README，多项目并行不串线。</p><div class="vline">项目上下文统一归档，随时续接</div></div>
+      <div class="card"><h3><span class="ico">🖥️</span>SSH 连接</h3><p><b>会话管理 + 长连接</b>，支持 TAU、跳板机、多终端标签；在远程机器上直接发起 <b>AI 对话</b>操作。</p><div class="vline">远程机器像本地目录一样触手可及</div></div>
+      <div class="card"><h3><span class="ico">🌿</span>GIT 仓库管理</h3><p><b>多代码空间仓库目录</b>统一列出分支、领先/落后与工作区状态，右键完成切分支、拉取、推送、合并、删除。</p><div class="vline">几十个仓库一屏总览，批量同步</div></div>
+      <div class="card"><h3><span class="ico">⏱️</span>定时任务</h3><p>定时执行 <b>Claude Code 或本地脚本</b>：每日提交代码 Review、仓库定时同步、巡检报告全自动跑。</p><div class="vline">重复劳动交给计划，人只看结果</div></div>
+      <div class="card"><h3><span class="ico">🐾</span>宠物与企业微信</h3><p>桌宠显示 <b>企业微信在线状态</b>与自定义玩法；<b>企业微信接入终端</b>，在聊天里远程操作 CLI 与任务。</p><div class="vline">离开工位后，机器仍在被指挥</div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 目录 -->
+<section class="slide">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">AGENDA / 分模块详解</div>
+      <div class="head-title">八大<span class="hl">功能场景</span>逐一演示</div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="toc">
+      <div class="toc-side"><b>分模块<br>详解</b><small>MODULES</small></div>
+      <div class="toc-list">
+        <div class="toc-item" data-goto="3"><span class="no">01</span><div><h3>README 展示</h3><small>文件树 + 渲染视图 + AI/终端，项目一屏入门</small></div><span class="arrow">→</span></div>
+        <div class="toc-item" data-goto="4"><span class="no">02</span><div><h3>多代码空间仓库目录处理</h3><small>仓库总览、分支管理、状态与批量操作</small></div><span class="arrow">→</span></div>
+        <div class="toc-item" data-goto="5"><span class="no">03</span><div><h3>工作目录 Git 分支定时同步</h3><small>定时自动同步，分支保持新鲜</small></div><span class="arrow">→</span></div>
+        <div class="toc-item" data-goto="6"><span class="no">04</span><div><h3>定时执行 Claude / 本地脚本</h3><small>每日自动 Code Review，产出直接可读</small></div><span class="arrow">→</span></div>
+        <div class="toc-item" data-goto="7"><span class="no">05</span><div><h3>SSH 登录长连接</h3><small>会话管理、跳板机、多终端标签</small></div><span class="arrow">→</span></div>
+        <div class="toc-item" data-goto="8"><span class="no">06</span><div><h3>SSH AI 对话操作机器</h3><small>在远程机器上直接与 AI 协作</small></div><span class="arrow">→</span></div>
+        <div class="toc-item" data-goto="9"><span class="no">07</span><div><h3>企业微信接入终端</h3><small>聊天窗口远程指挥 CLI 与任务</small></div><span class="arrow">→</span></div>
+        <div class="toc-item" data-goto="10"><span class="no">08</span><div><h3>宠物板块 · 企业微信状态</h3><small>桌宠显示在线状态与自定义玩法</small></div><span class="arrow">→</span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 01 README -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 01 / README 展示</div>
+      <div class="head-title">项目<span class="hl">一屏入门</span></div>
+    </div>
+    <div class="head-sec"><b>01</b><small>FILES</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">📁</span>文件树 + 渲染视图</h3><p>左侧按 <b>快速入口 / AGENT 项目</b> 组织目录树，右侧把 <b>README.md</b> 渲染成排版视图，项目概述、常用命令直接可读。</p></div>
+      <div class="card"><h3><span class="ico">⚡</span>即改即验</h3><p>下方内嵌 <b>AI 会话与终端</b>，看到构建命令后可以直接执行验证，阅读—修改—运行不离开窗口。</p><div class="vline">接手新项目：打开目录 → 读 README → 跑命令，一屏完成</div></div>
+    </div>
+    <div class="visual"><img src="imgs/1.readme展示.png" alt="README 展示" class="zoomable" onclick="zoom(this)"><small>README 渲染展示 · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 02 多仓库 -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 02 / GIT 仓库管理</div>
+      <div class="head-title">多代码空间<span class="hl">仓库目录处理</span></div>
+    </div>
+    <div class="head-sec"><b>02</b><small>REPOS</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">📋</span>全仓一屏总览</h3><p>所有代码空间的仓库列表集中展示：<b>当前分支、领先/落后、工作区状态</b>一目了然，支持按名称过滤与列排序。</p></div>
+      <div class="card"><h3><span class="ico">🖱️</span>右键即操作</h3><p>右键菜单覆盖日常 Git 动作：<b>切分支、拉取、推送、合并、 stash、检查冲突、删除</b>，并支持多仓库<b>批量同步</b>。</p><div class="vline">以前逐仓开终端敲命令，现在一屏点完</div></div>
+    </div>
+    <div class="visual"><img src="imgs/2.多代码空间仓库目录处理.png" alt="多代码空间仓库目录处理" class="zoomable" onclick="zoom(this)"><small>仓库总览与右键操作 · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 03 定时同步 -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 03 / GIT 自动同步</div>
+      <div class="head-title">工作目录 Git 分支<span class="hl">定时同步</span></div>
+    </div>
+    <div class="head-sec"><b>03</b><small>SYNC</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">🔄</span>计划驱动同步</h3><p>按<b>名称 + 动作 + 频率</b>配置同步计划（如"全仓库同时拉取，每日 8 点"），启用后自动在后台执行，无需人守。</p></div>
+      <div class="card"><h3><span class="ico">🧾</span>执行留痕</h3><p>每次执行写入<b>历史记录</b>，成功失败可回溯；同步策略避免打断未提交的工作区。</p><div class="vline">分支永远新鲜，第二天开工不用先拉一遍</div></div>
+    </div>
+    <div class="visual"><img src="imgs/3.设定的工作目录git分支定时同步.png" alt="Git 分支定时同步" class="zoomable" onclick="zoom(this)"><small>自动同步计划与执行记录 · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 04 定时任务 -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 04 / 定时任务</div>
+      <div class="head-title">定时执行 <span class="hl">Claude 或本地脚本</span></div>
+    </div>
+    <div class="head-sec"><b>04</b><small>CRON</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">🧠</span>Claude 计划任务</h3><p>任务绑定项目目录，定时唤起 <b>Claude Code</b>。例如"每日 7:30 提交前代码 Review"，AI 逐仓检查 <b>merge 冲突、字段变更、空指针风险</b>并产出结论。</p></div>
+      <div class="card"><h3><span class="ico">📜</span>本地脚本同样支持</h3><p>巡检、备份、报表等脚本纳入同一调度；<b>最近 10 次执行记录</b>可直接点开查看完整输出。</p><div class="vline">重复性检查全自动跑，人只看结论</div></div>
+    </div>
+    <div class="visual"><img src="imgs/4.定时执行claude或者本地脚本.png" alt="定时执行 Claude 或本地脚本" class="zoomable" onclick="zoom(this)"><small>每日 Code Review 定时任务执行实况 · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 05 SSH -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 05 / SSH 连接</div>
+      <div class="head-title">SSH 登录<span class="hl">长连接</span></div>
+    </div>
+    <div class="head-sec"><b>05</b><small>REMOTE</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">🔌</span>会话管理与长连接</h3><p>机器信息集中管理，会话<b>保持长连接</b>不频繁掉线；支持 <b>TAU、跳板机</b>等链路，自动重连。</p></div>
+      <div class="card"><h3><span class="ico">🗂️</span>多终端并行</h3><p>同一窗口打开<b>多个终端标签</b>：本地 PowerShell、远程 bash 并行操作，布局可调，配合 AI 面板一起用。</p><div class="vline">远程机器挂成一排，随点随用</div></div>
+    </div>
+    <div class="visual"><img src="imgs/5.ssh登录长连接.png" alt="SSH 登录长连接" class="zoomable" onclick="zoom(this)"><small>SSH 会话与多终端 · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 06 SSH AI -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 06 / SSH × AI</div>
+      <div class="head-title">SSH <span class="hl">AI 对话操作机器</span></div>
+    </div>
+    <div class="head-sec"><b>06</b><small>AI-OPS</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">💬</span>对话即运维</h3><p>在远程机器上直接与 <b>AI 对话</b>："看下当前并发到多少了"，AI 自动执行命令、读取输出、汇总结果，无需自己拼一长串 shell。</p></div>
+      <div class="card"><h3><span class="ico">🛡️</span>可确认可回看</h3><p>AI 给出的<b>计划与待办</b>先确认再执行；整个过程留在会话里，事后可回溯当时跑了什么。</p><div class="vline">运维经验沉淀成对话，新人也能上手查线上</div></div>
+    </div>
+    <div class="visual"><img src="imgs/6.ssh ai对话操作机器.png" alt="SSH AI 对话操作机器" class="zoomable" onclick="zoom(this)"><small>远程机器 AI 对话操作 · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 07 企微终端 -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 07 / 企业微信集成</div>
+      <div class="head-title">企业微信<span class="hl">接入终端</span></div>
+    </div>
+    <div class="head-sec"><b>07</b><small>WECOM</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">📲</span>聊天里指挥机器</h3><p>企业微信接入本地终端：在聊天窗口发消息即可<b>操作终端与各类 CLI</b>，查看任务状态、继续某项工作、选择待办下一步。</p></div>
+      <div class="card"><h3><span class="ico">🔔</span>结果回推</h3><p>任务执行完成后<b>状态回推到聊天</b>（如 agent 任务完成通知），人在外也能跟进进度、随时下发新指令。</p><div class="vline">离开工位 ≠ 停工，机器仍在被指挥</div></div>
+    </div>
+    <div class="visual"><img src="imgs/7.企业微信介入终端，操作终端和各类cli.png" alt="企业微信接入终端" class="zoomable" onclick="zoom(this)"><small>企业微信会话远程操作终端与 CLI · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 08 宠物 -->
+<section class="slide has-image">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">MODULE 08 / 宠物板块</div>
+      <div class="head-title">宠物板块 · <span class="hl">企业微信状态与玩法</span></div>
+    </div>
+    <div class="head-sec"><b>08</b><small>PET</small></div>
+  </div>
+  <div class="body">
+    <div class="cards">
+      <div class="card"><h3><span class="ico">🐾</span>状态可视化</h3><p>桌面宠物实时显示<b>企业微信在线状态</b>（在线时段、离开时长等），工作状态一眼可见。</p></div>
+      <div class="card"><h3><span class="ico">🎮</span>自定义玩法</h3><p>宠物支持<b>自定义玩法</b>与快捷入口，把常用操作做成轻量交互，工具也有温度。</p><div class="vline">把"在线/忙碌"这种抽象状态，变成桌面上可爱的一眼可读</div></div>
+    </div>
+    <div class="visual"><img src="imgs/8.宠物板块显示企业微信状态和自定义玩法.png" alt="宠物板块" class="zoomable" onclick="zoom(this)"><small>宠物面板：企微状态与自定义玩法 · 点击查看大图</small></div>
+  </div>
+</section>
+
+<!-- 总结 -->
+<section class="slide">
+  <div class="head">
+    <div class="head-left">
+      <div class="head-tag">SUMMARY / 总结</div>
+      <div class="head-title">从"到处切窗口"到<span class="hl">一屏指挥全局</span></div>
+    </div>
+  </div>
+  <div class="body">
+    <div class="grid3">
+      <div class="card"><h3><span class="ico">🎯</span>集中</h3><p>文件、AI、终端、远程机器、仓库、计划任务统一入口，<b>左侧导航即工作地图</b>。</p></div>
+      <div class="card"><h3><span class="ico">⚙️</span>自动化</h3><p>定时同步、定时 Review、脚本调度把重复劳动交给计划，<b>产出留痕可回溯</b>。</p></div>
+      <div class="card"><h3><span class="ico">🌐</span>在线化</h3><p>SSH 长连接 + 企业微信接入，<b>人不在工位也能操作与跟进</b>，机器持续在岗。</p></div>
+      <div class="card" style="grid-column:1/-1"><h3><span class="ico">🚀</span>下一步</h3><p>持续完善多项目代码空间的上下文沉淀，扩展企业微信侧的指令能力，让"对话式开发与运维"覆盖更多日常场景。</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 结束 -->
+<section class="slide thanks">
+  <div class="st" style="display:flex;flex-direction:column;align-items:center">
+    <h1>Thanks</h1>
+    <div style="margin-top:22px;display:flex;gap:10px">
+      <span style="font-size:13px;color:var(--dim);border:1px solid var(--line2);border-radius:30px;padding:6px 18px;letter-spacing:2px">fanbox-pro · Windows 本地开发工作台</span>
+    </div>
+    <div class="meta" style="margin-top:40px;display:flex;align-items:center;gap:16px;color:var(--dim);letter-spacing:3px"><i style="width:60px;height:1px;background:linear-gradient(90deg,transparent,var(--primary))"></i><span>欢迎交流 · Q&amp;A</span><i style="width:60px;height:1px;background:linear-gradient(90deg,var(--primary),transparent)"></i></div>
+  </div>
+</section>
+
+<div class="lightbox" onclick="this.classList.remove('open')"><img id="lb-img" src="" alt=""><div class="lb-tip" style="position:absolute;bottom:34px;color:var(--dim);font-size:13px">点击任意处关闭</div></div>
+<div class="progress-bar" id="pbar"></div>
+<div class="nav-controls">
+  <button class="nav-btn" onclick="go(-1)">‹</button>
+  <span class="slide-counter" id="counter">1 / 12</span>
+  <button class="nav-btn" onclick="go(1)">›</button>
+</div>
+<div class="footer-brand">FANBOX-PRO · 2026.11</div>
+<div class="sec-rail" id="rail"></div>
+</main>
+<script>
+const slides=[...document.querySelectorAll('.slide')];let cur=0;
+const rail=document.getElementById('rail');
+slides.forEach((_,i)=>{const d=document.createElement('i');d.onclick=()=>show(i);rail.appendChild(d)});
+function show(n){
+  cur=(n+slides.length)%slides.length;
+  slides.forEach((s,i)=>s.classList.toggle('active',i===cur));
+  document.getElementById('pbar').style.width=((cur+1)/slides.length*100)+'%';
+  document.getElementById('counter').textContent=(cur+1)+' / '+slides.length;
+  [...rail.children].forEach((d,i)=>d.classList.toggle('on',i===cur));
+}
+function go(d){show(cur+d)}
+document.addEventListener('keydown',e=>{
+  if(['ArrowRight','ArrowDown','PageDown',' '].includes(e.key)){e.preventDefault();go(1)}
+  if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();go(-1)}
+  if(e.key==='Home')show(0); if(e.key==='End')show(slides.length-1);
+});
+document.querySelectorAll('[data-goto]').forEach(el=>el.addEventListener('click',e=>{e.stopPropagation();show(+el.dataset.goto)}));
+function zoom(img){const lb=document.querySelector('.lightbox');document.getElementById('lb-img').src=img.src;lb.classList.add('open')}
+show(0);
+</script>
+</html>

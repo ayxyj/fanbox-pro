@@ -2,7 +2,7 @@
   if (!window.fanboxRemote) return;
   const desktopBridge=window.fanboxDesktopPet,desktop=desktopBridge?.isDesktop===true,desktopHost=!!desktopBridge&&!desktop;
   const native=promise=>promise?.catch(()=>{});
-  const key='fanbox-im-pet-v1', defaults={type:'cat',size:88,motion:true,hidden:false,x:1,y:1,skin:'original',selectedAction:'builtin:0',actions:[],skins:[]};
+  const key='fanbox-im-pet-v1', defaults={type:'cat',size:88,motion:true,showUsage:true,hidden:false,x:1,y:1,skin:'original',selectedAction:'builtin:0',actions:[],skins:[]};
   let prefs={...defaults};try{prefs={...defaults,...JSON.parse(localStorage.getItem(key)||'{}')};}catch{}
   const save=()=>{try{localStorage.setItem(key,JSON.stringify(prefs));return true;}catch{return false;}};
   const call=async(action)=>{const r=await fanboxRemote.call(action);if(!r.ok)throw Error(r.error);return r.value;};
@@ -17,9 +17,53 @@
   const root=document.createElement('div');root.className='im-pet';root.hidden=desktopHost||!!prefs.hidden;
   root.innerHTML='<button class="im-pet-character" aria-label="企微机器人状态，点击查看详情"><span class="im-pet-art"></span><span class="im-pet-badge"></span></button>';
   const panel=document.createElement('section');panel.className='im-pet-panel';panel.hidden=true;panel.setAttribute('aria-label','企微状态与宠物设置');
-  panel.innerHTML='<header><strong>企微小伙伴</strong><button data-close aria-label="关闭详情">×</button></header><p data-status></p><p data-error role="status"></p><dl data-health></dl><div class="im-pet-actions"><button data-refresh>刷新状态</button><button data-reconnect>重新连接</button><button data-settings>打开 IM 设置</button></div><details><summary>最近连接记录</summary><ul data-events></ul></details><hr><div class="im-pet-options"><label>宠物造型<select data-type><option value="cat">小猫</option><option value="dog">小狗</option><option value="fox">狐狸</option><option value="robot">机器人</option><option value="capybara">卡皮巴拉</option></select></label><label>大小<select data-size><option value="64">小</option><option value="88">中</option><option value="112">大</option></select></label><label><input type="checkbox" data-motion>启用动画</label></div><div class="im-pet-actions"><button data-play>打个招呼</button><button data-reset>重置位置</button><button data-hide>隐藏宠物</button></div><details class="pet-extension-settings"><summary>皮肤与自定义动作</summary><label>皮肤<select data-skin></select></label><div class="im-pet-actions"><button data-import-skin>导入皮肤</button><button data-remove-skin>删除所选皮肤</button></div><label>动作<select data-action></select></label><div class="im-pet-actions"><button data-run-action>播放动作</button><button data-import-action>导入动作</button><button data-remove-action>删除所选动作</button><button data-template>下载动作示例</button></div><input type="file" data-skin-file accept=".json,.png,.webp" hidden><input type="file" data-action-file accept=".json" hidden><p data-extension-note role="status"></p><small>动作使用 JSON；皮肤支持配色 JSON 或 PNG/WebP 图片（不超过 256KB、512×512）。离线时默认睡眠，仍可手动播放动作。Windows 减少动态效果时仅关闭自动互动；关闭动画后不播放动作。</small></details><small>鼠标移入播放所选动作，拖动宠物可调整位置。隐藏后可在 IM 设置中重新显示。在线仅代表连接成功，执行权限单独设置。</small>';
+  panel.innerHTML='<header><strong>企微小伙伴</strong><button data-close aria-label="关闭详情">×</button></header><p data-status></p><p data-error role="status"></p><dl data-health></dl><div class="im-pet-actions"><button data-refresh>刷新状态</button><button data-reconnect>重新连接</button><button data-settings>打开 IM 设置</button></div><details><summary>最近连接记录</summary><ul data-events></ul></details><hr><div class="im-pet-options"><label>宠物造型<select data-type><option value="cat">小猫</option><option value="dog">小狗</option><option value="fox">狐狸</option><option value="robot">机器人</option><option value="capybara">卡皮巴拉</option></select></label><label>大小<select data-size><option value="64">小</option><option value="88">中</option><option value="112">大</option></select></label><label><input type="checkbox" data-motion>启用动画</label><label><input type="checkbox" data-show-usage>显示用量文字</label></div><div class="im-pet-actions"><button data-play>打个招呼</button><button data-reset>重置位置</button><button data-hide>隐藏宠物</button></div><details class="pet-extension-settings"><summary>皮肤与自定义动作</summary><label>皮肤<select data-skin></select></label><div class="im-pet-actions"><button data-import-skin>导入皮肤</button><button data-remove-skin>删除所选皮肤</button></div><label>动作<select data-action></select></label><div class="im-pet-actions"><button data-run-action>播放动作</button><button data-import-action>导入动作</button><button data-remove-action>删除所选动作</button><button data-template>下载动作示例</button></div><input type="file" data-skin-file accept=".json,.png,.webp" hidden><input type="file" data-action-file accept=".json" hidden><p data-extension-note role="status"></p><small>动作使用 JSON；皮肤支持配色 JSON 或 PNG/WebP 图片（不超过 256KB、512×512）。离线时默认睡眠，仍可手动播放动作。Windows 减少动态效果时仅关闭自动互动；关闭动画后不播放动作。</small></details><small>鼠标移入播放所选动作，拖动宠物可调整位置。隐藏后可在 IM 设置中重新显示。在线仅代表连接成功，执行权限单独设置。</small>';
+  const wakeSettings=document.createElement('details');
+  wakeSettings.className='pet-extension-settings pet-wake-settings';
+  wakeSettings.hidden=true;
+  wakeSettings.innerHTML='<summary>企业微信唤醒</summary><div class="pet-wake-body"><label class="pet-wake-switch"><span>启用唤醒<small>允许手动与定时操作</small></span><input type="checkbox" data-wake-enabled></label><label class="pet-wake-switch"><span>定时唤醒<small>按照 Cron 重复执行</small></span><input type="checkbox" data-wake-scheduled></label><label class="pet-wake-cron"><span>Cron 表达式 <small>本机时区 · 分 时 日 月 周</small></span><input type="text" data-wake-cron value="*/5 * * * *" placeholder="*/5 * * * *" spellcheck="false"></label><div class="pet-wake-presets"><button data-cron="*/5 * * * *">每 5 分钟</button><button data-cron="*/10 * * * *">每 10 分钟</button><button data-cron="*/5 9-18 * * 1-5">工作日白天</button></div><div class="im-pet-actions"><button data-wake-save>保存设置</button><button data-wake-run>立即唤醒</button></div><p data-wake-note role="status" aria-live="polite"></p><small class="pet-wake-help">需保持电脑未锁屏、企微已登录。会切到企微并往返移动鼠标三次；在线状态请在手机确认。定时仅在软件运行时生效。</small></div>';
+  wakeSettings.querySelectorAll('[data-cron]').forEach(b=>{b.onclick=()=>{wakeSettings.querySelector('[data-wake-cron]').value=b.dataset.cron;};});
+  panel.append(wakeSettings);
+  const wakeNote=t=>{wakeSettings.querySelector('[data-wake-note]').textContent=t;};
+  const wakeCall=async(action,args)=>{const r=await fanboxRemote.call(action,args);if(!r.ok)throw Error(r.error);return r.value;};
+  wakeSettings.addEventListener('toggle',async()=>{if(!wakeSettings.open)return;try{const c=await wakeCall('im-wake-state');wakeSettings.querySelector('[data-wake-enabled]').checked=c.enabled;wakeSettings.querySelector('[data-wake-scheduled]').checked=c.scheduled;wakeSettings.querySelector('[data-wake-cron]').value=c.cron;}catch(e){wakeNote(e.message);}});
+  wakeSettings.querySelector('[data-wake-save]').onclick=async()=>{try{await wakeCall('im-wake-save',{enabled:wakeSettings.querySelector('[data-wake-enabled]').checked,scheduled:wakeSettings.querySelector('[data-wake-scheduled]').checked,cron:wakeSettings.querySelector('[data-wake-cron]').value});wakeNote('设置已保存');}catch(e){wakeNote(e.message);}};
+  wakeSettings.querySelector('[data-wake-run]').onclick=async()=>{const b=wakeSettings.querySelector('[data-wake-run]');b.disabled=true;wakeNote('正在唤醒，请稍后…');try{wakeNote(await wakeCall('im-wake-run'));}catch(e){wakeNote(e.message);}finally{b.disabled=false;}};
   document.body.append(root,panel);
+  const usageBadge = document.createElement('button'); usageBadge.className='pet-usage-summary'; usageBadge.textContent='用量读取中…'; root.append(usageBadge);
+  const statsActions=document.createElement('div');statsActions.className='im-pet-actions';
+  statsActions.innerHTML='<button data-pet-skills>SKILLS 透视</button><button data-pet-usage>AGENT 用量详情</button>';
+  panel.querySelector('header').after(statsActions);
+  statsActions.querySelector('[data-pet-skills]').onclick=()=>{panel.hidden=true;window.fanboxStatisticsUI?.open('skills');};
+  statsActions.querySelector('[data-pet-usage]').onclick=()=>{panel.hidden=true;window.fanboxStatisticsUI?.open('usage');};
+  usageBadge.onclick=()=>{if(desktop)native(desktopBridge.settings());else{panel.hidden=false;position();}};
+  let usageLoading=false;
+  async function refreshUsage(){
+    if(usageLoading)return;usageLoading=true;
+    try{
+      const response=await fetch('/api/agent-usage');if(!response.ok)throw Error();const d=await response.json();if(!d.ok)throw Error();
+      const rows=[];const percent=v=>Number.isFinite(v)?Math.round(Math.max(0,Math.min(100,v)))+'%':'暂无配额';
+      if(d.claude && (d.claude.official?.fiveHour?.usedPercent > 0 || (!d.claude.official?.fiveHour && d.claude.last5h?.total > 0))){const c=d.claude;const q=c.official?.fiveHour;rows.push('Claude '+(q?percent(q.usedPercent):c.last5h?compact(c.last5h.total)+' tokens · 5h':'暂无用量'));}
+      if(d.codex?.primary?.usedPercent > 0 && !d.codex.primary.stale){const c=d.codex;rows.push('Codex '+(c.primary?.stale?'待更新':percent(c.primary?.usedPercent)));}
+      usageBadge.textContent=rows.join(' · ');usageBadge.hidden=rows.length===0;usageBadge.title='AGENT 用量：配额为已使用比例；tokens 为本地统计。点击查看设置及详情';
+    }catch{usageBadge.textContent='';usageBadge.hidden=true;usageBadge.title='读取失败，将自动重试；可在宠物面板查看详情';}
+    finally{usageLoading=false;position();}
+  }
+  function compact(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n||0);}
+  refreshUsage();setInterval(refreshUsage,60000);
+
   const character=root.querySelector('button');
+  if(desktop){
+    let hit=false;
+    const updateHit=e=>{
+      const target=document.elementFromPoint(e.clientX,e.clientY);
+      const next=!!target?.closest('.im-pet-character,.pet-usage-summary');
+      if(next!==hit){hit=next;desktopBridge.interactive?.(next);}
+    };
+    document.addEventListener('mousemove',updateHit);
+    document.documentElement.addEventListener('mouseleave',()=>{hit=false;desktopBridge.interactive?.(false);});
+  }
+
   const set=(selector,text)=>{panel.querySelector(selector).textContent=text;};
   let playing=null;
   const palettes={original:null,cream:{fur:'#F0D9AE',outline:'#917753',muzzle:'#FFF8E9'},night:{fur:'#8D97B1',outline:'#4D566F',muzzle:'#DCE4F0'},mint:{fur:'#9BD4BE',outline:'#47786A',muzzle:'#FFF5DE'}};
@@ -36,14 +80,39 @@
 
     if(skin?.image){const body=svg.querySelector('.pet-body');body.replaceChildren();const image=document.createElementNS('http://www.w3.org/2000/svg','image');image.setAttribute('href',skin.image);image.setAttribute('width','90');image.setAttribute('height','85');image.setAttribute('x','5');image.setAttribute('y','5');body.append(image);}
     else if(skin){for(const el of svg.querySelectorAll('[stroke="#725948"],[stroke="#8c624a"],[fill="#725948"]')){if(el.hasAttribute('stroke'))el.setAttribute('stroke',skin.outline);if(el.getAttribute('fill')==='#725948')el.setAttribute('fill',skin.outline);}svg.querySelectorAll('[fill="#fff4df"]').forEach(el=>el.setAttribute('fill',skin.muzzle));}
-    root.style.setProperty('--pet-size',prefs.size+'px');root.classList.toggle('pet-still',!prefs.motion);if(desktop)native(desktopBridge.sync({size:prefs.size,hidden:!!prefs.hidden}));position();
+    root.classList.toggle('pet-hide-usage',prefs.showUsage===false);root.style.setProperty('--pet-size',prefs.size+'px');root.classList.toggle('pet-still',!prefs.motion);if(desktop)native(desktopBridge.sync({size:prefs.size,hidden:!!prefs.hidden}));position();
   }
+  let panelPosition=null,panelDrag=null;
+  const panelHeader=panel.querySelector('header');
+  function clampPanel(){
+    if(!panelPosition)return;
+    panelPosition.x=Math.max(8,Math.min(panelPosition.x,Math.max(8,innerWidth-panel.offsetWidth-8)));
+    panelPosition.y=Math.max(8,Math.min(panelPosition.y,Math.max(8,innerHeight-panel.offsetHeight-8)));
+    panel.style.left=panelPosition.x+'px';panel.style.top=panelPosition.y+'px';
+  }
+  panelHeader.addEventListener('pointerdown',e=>{
+    if(e.button!==0||e.target.closest('button'))return;
+    const r=panel.getBoundingClientRect();panelPosition={x:r.left,y:r.top};
+    panelDrag={id:e.pointerId,x:e.clientX,y:e.clientY,left:r.left,top:r.top};
+    panelHeader.setPointerCapture(e.pointerId);e.preventDefault();
+  });
+  panelHeader.addEventListener('pointermove',e=>{
+    if(!panelDrag||panelDrag.id!==e.pointerId)return;
+    panelPosition={x:panelDrag.left+e.clientX-panelDrag.x,y:panelDrag.top+e.clientY-panelDrag.y};clampPanel();
+  });
+  const stopPanelDrag=()=>{panelDrag=null;};
+  panelHeader.addEventListener('pointerup',stopPanelDrag);
+  panelHeader.addEventListener('pointercancel',stopPanelDrag);
+  panelHeader.addEventListener('lostpointercapture',stopPanelDrag);
+  addEventListener('blur',stopPanelDrag);
+  new ResizeObserver(()=>{if(!panel.hidden)clampPanel();}).observe(panel);
   function position(){
     if(desktop)return;
     const x=Number.isFinite(prefs.x)?prefs.x:1,y=Number.isFinite(prefs.y)?prefs.y:1;
     root.style.left=(8+Math.max(0,Math.min(1,x))*Math.max(0,innerWidth-root.offsetWidth-16))+'px';
     root.style.top=(8+Math.max(0,Math.min(1,y))*Math.max(0,innerHeight-root.offsetHeight-16))+'px';
     if(panel.hidden)return;
+    if(panelPosition){clampPanel();return;}
     const r=desktopHost?{left:innerWidth-prefs.size-16,right:innerWidth-16,top:innerHeight-prefs.size-16,bottom:innerHeight-16}:root.getBoundingClientRect(),gap=22,margin=8;
     const left=r.left-gap-margin,right=innerWidth-r.right-gap-margin;
     const width=Math.min(320,innerWidth-2*margin);
@@ -61,6 +130,7 @@
   }
   const time=value=>value?new Date(value).toLocaleTimeString():'暂无记录';
   function update(next){
+    if(typeof next?.wakeVisible === 'boolean') { wakeSettings.hidden=!next.wakeVisible; if(wakeSettings.hidden)wakeSettings.open=false; }
     if(next?.qr)return;if(next)state=next;
     let label='状态未知';
     if(state){
@@ -94,9 +164,10 @@
   panel.querySelector('[data-settings]').onclick=()=>{panel.hidden=true;window.remoteUI.imSettings();};
   panel.querySelector('[data-type]').value=prefs.type;panel.querySelector('[data-type]').onchange=e=>{prefs.type=e.target.value;save();art();};
   panel.querySelector('[data-size]').value=prefs.size;panel.querySelector('[data-size]').onchange=e=>{prefs.size=Number(e.target.value);save();art();};
+  panel.querySelector('[data-show-usage]').checked=prefs.showUsage!==false;panel.querySelector('[data-show-usage]').onchange=e=>{prefs.showUsage=e.target.checked;save();art();};
   panel.querySelector('[data-motion]').checked=prefs.motion;panel.querySelector('[data-motion]').onchange=e=>{prefs.motion=e.target.checked;save();art();};
   panel.querySelector('[data-hide]').onclick=()=>{prefs.hidden=true;root.hidden=true;panel.hidden=true;save();if(desktop)native(desktopBridge.sync({size:prefs.size,hidden:true}));else if(desktopHost)native(desktopBridge.visible(false));};
-  panel.querySelector('[data-reset]').onclick=()=>{prefs.x=1;prefs.y=1;save();position();if(desktopHost)native(desktopBridge.reset());};
+  panel.querySelector('[data-reset]').onclick=()=>{prefs.x=1;prefs.y=1;panelPosition=null;save();position();if(desktopHost)native(desktopBridge.reset());};
   const builtinActions=[extensions.action({version:1,name:'打招呼',duration:900,iterations:1,keyframes:[{offset:0},{offset:.25,rotate:-12},{offset:.75,rotate:12},{offset:1}]}),extensions.action({version:1,name:'街舞摇摆',duration:2000,iterations:2,keyframes:[{offset:0},{offset:.2,x:-10,y:-4,rotate:-18},{offset:.4,x:10,y:-4,rotate:18},{offset:.6,y:-18,scale:1.1},{offset:.8,x:-8,rotate:-12},{offset:1}]})];
   const note=text=>panel.querySelector('[data-extension-note]').textContent=text;
   const options=(select,entries,value)=>{select.replaceChildren();for(const [id,label] of entries){const option=document.createElement('option');option.value=id;option.textContent=label;select.append(option);}if(value)select.value=value;};
@@ -135,7 +206,7 @@
   const endDrag=cancelled=>{if(!drag){if(cancelled)moved=false;return;}const id=drag.pointerId;drag=null;if(desktop)native(desktopBridge.drag('end'));else if(moved&&!cancelled)save();if(cancelled)moved=false;try{if(character.hasPointerCapture(id))character.releasePointerCapture(id);}catch{}};
   character.onpointerdown=e=>{if(e.button!==0)return;endDrag(true);moved=false;if(desktop){drag={x:e.screenX,y:e.screenY,pointerId:e.pointerId};native(desktopBridge.drag('start'));capture(e);return;}drag={x:e.clientX,y:e.clientY,left:root.offsetLeft,top:root.offsetTop,pointerId:e.pointerId};capture(e);};
   character.onpointerleave=()=>{root.style.setProperty('--pet-gaze-x','0px');root.style.setProperty('--pet-gaze-y','0px');};
-  character.onpointermove=e=>{if(desktop&&drag){if(Math.abs(e.screenX-drag.x)+Math.abs(e.screenY-drag.y)>5)moved=true;if(moved)native(desktopBridge.drag('move'));return;}if(!drag){if(prefs.motion&&mode!=='offline'&&!matchMedia('(prefers-reduced-motion: reduce)').matches){const r=character.getBoundingClientRect();root.style.setProperty('--pet-gaze-x',((e.clientX-r.left)/r.width*3-1.5)+'px');root.style.setProperty('--pet-gaze-y',((e.clientY-r.top)/r.height*2-1)+'px');}return;}const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>5)moved=true;if(!moved)return;prefs.x=Math.max(0,Math.min(1,(drag.left+dx-8)/Math.max(1,innerWidth-root.offsetWidth-16)));prefs.y=Math.max(0,Math.min(1,(drag.top+dy-8)/Math.max(1,innerHeight-root.offsetHeight-16)));position();};
+  character.onpointermove=e=>{if(desktop&&drag){if(Math.abs(e.screenX-drag.x)+Math.abs(e.screenY-drag.y)>5)moved=true;return;}if(!drag){if(prefs.motion&&mode!=='offline'&&!matchMedia('(prefers-reduced-motion: reduce)').matches){const r=character.getBoundingClientRect();root.style.setProperty('--pet-gaze-x',((e.clientX-r.left)/r.width*3-1.5)+'px');root.style.setProperty('--pet-gaze-y',((e.clientY-r.top)/r.height*2-1)+'px');}return;}const dx=e.clientX-drag.x,dy=e.clientY-drag.y;if(Math.abs(dx)+Math.abs(dy)>5)moved=true;if(!moved)return;prefs.x=Math.max(0,Math.min(1,(drag.left+dx-8)/Math.max(1,innerWidth-root.offsetWidth-16)));prefs.y=Math.max(0,Math.min(1,(drag.top+dy-8)/Math.max(1,innerHeight-root.offsetHeight-16)));position();};
   character.onpointerup=()=>endDrag(false);
   character.onpointercancel=()=>endDrag(true);
   character.onlostpointercapture=()=>{if(drag)endDrag(true);};
@@ -154,7 +225,7 @@
   window.imPet={show(){prefs.hidden=false;root.hidden=desktopHost;save();art();refresh();if(desktopHost){panel.hidden=true;native(desktopBridge.visible(true));}},refresh};
   desktopBridge?.onVisibility?.(visible=>{if(!desktop||typeof visible!=='boolean')return;endDrag(true);prefs.hidden=!visible;root.hidden=!visible;panel.hidden=true;save();art();if(visible)refresh();});
   desktopBridge?.onSettings?.(()=>{panel.hidden=false;position();refresh();});
-  addEventListener('storage',event=>{if(desktop&&event.key===key+'-action'){try{const request=JSON.parse(event.newValue);play(extensions.action(request.action),request.hover===true);}catch{}return;}if(event.key!==key)return;try{Object.assign(prefs,JSON.parse(localStorage.getItem(key)||'{}'));panel.querySelector('[data-motion]').checked=!!prefs.motion;root.hidden=desktopHost||!!prefs.hidden;extensionOptions();art();update();}catch{}});
+  addEventListener('storage',event=>{if(desktop&&event.key===key+'-action'){try{const request=JSON.parse(event.newValue);play(extensions.action(request.action),request.hover===true);}catch{}return;}if(event.key!==key)return;try{Object.assign(prefs,JSON.parse(localStorage.getItem(key)||'{}'));panel.querySelector('[data-motion]').checked=!!prefs.motion;panel.querySelector('[data-show-usage]').checked=prefs.showUsage!==false;root.hidden=desktopHost||!!prefs.hidden;extensionOptions();art();update();}catch{}});
   art();update();refresh();
   setInterval(()=>{if(!document.hidden)refresh();},15000);
 })();

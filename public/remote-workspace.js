@@ -11,7 +11,7 @@
     } else element.textContent = kind === 'command' ? '⌘ 执行的命令' : kind === 'error' ? '未完成' : kind === 'notice' ? '执行状态' : '✦ AI';
   }
   const panel = document.createElement('aside'); panel.className = 'remote-workspace'; panel.hidden = true; panel.setAttribute('aria-label', 'SSH 与 AI 工作台');
-  panel.innerHTML = '<header><strong>SSH 与 AI 工作台</strong><button data-close aria-label="关闭工作台">✕</button></header><nav class="remote-nav"><button data-tab="connections">SSH 连接</button><button data-tab="files">远程文件</button><button data-tab="ai">AI 操作</button></nav><section class="remote-body"></section><footer class="remote-status" role="status">就绪</footer>';
+  panel.innerHTML = '<header><strong>SSH 与 AI 工作台</strong><button data-close aria-label="关闭工作台">✕</button></header><section class="remote-body"></section><footer class="remote-status" role="status">就绪</footer>';
   const main = document.getElementById('main-body');
   main.prepend(panel);
   const divider = document.createElement('div'); divider.className = 'remote-divider'; divider.hidden = true; panel.after(divider);
@@ -160,7 +160,7 @@
     if (existing && !forceNew) { term.open(); term.activate(existing.id); selected = existing.id; return existing; }
     notify('正在连接 SSH…');
     const session = await term.openInDir(state.cwd, { sshProfile: id, shell: 'cmd' });
-    if (session && !session.dead) selected = session.id;
+    if (session && !session.dead) { selected = session.id; await openAI(session.id); }
     await refresh(); return session;
   }
   function drawSessionTree() {
@@ -172,7 +172,8 @@
     tree.innerHTML = groups.map((g,i) => `<div class="ssh-group"><button data-group="${i}" aria-expanded="${expandedGroups.has(g)}">${expandedGroups.has(g) ? '▾' : '▸'} ${escape(g)}</button><div class="ssh-group-children" ${expandedGroups.has(g) ? '' : 'hidden'}>${data.profiles.filter(p => p.group === g).map(row).join('')}</div></div>`).join('') + data.profiles.filter(p => !p.group).map(row).join('') + (!data.profiles.length ? '<small>点击 ＋ 新建连接</small>' : '');
     tree.querySelectorAll('[data-group]').forEach(b => b.onclick = () => { const g = groups[Number(b.dataset.group)]; expandedGroups.has(g) ? expandedGroups.delete(g) : expandedGroups.add(g); drawSessionTree(); });
     tree.querySelectorAll('[data-profile]').forEach(b => {
-      b.onclick = wrap(() => connectProfile(b.dataset.profile));
+      b.ondblclick = wrap(() => connectProfile(b.dataset.profile, true));
+      b.onkeydown = wrap(event => { if (event.key === 'Enter') return connectProfile(b.dataset.profile, true); });
       b.oncontextmenu = event => { event.preventDefault(); const id = b.dataset.profile; popupMenu(event, [
         { label: '连接新终端', fn: wrap(() => connectProfile(id, true)) },
         { label: '打开 AI 会话', fn: wrap(async () => { const session = await connectProfile(id); if (session && !session.dead) await openAI(session.id); }) },
@@ -187,7 +188,11 @@
   document.getElementById('sidebar').addEventListener('click', event => { if (!navigation.contains(event.target) && event.target.closest('li,.side-link,#cron-entry')) close(); }, true);
   document.getElementById('term-tabs').addEventListener('contextmenu', event => {
     const id = event.target.closest('[data-session-id]')?.dataset.sessionId; if (!id) return;
-    event.preventDefault(); window.fbTerminalClipboard.showMenu(event, [{ label: '打开 AI 会话', fn: wrap(() => openAI(id)) }, ...shortcutMenu(id)]);
+    event.preventDefault();
+    const session = term.sessions.find(s => s.id === id);
+    const actions = [{ label: 'AI 操作', fn: wrap(() => openAI(id)) }];
+    if (session?.sshProfile && !session.dead) actions.unshift({ label: '远程文件', fn: wrap(async () => { selected = id; directory = '.'; term.open(); term.activate(id); await open('files'); }) });
+    window.fbTerminalClipboard.showMenu(event, [...actions, ...shortcutMenu(id)]);
   });
   async function render() {
     const rev = ++revision;
@@ -352,7 +357,7 @@
   }
   const join = (base, name) => (base === '/' ? '' : base.replace(/\/$/, '')) + '/' + name;
   async function files(rev) {
-    body.innerHTML = `<div class="remote-form">${chooseTarget(true)}</div><div class="remote-actions"><button data-refresh>刷新</button><button data-up title="上级目录" aria-label="上级目录">↑</button><button data-upload>上传文件</button></div><nav class="remote-breadcrumb" aria-label="远程路径"></nav><input class="remote-search" data-path value="${escape(directory)}" aria-label="远程目录"><div data-files></div><div data-transfers></div>`;
+    body.innerHTML = `<div class="remote-form">${chooseTarget(true)}</div><div class="remote-path-toolbar"><button data-up title="上级目录" aria-label="上级目录">↑</button><input class="remote-search" data-path value="${escape(directory)}" aria-label="远程目录"><button data-refresh>刷新</button><button data-upload>上传文件</button></div><div data-files></div><div data-transfers></div>`;
     body.querySelector('[name=target]').onchange = wrap(async event => { selected = event.target.value; directory = '.'; filePage = 0; await render(); });
     bind('[data-refresh]', () => { directory = body.querySelector('[data-path]').value; filePage = 0; return render(); });
     bind('[data-up]', () => { directory = directory.slice(0, directory.lastIndexOf('/')) || '/'; filePage = 0; return render(); });
@@ -362,11 +367,7 @@
     if (!selected) { body.querySelector('[data-files]').textContent = '请先连接 SSH 会话。'; return; }
     const result = await api('list', { id: selected, path: directory }); if (rev !== revision) return;
     directory = result.path; body.querySelector('[data-path]').value = directory;
-    const parts = directory.split('/').filter(Boolean), ancestors = [{ label: '/', path: '/' }];
-    parts.forEach((part,i) => ancestors.push({ label: part, path: '/' + parts.slice(0,i+1).join('/') }));
-    body.querySelector('.remote-breadcrumb').innerHTML = ancestors.map((a,i) => `<button data-ancestor="${i}" title="${escape(a.path)}">${escape(a.label)}</button>`).join('<span>/</span>');
-    body.querySelectorAll('[data-ancestor]').forEach(b => b.onclick = wrap(async () => { directory = ancestors[Number(b.dataset.ancestor)].path; filePage = 0; await render(); }));
-    body.querySelector('[data-files]').innerHTML = `<p class="remote-help">${escape(term.sessions.find(s => s.id === selected)?.title)} · ${result.entries.length} 项。文件“编辑”保存会写入远端。</p><table class="remote-files">${result.entries.slice(filePage * 200, (filePage + 1) * 200).map((e, index) => { const i = filePage * 200 + index; return `<tr data-entry="${i}" tabindex="0"><td class="name">${e.directory ? '📁' : '📄'} ${escape(e.name)}<div class="remote-help">${e.directory ? '文件夹' : e.size + ' B'} · ${new Date(e.mtime * 1000).toLocaleString()}</div></td><td>${e.directory ? `<button data-dir="${i}">打开</button>` : `<button data-download="${i}">下载</button><button data-edit-file="${i}">编辑</button>`}</td></tr>`; }).join('')}</table><div class="remote-actions"><button data-prev-page ${filePage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${filePage + 1} 页</span><button data-next-page ${(filePage + 1) * 200 >= result.entries.length ? 'disabled' : ''}>下一页</button></div>`;
+    body.querySelector('[data-files]').innerHTML = `<p class="remote-help">${escape(term.sessions.find(s => s.id === selected)?.title)} · ${result.entries.length} 项。文件“编辑”保存会写入远端。</p><table class="remote-files">${result.entries.slice(filePage * 200, (filePage + 1) * 200).map((e, index) => { const i = filePage * 200 + index; return `<tr data-entry="${i}" tabindex="0"><td class="name">${e.directory ? '📁' : '📄'} ${escape(e.name)}<div class="remote-help">${e.directory ? '文件夹' : e.size + ' B'} · ${new Date(e.mtime * 1000).toLocaleString()}</div></td><td>${e.directory ? `<button data-dir="${i}">打开</button>` : `<button data-download="${i}">下载</button><button data-edit-file="${i}">编辑</button>`}</td></tr>`; }).join('')}</table><div class="remote-pagination"><button data-prev-page ${filePage === 0 ? 'disabled' : ''}>上一页</button><span>第 ${filePage + 1} 页</span><button data-next-page ${(filePage + 1) * 200 >= result.entries.length ? 'disabled' : ''}>下一页</button></div>`;
     const enterEntry = async i => { const entry = result.entries[i]; if (entry.directory) { directory = join(directory, entry.name); filePage = 0; await render(); } else await editFile(join(directory, entry.name)); };
     body.querySelectorAll('[data-entry]').forEach(row => { row.ondblclick = wrap(event => { if (!event.target.closest('button')) return enterEntry(Number(row.dataset.entry)); }); row.onkeydown = wrap(event => { if (event.key === 'Enter' && event.target === row) return enterEntry(Number(row.dataset.entry)); }); });
     bind('[data-prev-page]', () => { filePage--; return render(); }); bind('[data-next-page]', () => { filePage++; return render(); });
@@ -406,6 +407,9 @@
     body.dataset.chatSession = sessionId;
     body.innerHTML = `<div class="ai-session-bar" role="tablist" aria-label="AI 会话">${sessions(false).map(session => `<button role="tab" aria-selected="${session.id === selected}" data-chat-session="${session.id}" title="${escape(session.title)}">${escape(session.title)}<small>${session.sshProfile ? 'SSH' : escape(session.shell || 'Shell')}</small></button>`).join('')}<button data-chat-add title="打开其他会话" aria-label="打开其他会话">＋</button><button data-chat-close title="关闭聊天面板，返回文件浏览" aria-label="关闭聊天面板">✕</button></div><div class="remote-log" aria-label="AI 对话" tabindex="0"></div><div class="chat-progress" role="status" hidden></div><div class="chat-composer"><div class="chat-resize-handle" role="separator" aria-label="调整聊天输入框高度" aria-orientation="horizontal" tabindex="0" title="拖动调整输入框高度"></div><div data-target-confirm hidden class="target-confirm-hint"></div><textarea class="remote-prompt" placeholder="输入消息，Enter 发送" aria-label="AI 任务"></textarea><div class="chat-input-actions"><details class="chat-options"><summary title="会话选项" aria-label="会话选项">☰</summary><div class="chat-options-menu"><div class="remote-target" data-environment>正在读取目标…</div><div class="chat-model">${escape(data.ai.name || '请在设置中配置模型')} · ${escape(data.ai.model || '')}</div><div class="remote-form">${targetOptions}${select('mode', '执行权限', [['read', '仅建议'], ['confirm', '确认后执行'], ['auto', '自动执行']], 'confirm', true)}${check('interactive', '允许 AI 交互式终端', true)}${check('upload', '允许上传本地文件', true)}${check('context', '发送终端最近 16 KB 内容', current.context)}</div><label class="chat-parameter" title="包含模型思考消耗；不能超过服务支持的上限">输出<select data-chat-budget aria-label="最大输出 tokens"><option value="">沿用配置</option><option value="8192">8K</option><option value="16384">16K</option><option value="32768">32K</option></select></label></div></details><button data-permission-pill class="permission-pill" title="设置当前会话执行权限">读取权限…</button><span class="chat-input-hint">Shift + Enter 换行</span><button data-stop title="停止 AI" aria-label="停止 AI">■</button><button data-run title="发送消息" aria-label="发送消息">↑</button></div></div>`;
     body.querySelectorAll('[data-chat-session]').forEach(b => b.onclick = wrap(() => openAI(b.dataset.chatSession)));
+    const sessionBar = body.querySelector('.ai-session-bar');
+    const activeTab = sessionBar?.querySelector('[aria-selected=true]');
+    if (activeTab) sessionBar.scrollLeft = Math.max(0, activeTab.offsetLeft - sessionBar.offsetLeft - (sessionBar.clientWidth - activeTab.offsetWidth) / 2);
     bind('[data-chat-add]', event => { event.stopPropagation(); const r = event.currentTarget.getBoundingClientRect(); popupMenu({ clientX: r.left, clientY: r.bottom }, [...sessions(false).map(session => ({ label: session.title + ' · ' + session.id, fn: wrap(() => openAI(session.id)) })), { label: '新建本地终端会话', fn: wrap(async () => { const session = await term.openInDir(state.cwd); if (session) await openAI(session.id); }) }, { label: 'SSH 会话管理', fn: wrap(async () => { managerExpanded = true; await refresh(); await open('connections'); }) }]); });
     bind('[data-permission-pill]', () => { body.querySelector('.chat-options').open = !body.querySelector('.chat-options').open; });
     bind('[data-chat-close]', close);

@@ -75,7 +75,7 @@ contextBridge.exposeInMainWorld('fanboxTheme', {
 
 contextBridge.exposeInMainWorld('fanboxRemote', {
   call: (action, args) => {
-    const allowed = ['mcp-read','mcp-save','mcp-prepare','cli-permission','state','save-profile','save-shortcut','delete-shortcut','rename-shortcut-group','run-shortcut','delete-profile','save-ai','list-ai-models','test-ai-model','reveal-ai-key','reveal-im-secret','pick-key','list','read','write','transfer','cancel-transfer','ai-run','ai-stop','ai-takeover','ai-resume','history-remove','history-all','history-preview','history-list','history-open','history-read','history-delete','target','set-target-environment','auth-reply','approval-reply','activate-ai','deactivate-ai','delete-ai','policy','ai-clear','im-state','im-reconnect','im-save','im-qr-start','im-qr-cancel','im-bind','im-unbind','im-terminal-created'];
+    const allowed = ['mcp-read','mcp-save','mcp-prepare','cli-permission','state','save-profile','save-shortcut','delete-shortcut','rename-shortcut-group','run-shortcut','delete-profile','save-ai','list-ai-models','test-ai-model','reveal-ai-key','reveal-im-secret','pick-key','list','read','write','transfer','cancel-transfer','ai-run','ai-stop','ai-takeover','ai-resume','history-remove','history-all','history-preview','history-list','history-open','history-read','history-delete','target','set-target-environment','auth-reply','approval-reply','activate-ai','deactivate-ai','delete-ai','policy','ai-clear','im-wake-state','im-wake-save','im-wake-run','im-state','im-reconnect','im-save','im-qr-start','im-qr-cancel','im-bind','im-unbind','im-terminal-created'];
     if (!allowed.includes(action)) return Promise.reject(new Error('Unknown remote action'));
     return ipcRenderer.invoke('remote:' + action, args);
   },
@@ -89,3 +89,5 @@ contextBridge.exposeInMainWorld('fanboxRemote', {
 contextBridge.exposeInMainWorld('fanboxDesktopPet',{isDesktop:false,reset:()=>ipcRenderer.invoke('pet:reset'),visible:value=>ipcRenderer.invoke('pet:visible',value),onSettings:fn=>{const listener=()=>fn();ipcRenderer.on('pet:settings',listener);return()=>ipcRenderer.removeListener('pet:settings',listener);}});
 
 contextBridge.exposeInMainWorld('fanboxWindowMenu',{colors:args=>ipcRenderer.invoke('window:colors',args),list:()=>ipcRenderer.invoke('window:menus'),open:args=>ipcRenderer.invoke('window:menu',args)});
+
+contextBridge.exposeInMainWorld('fanboxStatistics', { onOpen: cb => { const listener = (_, view) => cb(view); ipcRenderer.on('statistics:open', listener); return () => ipcRenderer.removeListener('statistics:open', listener); } });

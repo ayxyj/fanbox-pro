@@ -31,7 +31,13 @@ module.exports = {
       const delivery=previous.catch(()=>{}).then(async () => {
         if(settled || signal.aborted || !this.valid(route))return abort();
         const details = q.options.map((o,i) => `${i+1}. ${o.label}\n${o.description || ''}`).join('\n\n');
-        await this.say(route, `${q.title || 'Claude 提问'}：${q.question}\n\n${details}\n\n${q.nativeMenu ? (q.nativeText?'请直接回复填写内容。':'')+'终端与此卡片同步，任一端操作后旧卡片可能失效。' + (q.searchable ? ' 可回复“搜索 关键词”筛选历史会话。' : '') : ''}\n${q.multiSelect ? '可多选，选好后点击提交；也可回复多个编号，如 1,3。' : (q.fixedOptions ? '点击选项或回复编号。' : '点击选项，或直接回复编号/自定义内容。')}\n指定回答：/回答 ${token} 您的答案\n4 分钟内有效。`);
+        const mode = q.nativeText || !q.options.length ? '文字输入' : q.multiSelect ? '多选' : '单选';
+        const guide = mode === '文字输入'
+          ? '请直接回复文字内容（支持换行，最多 4000 字符）。'
+          : q.multiSelect
+            ? '点击选项可勾选/取消，最后点击“提交选择”；也可直接回复多个编号，如：1 3 或 1,3。'
+            : q.fixedOptions ? '点击选项或直接回复编号，如：1。选择“其他/自定义”后可继续填写文字。' : '点击选项、回复编号，或直接回复自定义内容。';
+        await this.say(route, `${q.title || 'Claude 提问'} · ${mode}\n会话 #${route.number} · ${route.project}\n\n${q.question}\n\n${details}\n\n${guide}\n${q.nativeMenu ? '回复“取消”可退出当前问题。终端与企业微信同步，本机操作后旧问题可能失效。' : ''}${q.searchable ? '\n回复“搜索 关键词”筛选历史会话。' : ''}\n多个问题并存时请指定回答：/回答 ${token} 您的答案\n4 分钟内有效。`);
         if (settled || !this.valid(route)) return abort();
         try { await this.client.sendMessage(route.userid, { msgtype: 'template_card', template_card: this.questionCard(entry) }); }
         catch { if(!settled)await this.say(route,`选项卡片发送失败，请直接按上方提示回复，或发送 /回答 ${token} 您的答案。`); }
@@ -48,7 +54,7 @@ module.exports = {
       sub_title_text: '会话 #' + entry.route.number + ' · ' + entry.route.project,
       button_list: ended ? [{text:'已处理',key:key('done'),style:4}] : [
         ...q.options.map((o,i) => ({text: `${selected.has(i) ? '✓ ' : ''}${i+1}. ${o.label}`.slice(0,20),key:key(String(i)),style:selected.has(i)?1:2})),
-        ...(q.fixedOptions ? [] : [{text:q.multiSelect?'提交选择':'自定义回答',key:key(q.multiSelect?'done':'custom'),style:1}]),
+        ...(q.fixedOptions && !q.multiSelect ? [] : [{text:q.multiSelect?'提交选择':'自定义回答',key:key(q.multiSelect?'done':'custom'),style:1}]),
         {text:'取消问题',key:key('cancel'),style:2}
       ] };
   },
@@ -57,6 +63,7 @@ module.exports = {
     const count=Math.max(1,Math.ceil(q.options.length/2)),buttons=q.options.slice(page*2,page*2+2).map((o,j)=>{const i=page*2+j;return {text:((selected.has(i)?'✓ ':'')+(i+1)+'. '+o.label).slice(0,20),key:key(i),style:selected.has(i)?1:2};});
     if(page>0)buttons.push({text:'上一组选项',key:key('prev'),style:2});
     if(page+1<count)buttons.push({text:'下一组选项',key:key('next'),style:2});
+    if(q.nativeText)buttons.push({text:'填写回答',key:key('custom'),style:1});
     if(q.multiSelect)buttons.push({text:'提交选择',key:key('done'),style:1});
     buttons.push({text:'取消',key:key('cancel'),style:2});
     return {card_type:'button_interaction',task_id:'question_'+token,main_title:{title:ended?'已提交或已失效':q.title,desc:q.question.slice(0,120)},sub_title_text:'会话 #'+entry.route.number+' · '+entry.route.project+' · '+(page+1)+'/'+count,button_list:ended?[{text:'已处理',key:key('done'),style:4}]:buttons};
@@ -78,7 +85,7 @@ module.exports = {
       else if (action === 'done' && entry.q.multiSelect) {
         if (!entry.selected.size) { await this.send(userid,'请先选择至少一项。'); return; }
         entry.finish(entry.q.nativeMenu ? {indices:[...entry.selected].sort((a,b)=>a-b)} : [...entry.selected].sort().map(i=>entry.q.options[i].label).join(', '));
-      } else if (action === 'custom' && !entry.q.fixedOptions) { await this.say(entry.route,`请发送：/回答 ${entry.token} 自定义内容`); return; }
+      } else if (action === 'custom' && (!entry.q.fixedOptions || entry.q.nativeText)) { await this.say(entry.route,`请发送：/回答 ${entry.token} 自定义内容`); return; }
       try { await this.client.updateTemplateCard(frame,this.questionCard(entry,!this.questions.has(entry.token)),[userid]); }
       catch { await this.send(userid,this.questions.has(entry.token)?'选择已记录，卡片显示暂未更新。':'回答已记录，卡片显示暂未更新。'); }
     } finally { entry.busy = false; }
@@ -101,18 +108,18 @@ module.exports = {
         entry.finish({search});return true;
       }
       if(raw.trim()==='取消'){entry.finish({cancel:true});return true;}
-      if(!/^\s*\d+(?:\s*[,，]\s*\d+)*\s*$/.test(raw)){await this.say(entry.route,'请回复选项编号'+(entry.q.searchable?'、搜索 关键词':'')+'，或回复取消。');return true;}
-      const indices=[...new Set(raw.trim().split(/[,，]/).map(n=>Number(n.trim())-1))];
+      if(!/^\s*\d+(?:[\s,，、]+\d+)*\s*$/.test(raw)){await this.say(entry.route,'请回复选项编号'+(entry.q.searchable?'、搜索 关键词':'')+'，或回复取消。');return true;}
+      const indices=[...new Set(raw.trim().split(/[\s,，、]+/).map(n=>Number(n.trim())-1))];
       if(indices.some(i=>!entry.q.options[i])||(!entry.q.multiSelect&&indices.length!==1)){await this.say(entry.route,'选项编号无效，请查看当前问题。');return true;}
       entry.finish({indices});return true;
     }
     let answer = raw;
-    if (/^\s*\d+(?:\s*[,，]\s*\d+)*\s*$/.test(raw)) {
-      const ids = [...new Set(raw.trim().split(/[,，]/).map(n=>Number(n.trim())-1))];
+    if (/^\s*\d+(?:[\s,，、]+\d+)*\s*$/.test(raw)) {
+      const ids = [...new Set(raw.trim().split(/[\s,，、]+/).map(n=>Number(n.trim())-1))];
       if(ids.some(i=>!entry.q.options[i])||(!entry.q.multiSelect&&ids.length!==1)){await this.send(userid,'选项编号无效，请重新选择。');return true;}
       answer=ids.map(i=>entry.q.options[i].label).join(', ');
     }
-    if(entry.q.fixedOptions && !entry.q.options.some(o=>o.label===answer)){await this.say(entry.route,'请点击选项或回复有效编号。');return true;}
+    if(entry.q.fixedOptions && !entry.q.multiSelect && !entry.q.options.some(o=>o.label===answer)){await this.say(entry.route,'请点击选项或回复有效编号。');return true;}
     entry.finish(answer);await this.say(entry.route,entry.q.title ? '选择已提交。' : '回答已提交给 Claude。');return true;
   }
 };

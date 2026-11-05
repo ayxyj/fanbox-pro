@@ -5,7 +5,7 @@
  * 复用零依赖后端 server.js（文件能力），叠加 node-pty 内嵌终端，
  * 让 TUI coding agent（Claude Code / Codex / Aider…）在界面里直接跑起来。
  */
-const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, safeStorage } = require('electron');
+const { app, BrowserWindow, ipcMain, shell, nativeImage, Menu, clipboard, dialog, net, safeStorage, screen } = require('electron');
 const path = require('path');
 const os = require('os');
 const fs = require('fs');
@@ -60,7 +60,14 @@ const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
 function loadBounds() {
   try {
     const b = JSON.parse(fs.readFileSync(stateFile(), 'utf8'));
-    if (b && b.width > 400 && b.height > 300) return b;
+    if (b && Number.isFinite(b.width) && Number.isFinite(b.height) && b.width > 400 && b.height > 300) {
+      const displays = screen.getAllDisplays();
+      const visible = Number.isFinite(b.x) && Number.isFinite(b.y) && displays.some(({workArea:r}) => Math.min(b.x+b.width,r.x+r.width)-Math.max(b.x,r.x) >= 160 && Math.min(b.y+40,r.y+r.height)-Math.max(b.y,r.y) >= 30);
+      if (visible) return b;
+      const r = screen.getPrimaryDisplay().workArea;
+      const width = Math.min(b.width,r.width), height = Math.min(b.height,r.height);
+      return {width,height,x:Math.round(r.x+(r.width-width)/2),y:Math.round(r.y+(r.height-height)/2)};
+    }
   } catch { /* 首次启动无记录 */ }
   return { width: 1320, height: 860 };
 }
@@ -455,8 +462,8 @@ ipcMain.handle('clip:file', (e, { path: p }) => new Promise((resolve) => {
     execFile('osascript', ['-e', 'on run argv', '-e', 'set the clipboard to (POSIX file (item 1 of argv))', '-e', 'end run', p], (err) => resolve({ ok: !err, error: err && err.message }));
   } else if (process.platform === 'win32') {
     // Windows：用 PowerShell Set-Clipboard -FileDropList 创建文件引用，资源管理器可粘贴
-    const ps = `[Collections.Specialized.StringCollection]::new(@('${p.replace(/'/g, "''")}')) | Set-Clipboard -FileDropList`;
-    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], (err) => resolve({ ok: !err, error: err && err.message }));
+    const ps = `$ErrorActionPreference='Stop'; Add-Type -AssemblyName System.Windows.Forms; $files = New-Object System.Collections.Specialized.StringCollection; [void]$files.Add('${p.replace(/'/g, "''")}'); [System.Windows.Forms.Clipboard]::SetFileDropList($files)`;
+    execFile('powershell.exe', ['-NoProfile', '-NonInteractive', '-STA', '-Command', ps], { windowsHide: true, timeout: 10000 }, (err) => resolve({ ok: !err, error: err && err.message }));
   } else {
     // Linux: 复制 file:// URI 到剪贴板（xclip X11 / wl-copy Wayland）
     const uri = 'file://' + p;
@@ -532,15 +539,10 @@ ipcMain.handle('pty:proc', async (e, { id }) => {
   const p = terminals.get(id);
   if (!p || p.remote) return { ok: false };
   if (process.platform !== 'win32') return { ok: true, proc: p.process || '' };
-  // node-pty reports the shell name on Windows even while a CLI owns the terminal.
-  const pid = Number(p.pid);
-  if (!Number.isSafeInteger(pid) || pid <= 0) return { ok: false };
-  const script = `Import-Module "$PSHOME\\Modules\\CimCmdlets\\CimCmdlets.psd1"; @(Get-CimInstance Win32_Process -Filter 'ParentProcessId = ${pid}' | Where-Object { $_.Name -ne 'conhost.exe' } | Select-Object -ExpandProperty Name) | ConvertTo-Json -Compress`;
-  return new Promise(resolve => require('child_process').execFile('powershell.exe', ['-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script], { windowsHide: true, timeout: 5000 }, (error, stdout) => {
-    if (error) return resolve({ ok: false });
-    try { const names = stdout.trim() ? JSON.parse(stdout) : []; const children = Array.isArray(names) ? names : [names]; resolve({ ok: true, proc: children[0] || p.process || '', busy: children.length > 0 }); }
-    catch { resolve({ ok: false }); }
-  }));
+  try {
+    const state = await require('./terminal-process').inspectProcess({ identity: { pid: p.pid } });
+    return { ok: true, proc: state.name || p.process || 'powershell.exe', busy: !state.idle };
+  } catch (error) { return { ok: false, error: error.message }; }
 });
 
 // ---------- 文件监听（agent 改文件 → 自动刷新 + 跨项目变更收件箱）----------

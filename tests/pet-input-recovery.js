@@ -9,7 +9,7 @@ const context={character,desktop:true,desktopBridge:{drag:p=>{phases.push(p);ret
 vm.runInNewContext('(()=>{let drag=null,moved=false;'+source.slice(start,end)+'})()',context);
 const down=()=>character.onpointerdown({button:0,pointerId:1,screenX:10,screenY:10});
 assert.doesNotThrow(down);assert.equal(phases.at(-1),'start','native drag starts even if capture fails');
-documentEvents.pointermove({buttons:1,screenX:35,screenY:25,target:{}});assert.equal(phases.at(-1),'move','document fallback moves the window');
+documentEvents.pointermove({buttons:1,screenX:35,screenY:25,target:{}});assert.equal(phases.at(-1),'start','movement does not flood native IPC');
 character.onlostpointercapture();assert.equal(phases.at(-1),'end');character.onclick();assert.equal(restores,1,'lost capture cannot suppress later clicks');
 down();documentEvents.pointermove({buttons:0,target:{}});assert.equal(phases.at(-1),'end','missed mouse-up is recovered');
 down();windowEvents.blur();assert.equal(phases.at(-1),'end');character.onclick();assert.equal(restores,2);

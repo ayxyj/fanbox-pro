@@ -13,7 +13,13 @@ let seq=0;const frame=(user,text,msgid=String(++seq))=>({body:{aibotid:'bot',msg
  service.save({botId:'bot',secret:'hidden',enabled:true,allowExecution:true});
  assert(!JSON.stringify(service.state()).includes('hidden'));
  await service.accept(frame('alice','hello'));assert.equal(n,0);assert.equal(service.pendingUsers.size,1);
- service.bind('alice');const a=frame('alice','task');await service.accept(a);await service.accept(a);assert.equal(runs.length,1);
+ service.bind('alice');
+ await service.accept(frame('alice','/help'));
+ const help=sent.at(-1).body.markdown.content;
+ assert(help.includes('桥接命令\n\n• /claude'));
+ assert(help.includes('显示本帮助\n\n• /stop'));
+ assert(!help.includes('/halo'));
+const a=frame('alice','task');await service.accept(a);await service.accept(a);assert.equal(runs.length,1);
  await service.accept(frame('bob','hello'));service.bind('bob');await service.accept(frame('bob','task'));assert.notEqual(runs[0].sessionId,runs[1].sessionId);
  await service.accept(frame('alice','again'));assert.equal(runs[0].sessionId,runs[2].sessionId);assert.equal(runs[2].conversationId,'ct1');
  const route=[...service.routes.values()].find(r=>r.userid==='alice');const confirmation=service.confirm(route,'execute?','echo hello');const token=[...service.approvals.keys()][0];
