@@ -1,5 +1,39 @@
 'use strict';
 const { authHeaders } = require('./model-provider');
+async function describeHttpError(response, config, touch) {
+  const parts = [`模型服务返回 HTTP ${response.status}`];
+  const retryAfter = response.headers.get('retry-after');
+  if (retryAfter && /^\d+$/.test(retryAfter)) parts.push(`服务建议等待 ${retryAfter} 秒后重试`);
+  const requestId = response.headers.get('x-request-id') || response.headers.get('request-id');
+  if (requestId && /^[\w.-]{1,128}$/.test(requestId)) parts.push(`请求 ID ${requestId}`);
+  const contentType = response.headers.get('content-type') || '';
+  if (!response.body || !/json|^text\/plain/i.test(contentType)) {
+    await response.body?.cancel();
+    return parts.join(' · ');
+  }
+  const decoder = new TextDecoder();
+  let text = '', remaining = 8192;
+  for await (const chunk of response.body) {
+    touch();
+    text += decoder.decode(chunk.subarray(0, remaining), { stream: true });
+    remaining -= chunk.length;
+    if (remaining <= 0) break;
+  }
+  text += decoder.decode();
+  let detail = text;
+  if (/json/i.test(contentType)) {
+    try {
+      const body = JSON.parse(text);
+      detail = body.error?.message || body.message || body.detail || body.error;
+    } catch { detail = ''; }
+  }
+  if (typeof detail === 'string') {
+    if (config.apiKey) detail = detail.split(config.apiKey).join('[已隐藏]');
+    detail = detail.replace(/[\x00-\x1f\x7f]+/g, ' ').trim().slice(0, 800);
+    if (detail) parts.push(detail);
+  }
+  return parts.join(' · ');
+}
 // Canonical tool messages are translated at the protocol boundary only.
 async function requestModel(config, messages, tools, signal, onDelta) {
   const timeout = new AbortController();
@@ -55,7 +89,7 @@ async function requestModelResponse(config, messages, tools, signal, onDelta, to
     throw Error('模型连接失败：' + (reasons[code] || '请检查服务地址、网络或超时设置'));
   }
   touch();
-  if (!response.ok) { await response.body?.cancel(); throw Error(`模型服务返回 HTTP ${response.status}`); }
+  if (!response.ok) throw Error(await describeHttpError(response, config, touch));
   let body;
   if (response.headers.get('content-type')?.includes('text/event-stream')) body = await readStream(response, anthropic, onDelta, touch);
   else {

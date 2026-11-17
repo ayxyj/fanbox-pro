@@ -18,6 +18,18 @@ function createDesktopPet({ port, getMain, getState }) {
   const petGuard=e=>{if(pet.isDestroyed()||e.sender!==pet.webContents||e.senderFrame!==pet.webContents.mainFrame||e.senderFrame.url!==`http://127.0.0.1:${port}/desktop-pet.html`)throw Error('不允许访问桌面宠物');};
   const mainGuard=e=>{const main=getMain();if(!main||e.sender!==main.webContents||e.senderFrame!==main.webContents.mainFrame||new URL(e.senderFrame.url).origin!==`http://127.0.0.1:${port}`)throw Error('不允许访问桌面宠物设置');};
   const restore=()=>{const main=getMain();if(!main||main.isDestroyed())return;if(main.isMinimized())main.restore();main.show();main.moveTop();main.focus();};
+  let raisedByPet;
+  const toggleMain=()=>{
+    const main=getMain();
+    if(!main||main.isDestroyed())return;
+    if(raisedByPet===main&&main.isVisible()&&!main.isMinimized()){
+      raisedByPet=undefined;
+      main.minimize();
+      return;
+    }
+    restore();
+    raisedByPet=main;
+  };
   const updateDrag=()=>{
     if(!dragging||pet.isDestroyed())return;
     const cursor=screen.getCursorScreenPoint();
@@ -44,7 +56,7 @@ function createDesktopPet({ port, getMain, getState }) {
   const handlers={
     'pet:interactive':(e,value)=>{petGuard(e);if(typeof value!=='boolean')return;interactive=value;if(!dragging)pet.setIgnoreMouseEvents(!value,{forward:true});},
     'pet:state':e=>{petGuard(e);return {ok:true,value:getState()};},
-    'pet:restore':e=>{petGuard(e);restore();},
+    'pet:restore':e=>{petGuard(e);toggleMain();},
     'pet:settings':e=>{petGuard(e);restore();getMain()?.webContents.send('pet:settings');},
     'pet:reset':e=>{mainGuard(e);clearTimeout(inputRefreshTimer);resetInput();const r=screen.getPrimaryDisplay().workArea,b=pet.getBounds();pet.setBounds(clamp({...b,x:r.x+r.width-b.width-20,y:r.y+r.height-b.height-20}));refreshInputSurface();persist();},
     'pet:visible':(e,visible)=>{mainGuard(e);if(typeof visible!=='boolean')return;pet.webContents.send('pet:visibility',visible);if(visible){pet.setBounds(clamp(pet.getBounds()));showPet();}else pet.hide();},

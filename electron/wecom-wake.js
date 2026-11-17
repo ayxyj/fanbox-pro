@@ -65,13 +65,15 @@ class WecomWake {
     if(this.busy) throw Error('正在唤醒，请稍后');
     this.busy = true;
     const script = `$ErrorActionPreference = "Stop"
+try {
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type @"
 using System;
 using System.Runtime.InteropServices;
 public class FanboxWake {
- [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
- [DllImport("user32.dll")] public static extern bool ShowWindowAsync(IntPtr h,int n);
+ [StructLayout(LayoutKind.Sequential)] public struct Point { public int X,Y; }
+ [DllImport("user32.dll")] public static extern bool GetCursorPos(out Point point);
+ public static Point Position() { Point p; if(!GetCursorPos(out p)) throw new Exception("WAKE_DESKTOP_UNAVAILABLE"); return p; }
  [StructLayout(LayoutKind.Sequential)] public struct MouseInput { public int dx,dy; public uint data,flags,time; public UIntPtr extra; }
  [StructLayout(LayoutKind.Sequential)] public struct Input { public uint type; public MouseInput mouse; }
  [DllImport("user32.dll",SetLastError=true)] public static extern uint SendInput(uint count,Input[] inputs,int size);
@@ -79,28 +81,46 @@ public class FanboxWake {
    Input input=new Input(); input.type=0; input.mouse.dx=x; input.mouse.dy=y; input.mouse.flags=0x2001;
    if(SendInput(1,new Input[]{input},Marshal.SizeOf(typeof(Input)))!=1) throw new Exception("Mouse input blocked");
  }
- [DllImport("user32.dll")] public static extern IntPtr OpenInputDesktop(uint f,bool i,uint a);
- [DllImport("user32.dll")] public static extern bool CloseDesktop(IntPtr h);
 }
 "@
-$desk=[FanboxWake]::OpenInputDesktop(0,$false,256)
-if($desk -eq [IntPtr]::Zero){throw 'Desktop unavailable or locked'}
-[FanboxWake]::CloseDesktop($desk) | Out-Null
-$p=Get-Process WXWork -ErrorAction SilentlyContinue | Where-Object {$_.MainWindowHandle -ne 0} | Select-Object -First 1
-if(!$p){throw 'WeCom window not found; open and sign in first'}
-[FanboxWake]::ShowWindowAsync($p.MainWindowHandle,9) | Out-Null
-if(![FanboxWake]::SetForegroundWindow($p.MainWindowHandle)){throw 'Cannot activate WeCom window'}
-Start-Sleep -Milliseconds 400
+$session=(Get-Process -Id $PID).SessionId
+$all=@(Get-Process WXWork -ErrorAction SilentlyContinue)
+if(!$all.Count){throw 'WAKE_NOT_RUNNING'}
+$mine=@($all | Where-Object {$_.SessionId -eq $session})
+if(!$mine.Count){throw 'WAKE_OTHER_SESSION'}
+$moved=$false
 for($i=0;$i -lt 3;$i++) {
+ $before=[FanboxWake]::Position()
  [FanboxWake]::Move(45,0)
  Start-Sleep -Milliseconds 300
+ $after=[FanboxWake]::Position()
+ if($before.X -ne $after.X -or $before.Y -ne $after.Y){$moved=$true}
  [FanboxWake]::Move(-45,0)
  Start-Sleep -Milliseconds 300
+ $back=[FanboxWake]::Position()
+ if($after.X -ne $back.X -or $after.Y -ne $back.Y){$moved=$true}
+}
+if(!$moved){throw 'WAKE_CURSOR_UNCHANGED'}
+Write-Output 'WAKE_OK'
+} catch {
+ Write-Output ('WAKE_ERROR:' + $_.Exception.Message)
+ exit 1
 }
 `;
     try {
-      await new Promise((resolve,reject) => execFile('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:15000},e=> e ? reject(Error('唤醒失败，请确认电脑未锁屏且企业微信已打开并登录')) : resolve()));
-      return '已激活企业微信并模拟鼠标移动，请在手机端确认在线状态';
+      await new Promise((resolve,reject) => execFile('powershell.exe',['-NoProfile','-NonInteractive','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{windowsHide:true,timeout:15000},(error,stdout) => {
+        if(!error) return resolve(stdout);
+        const messages = {
+          WAKE_NOT_RUNNING:'当前机器没有运行企业微信，请先打开并登录。',
+          WAKE_OTHER_SESSION:'企业微信运行在另一个 Windows 会话，请在企业微信所在的同一会话启动 FanBox。',
+          WAKE_CURSOR_UNCHANGED:'已尝试鼠标输入，但未检测到光标位移。VDI 锁屏或断开可能阻止了输入，请连接并解锁后重试。',
+          WAKE_DESKTOP_UNAVAILABLE:'当前桌面不可操作，请连接并解锁远程桌面后重试。',
+          'Mouse input blocked':'Windows 拒绝模拟鼠标输入，请确认桌面已解锁，并让 FanBox 与企业微信使用相同的运行权限。'
+        };
+        const key=Object.keys(messages).find(k=>String(stdout).includes(k));
+        reject(Error(key ? messages[key] : error.killed ? '唤醒超时，请重试；若持续失败，请检查远程桌面状态。' : '唤醒程序执行失败，请确认 Windows PowerShell 可正常运行。'));
+      }));
+      return '已检测到光标位移，请在手机确认企微在线状态。';
     } finally { this.busy = false; }
   }
 }

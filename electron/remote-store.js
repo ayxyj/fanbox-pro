@@ -60,7 +60,7 @@ class RemoteStore {
     for (const key of ['password', 'passphrase', 'proxyPassword']) if (input[key]) secrets[key] = String(input[key]);
     const p = { id, name: String(input.name || input.host), group: String(input.group || ''), host: String(input.host).trim(), port,
       detectEnvironment: input.detectEnvironment === undefined ? old?.detectEnvironment === true : input.detectEnvironment === true,
-      shortcuts: old?.shortcuts || [], terminalType: input.terminalType || old?.terminalType || 'xterm',
+      shortcuts: old?.shortcuts || [], shortcutGroups: old?.shortcutGroups || [], terminalType: input.terminalType || old?.terminalType || 'xterm',
       username: String(input.username).trim(), auth: input.auth === 'key' ? 'key' : 'password', keyPath: String(input.keyPath || ''),
       jumpId: input.jumpId || '', proxy: input.proxy || null, policy: input.policy ? { mode: input.policy.mode, interactive: !!input.policy.interactive } : null, remember: !!input.remember };
     if (!['xterm','xterm-256color','vt100'].includes(p.terminalType)) throw Error('无效终端类型');
@@ -102,12 +102,24 @@ class RemoteStore {
     profile.shortcuts = items.filter(x => x.id !== id);
     try { this.persist(); } catch (e) { profile.shortcuts = items; throw e; }
   }
+  saveShortcutGroup({ profileId, name }) {
+    this.shortcuts(profileId);
+    const profile = this.data.profiles.find(p => p.id === profileId);
+    name = String(name || '').trim();
+    if (!name || name.length > 100) throw Error('请填写组名称（最多 100 字符）');
+    if ((profile.shortcutGroups || []).includes(name) || profile.shortcuts?.some(item => item.group === name)) throw Error('组名称已存在');
+    const previous = profile.shortcutGroups;
+    profile.shortcutGroups = [...(previous || []), name];
+    try { this.persist(); } catch (error) { profile.shortcutGroups = previous; throw error; }
+  }
   renameShortcutGroup({ profileId, group, name }) {
     const profile = this.data.profiles.find(p => p.id === profileId), items = this.shortcuts(profileId);
     name = String(name || '').trim();
     if (name.length > 100) throw Error('分组名称过长');
+    const previousGroups = profile.shortcutGroups;
+    profile.shortcutGroups = [...new Set([...(previousGroups || []).filter(value => value !== group), ...(name ? [name] : [])])];
     profile.shortcuts = items.map(x => x.group === group ? { ...x, group: name } : x);
-    try { this.persist(); } catch (e) { profile.shortcuts = items; throw e; }
+    try { this.persist(); } catch (e) { profile.shortcuts = items; profile.shortcutGroups = previousGroups; throw e; }
   }
   aiList() { return this.data.aiConfigs.map(({ key, ...p }) => ({ ...p, hasKey: !!key, active: p.id === this.data.activeAIId })); }
   aiConfig(publicOnly = true) {

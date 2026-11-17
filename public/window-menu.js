@@ -32,7 +32,7 @@
   new MutationObserver(syncColors).observe(document.documentElement, {attributes:true,attributeFilter:['style','class','data-theme','data-theme-mode']});
   window.addEventListener('load',syncColors);
   syncColors();
-  window.fanboxWindowMenu.list().then(labels => labels.forEach((label,index) => {
+  window.fanboxWindowMenu.list(window.fanboxLang).then(labels => labels.forEach((label,index) => {
     const button = document.createElement('button');
     button.textContent = label.replace(/&/g, ''); button.setAttribute('aria-haspopup', 'menu');
     button.onclick = () => {

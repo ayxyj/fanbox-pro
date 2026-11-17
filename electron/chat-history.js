@@ -69,6 +69,7 @@ class ChatHistory {
     else if (event.type === 'analysis-end') { const item = record.items.find(i => i.key === key); if (item) item.thinking = false; }
     else if (event.type === 'message' || event.type === 'text-delta') { const item = this.item(record, 'assistant', '', key); item.text = (item.text + event.text).slice(-100000); }
     else if (event.type === 'reasoning-delta') { const item = this.item(record, 'assistant', '', key); item.reasoning = (item.reasoning + event.text).slice(-64000); }
+    else if (event.type === 'metrics') this.item(record, 'assistant', '', key).metrics = { model: event.model, maxTokens: event.maxTokens, reasoningEffort: event.reasoningEffort, usage: event.usage };
     else if (event.type === 'command') this.item(record, 'command', event.text);
     else if (event.reminder) this.item(record, 'notice', '命令已运行超过 5 分钟，仍在监听。');
     else return;

@@ -7,17 +7,18 @@ const { isTerminalReply: reply } = require('./terminal-protocol');
 const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
 const menuKey = menu => menu && hash({kind:menu.kind,question:menu.question,options:menu.options.map(o=>o.label.replace(/^(?:\[[ x]\]|[☐☑✓✔])\s*/i,''))});
 function parseMenu(lines) {
+ lines=lines.map(line=>line.replace(/^\s*│ ?/,'').replace(/\s*│\s*$/,''));
  let footer = lines.findLastIndex(l => /(?:enter.*(?:select|confirm|submit)|space.*(?:select|toggle)|esc.*(?:cancel|back|exit))/i.test(l));
  // The workspace trust dialog has no keyboard-help footer in some Claude versions.
  if (footer < 0 && lines.some(l=>/Quick safety check:|Do you trust (?:the files in )?this folder/i.test(l)) && lines.some(l=>/Yes, I trust this folder/i.test(l)) && lines.some(l=>/No, exit/i.test(l))) footer=lines.findLastIndex(l=>l.trim())+1;
  if (footer < 0) return null;
- const tail = lines.slice(footer + 1).join('').trim();
+ const tail = lines.slice(footer + 1).filter(line=>!/^\s*[─━┌┐└┘╭╮╰╯]+\s*$/.test(line)).join('').trim();
  if (tail) return null;
  const body=lines.slice(0,footer), resume=body.some(l=>/(?:Resume|Continue|Search).*session|Select a conversation/i.test(l));
  let options=[];let selected=-1,contextStart=0,optionsEnd=body.length;
  for(let row=0;row<body.length;row++){
   const line=body[row];
-  const numbered=line.match(/^\s*([❯>›])?\s*(\d+)\.\s+(.*\S)\s*$/);
+  const numbered=line.match(/^\s*([❯>›])?\s*(\d+)[.)]\s+(.*\S)\s*$/);
   if(numbered){if(numbered[1])selected=options.length;options.push({label:numbered[3],row,number:Number(numbered[2]),checked:/^[☑✓✔]|\[x\]/i.test(numbered[3])});}
  }
  // Only recognize a numbered menu with a real focused item and contiguous numbering.
@@ -36,6 +37,16 @@ function parseMenu(lines) {
   }
   if(selected<0 || options.some((o,i)=>i&&o.number!==options[i-1].number+1))return null;
   options.forEach((o,i)=>{o.description=body.slice(o.row+1,options[i+1]?.row??optionsEnd).filter(l=>!/^\s*[─━]+\s*$/.test(l)).join(' ').trim().slice(0,800);});
+ }else if(body.some(l=>/^\s*[❯>›]?\s*(?:\[[ x]\]|[☐☑☒])\s+\S/i.test(l))){
+  for(let row=0;row<body.length;row++){
+   const match=body[row].match(/^\s*([❯>›])?\s*(\[[ x]\]|[☐☑☒])\s+(.+\S|\S)\s*$/i);
+   if(!match)continue;if(match[1])selected=options.length;
+   options.push({label:match[3],row,checked:/x|☑|☒/i.test(match[2]),description:''});
+  }
+  if(selected<0)return null;
+ }else if(/enter.*submit/i.test(lines.slice(Math.max(0,footer-2),footer+1).join(' '))&&body.some(l=>/[?？]|(?:type|enter).*answer/i.test(l))&&body.some(l=>/^\s*[❯>›]\s*$/.test(l))){
+  const row=body.findIndex(l=>/^\s*[❯>›]\s*$/.test(l));
+  selected=0;options=[{label:'Type something.',row,checked:false,description:''}];
  }else if(body.some(l=>/Accessing workspace:|Quick safety check:/i.test(l))){
   // Claude 2.1.306 uses unnumbered trust options, with "No, exit" first.
   // Preserve the actual order and focus instead of assuming Yes is the default.
@@ -63,7 +74,7 @@ function parseMenu(lines) {
  const first=options[0]?.row ?? body.length;
  const context=body.slice(Math.max(contextStart,first-12),first).filter(l=>l.trim()&&!/^\s*[─━╭╮╰╯│]+\s*$/.test(l)).map(l=>l.replace(/((?:API[_ ]?KEY|TOKEN|SECRET|PASSWORD)\s*[:=]).*/ig,'$1 [已隐藏]')).join('\n').trim().slice(-3000);
  if(!context)return null;
- const help=lines[footer]||'',multi=/space.*(?:select|toggle)|select.*space/i.test(help);
+ const help=lines.slice(Math.max(0,footer-2),footer+1).join(' '),multi=body.some(l=>/^\s*[❯>›]?\s*(?:\[[ x]\]|[☐☑☒])\s+\S/i.test(l))||/space.*(?:select|toggle)|select.*space/i.test(help);
  const menu={kind:resume?'resume':customOption(options[selected]?.label||'')&&/enter.*submit/i.test(help)?'input':multi?'multi':'choice',question:context,options,selected,footer:help,multi};
  menu.fingerprint=hash(menu);return menu;
 }
@@ -73,7 +84,7 @@ class NativeInteraction {
   const size=target.size?.()||{};this.screen=new Terminal({cols:size.cols||80,rows:size.rows||24,scrollback:0,allowProposedApi:true});
  }
  lines(){const b=this.screen.buffer.active;return Array.from({length:this.screen.rows},(_,i)=>b.getLine(b.baseY+i)?.translateToString(true)||'');}
- output(text){if(this.closed)return;clearTimeout(this.timer);this.screen.write(text,()=>{if(this.closed)return;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);});}
+ output(text){if(this.closed)return;if(!this.maxTimer)this.maxTimer=setTimeout(()=>{this.maxTimer=null;this.refresh();},1000);clearTimeout(this.timer);this.screen.write(text,()=>{if(this.closed)return;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);});}
  resize(cols,rows){if(this.closed)return;this.invalidate();this.lastFingerprint=null;this.revision++;this.screen.resize(cols,rows);clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}
  input(text){if(reply(text||''))return;const menu=parseMenu(this.lines());if(text==='\r'&&menu&&customOption(menu.options[menu.selected]?.label||''))this.customContext=menu.question;this.revision++;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;clearTimeout(this.timer);}
  invalidate(){if(this.current){const entry=this.current;this.current=null;this.lastFingerprint=null;entry.controller.abort();}}
@@ -82,6 +93,7 @@ class NativeInteraction {
   if(!menu&&this.customContext&&lines.some(l=>/enter.*submit/i.test(l))){menu={kind:'input',question:this.customContext,options:[],selected:0,multi:false,footer:lines.at(-1)};menu.fingerprint=hash(menu);}return menu;
  }
  refresh(){
+  clearTimeout(this.maxTimer);this.maxTimer=null;
   if(this.closed||this.current?.processing)return;const lines=this.lines(),menu=this.menu();
   if(!menu){this.submittedKey=null;if(lines.some(l=>/^\s*[❯>]\s*$/.test(l)))this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(/^\s*[❯>](?:\s|$)/.test(lines[this.screen.buffer.active.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l)))this.onIdle();return;}
   this.onMenu(menu);
@@ -146,6 +158,6 @@ class NativeInteraction {
   }catch{if(live())this.notify('终端尚未确认选择生效，已停止继续输入。请发送 /retry 重试，或在本机处理。');}
   finally{if(this.current===entry){this.submittedKey=key;this.invalidate();this.lastFingerprint=menu.fingerprint;this.refresh();}}
  }
- close(){this.closed=true;clearTimeout(this.timer);this.invalidate();this.screen.dispose();}
+ close(){this.closed=true;clearTimeout(this.maxTimer);clearTimeout(this.timer);this.invalidate();this.screen.dispose();}
 }
 module.exports={NativeInteraction,parseMenu,isTerminalReply:reply};

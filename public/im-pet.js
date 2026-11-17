@@ -21,7 +21,7 @@
   const wakeSettings=document.createElement('details');
   wakeSettings.className='pet-extension-settings pet-wake-settings';
   wakeSettings.hidden=true;
-  wakeSettings.innerHTML='<summary>企业微信唤醒</summary><div class="pet-wake-body"><label class="pet-wake-switch"><span>启用唤醒<small>允许手动与定时操作</small></span><input type="checkbox" data-wake-enabled></label><label class="pet-wake-switch"><span>定时唤醒<small>按照 Cron 重复执行</small></span><input type="checkbox" data-wake-scheduled></label><label class="pet-wake-cron"><span>Cron 表达式 <small>本机时区 · 分 时 日 月 周</small></span><input type="text" data-wake-cron value="*/5 * * * *" placeholder="*/5 * * * *" spellcheck="false"></label><div class="pet-wake-presets"><button data-cron="*/5 * * * *">每 5 分钟</button><button data-cron="*/10 * * * *">每 10 分钟</button><button data-cron="*/5 9-18 * * 1-5">工作日白天</button></div><div class="im-pet-actions"><button data-wake-save>保存设置</button><button data-wake-run>立即唤醒</button></div><p data-wake-note role="status" aria-live="polite"></p><small class="pet-wake-help">需保持电脑未锁屏、企微已登录。会切到企微并往返移动鼠标三次；在线状态请在手机确认。定时仅在软件运行时生效。</small></div>';
+  wakeSettings.innerHTML='<summary>企业微信唤醒</summary><div class="pet-wake-body"><label class="pet-wake-switch"><span>启用唤醒<small>允许手动与定时操作</small></span><input type="checkbox" data-wake-enabled></label><label class="pet-wake-switch"><span>定时唤醒<small>按照 Cron 重复执行</small></span><input type="checkbox" data-wake-scheduled></label><label class="pet-wake-cron"><span>Cron 表达式 <small>本机时区 · 分 时 日 月 周</small></span><input type="text" data-wake-cron value="*/5 * * * *" placeholder="*/5 * * * *" spellcheck="false"></label><div class="pet-wake-presets"><button data-cron="*/5 * * * *">每 5 分钟</button><button data-cron="*/10 * * * *">每 10 分钟</button><button data-cron="*/5 9-18 * * 1-5">工作日白天</button></div><div class="im-pet-actions"><button data-wake-save>保存设置</button><button data-wake-run>立即唤醒</button></div><p data-wake-note role="status" aria-live="polite"></p><small class="pet-wake-help">需保持电脑未锁屏、企微已登录。仅往返移动鼠标三次，不切换窗口；在线状态请在手机确认。定时仅在软件运行时生效。</small></div>';
   wakeSettings.querySelectorAll('[data-cron]').forEach(b=>{b.onclick=()=>{wakeSettings.querySelector('[data-wake-cron]').value=b.dataset.cron;};});
   panel.append(wakeSettings);
   const wakeNote=t=>{wakeSettings.querySelector('[data-wake-note]').textContent=t;};
@@ -43,7 +43,7 @@
     try{
       const response=await fetch('/api/agent-usage');if(!response.ok)throw Error();const d=await response.json();if(!d.ok)throw Error();
       const rows=[];const percent=v=>Number.isFinite(v)?Math.round(Math.max(0,Math.min(100,v)))+'%':'暂无配额';
-      if(d.claude && (d.claude.official?.fiveHour?.usedPercent > 0 || (!d.claude.official?.fiveHour && d.claude.last5h?.total > 0))){const c=d.claude;const q=c.official?.fiveHour;rows.push('Claude '+(q?percent(q.usedPercent):c.last5h?compact(c.last5h.total)+' tokens · 5h':'暂无用量'));}
+      if(d.claude && (d.claude.official?.fiveHour?.usedPercent > 0 || (!d.claude.official?.fiveHour && d.claude.last5h?.total > 0))){const c=d.claude;const q=c.official?.fiveHour;rows.push('Claude '+(q?percent(q.usedPercent):c.last5h?compact(c.last5h.total):'暂无用量'));}
       if(d.codex?.primary?.usedPercent > 0 && !d.codex.primary.stale){const c=d.codex;rows.push('Codex '+(c.primary?.stale?'待更新':percent(c.primary?.usedPercent)));}
       usageBadge.textContent=rows.join(' · ');usageBadge.hidden=rows.length===0;usageBadge.title='AGENT 用量：配额为已使用比例；tokens 为本地统计。点击查看设置及详情';
     }catch{usageBadge.textContent='';usageBadge.hidden=true;usageBadge.title='读取失败，将自动重试；可在宠物面板查看详情';}

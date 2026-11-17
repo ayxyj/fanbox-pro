@@ -106,8 +106,8 @@ class SSHService {
     await new Promise((resolve, reject) => {
       let settled = false;
       const fail = error => { if (!settled) { settled = true; if (/All configured authentication methods failed/.test(error.message)) error = Error(`SSH 认证失败：${p.username}@${p.host}:${p.port}（${p.name}）。${p.auth === 'key' ? '服务器未接受所选私钥，请检查用户名、私钥及服务器 authorized_keys。' : (authAttempts >= 3 ? '已达到本次连接 3 轮认证上限，请确认用户名、密码后重新连接。' : '服务器未接受密码或交互式认证，请检查用户名、密码及服务器登录策略。')}${p.jumpId ? ' 此连接通过跳板机建立。' : ''}`); reject(error); } };
-      client.once('ready', () => { settled = true; resolve(); }); client.once('error', fail); client.once('close', () => fail(Error('SSH 连接已关闭')));
-      try { client.connect({ host: p.host, port: p.port, username: p.username, sock, authHandler, tryKeyboard: true, readyTimeout: 120000, keepaliveInterval: 15000, keepaliveCountMax: 3,
+      client.once('ready', () => { signal?.removeEventListener('abort', cancelConnection); settled = true; resolve(); }); client.once('error', fail); client.once('close', () => fail(Error('SSH 连接已关闭')));
+      try { client.connect({ host: p.host, port: p.port, username: p.username, sock, authHandler, tryKeyboard: true, readyTimeout: 120000, keepaliveInterval: 15000, keepaliveCountMax: 8,
         ...(p.auth === 'key' ? { privateKey, passphrase: p.passphrase } : { password: p.password }),
         hostVerifier: (key, done) => {
           const fingerprint = 'SHA256:' + crypto.createHash('sha256').update(key).digest('base64').replace(/=+$/, '');
@@ -123,11 +123,18 @@ class SSHService {
   }
   async connect(id, profileId, cols, rows) {
     if (this.sessions.has(id)) throw Error('会话已存在');
-    const clients = [], profile = this.store.get(profileId);
-    const s = { id, profileId, clients, profile, abort: new AbortController(), status: 'connecting', output: '', environment: { os: 'unknown', shell: 'unknown', cwd: '', host: profile.host } };
+    const profile = this.store.get(profileId);
+    const route = [profile];
+    while (route.at(-1).jumpId && route.length < 5) route.push(this.store.get(route.at(-1).jumpId));
+    const connectionSettings = structuredClone(route);
+    const shared = [...this.sessions.values()].find(session => session.status === 'connected' &&
+      !session.closed && session.profileId === profileId &&
+      require('node:util').isDeepStrictEqual(session.connectionSettings, connectionSettings));
+    const clients = shared?.clients || [];
+    const s = { id, profileId, clients, profile, connectionSettings, abort: new AbortController(), status: 'connecting', output: '', environment: { os: 'unknown', shell: 'unknown', cwd: '', host: profile.host } };
     this.sessions.set(id, s); this.emit('remote:status', { id, status: s.status });
     try {
-      s.client = await this.connectProfile(profileId, [], clients, s.abort.signal, id);
+      s.client = shared?.client || await this.connectProfile(profileId, [], clients, s.abort.signal, id);
       if (s.closed) throw Error('连接已取消');
       // Bastions may consume a login on the first session/exec request.
       // Default to opening only the interactive shell; probing is explicit opt-in.
@@ -138,25 +145,74 @@ class SSHService {
       s.stream = await call(s.client, 'shell', { term: profile.terminalType || 'xterm', cols, rows });
       if (s.closed) { s.stream.close(); throw Error('连接已取消'); }
       const decoder = new StringDecoder('utf8');
-      const data = chunk => { const text = decoder.write(chunk); s.output = (s.output + text).slice(-32000); this.emit('pty:data', { id, data: text }); };
+      const publish = text => { s.output = (s.output + text).slice(-32000); this.emit('pty:data', { id, data: text });
+        clearTimeout(s.environmentTimer);
+        if (!s.environmentAutoFailed && (s.environment.os === 'unknown' && !s.interactiveTargetUnknown || s.interactiveTargetUnknown && s.autoDetectAfterLogin)) {
+          s.environmentTimer = setTimeout(() => {
+            if (s.closed || s.inputLine?.trim() || !require('./ssh-environment').promptKind(s.output)) return;
+            this.detectEnvironment(id, s.abort.signal).catch(() => {
+              s.environmentAutoFailed = true;
+              if (!s.closed) this.emit('remote:status', { id, status: s.status, environment: { ...s.environment, interactiveTargetUnknown: true }, error: '自动识别系统失败，请在 AI 面板确认当前系统' });
+            });
+          }, 700);
+        }
+      };
+      const data = chunk => {
+        const text = decoder.write(chunk);
+        if (s.environmentProbe) { s.environmentProbe.text += text; return; }
+        publish(text);
+      };
+      s.hideEnvironmentProbe = (command, marker) => {
+        const originalPrompt = s.output.split(/[\r\n]/).filter(line => line.trim()).at(-1) || '';
+        const probe = { text: '' }; s.environmentProbe = probe;
+        return () => new Promise(resolve => setTimeout(() => {
+          if (s.environmentProbe === probe) s.environmentProbe = null;
+          if (!s.closed) {
+            const visible = require('./ssh-environment').hideProbeText(probe.text, command, marker, originalPrompt);
+            if (visible) publish(visible);
+          }
+          resolve();
+        }, 100));
+      };
       if (this.chooseUpload && this.chooseDownload) s.zmodem = new SSHZmodem({ stream: s.stream, terminal: data, chooseUpload: this.chooseUpload, chooseDownload: this.chooseDownload });
       s.stream.on('data', chunk => s.zmodem ? s.zmodem.consume(chunk) : data(chunk)); s.stream.stderr.on('data', data);
       s.stream.on('error', error => this.emit('remote:status', { id, status: 'error', error: error.message }));
-      s.stream.once('close', () => this.disconnect(id)); s.client.once('close', () => this.disconnect(id));
+      s.onClientClose = () => this.disconnect(id);
+      s.stream.once('close', s.onClientClose); s.client.once('close', s.onClientClose);
       s.status = 'connected'; this.emit('remote:status', { id, status: s.status, environment: s.environment });
       return { ok: true, cwd: s.environment.cwd, environment: s.environment, title: `${profile.name} · SSH` };
-    } catch (error) { this.disconnect(id); for (const client of clients) client.end(); throw error; }
+    } catch (error) { this.disconnect(id); throw error; }
   }
   disconnect(id) {
     const s = this.sessions.get(id); if (!s || s.closed) return;
     s.closed = true;
-    s.abort.abort(); s.zmodem?.close();
+    clearTimeout(s.environmentTimer); s.abort.abort(); s.zmodem?.close();
     for (const t of this.transfers.values()) if (t.sessionId === id) t.abort.abort();
-    s.stream?.close(); for (const client of s.clients.slice().reverse()) client.end(); this.sessions.delete(id);
+    if (s.onClientClose) s.client.removeListener('close', s.onClientClose);
+    this.sessions.delete(id);
+    s.stream?.close();
+    if (![...this.sessions.values()].some(session => session.clients === s.clients)) {
+      for (const client of s.clients.slice().reverse()) client.end();
+    }
     this.emit('remote:status', { id, status: 'disconnected' }); this.emit('pty:exit', { id, exitCode: 0 });
   }
   get(id) { const s = this.sessions.get(id); if (!s || s.closed || s.status !== 'connected') throw Error('SSH 会话未连接'); return s; }
-  async detectEnvironment(id, signal) { const s=this.get(id);if(s.zmodem?.job)throw Error('文件传输中，请完成后再操作终端');const detected=await require('./ssh-environment').detectEnvironment(s,signal);if(this.get(id)!==s)throw Error('SSH 会话已更换');s.environment={...s.environment,...detected};s.interactiveTargetUnknown=false;this.emit('remote:status',{id,status:s.status,environment:s.environment});return {...s.environment,interactiveTargetUnknown:false}; }
+  async detectEnvironment(id, signal) {
+    const s = this.get(id);
+    if (s.zmodem?.job) throw Error('文件传输中，请完成后再操作终端');
+    if (s.environmentDetection) return s.environmentDetection;
+    s.environmentDetection = (async () => {
+      const detected = await require('./ssh-environment').detectEnvironment(s, signal || s.abort.signal);
+      if (this.get(id) !== s) throw Error('SSH 会话已更换');
+      s.environment = { ...s.environment, ...detected };
+      s.interactiveTargetUnknown = false;
+      s.autoDetectAfterLogin = false;
+      this.emit('remote:status', { id, status: s.status, environment: s.environment });
+      return { ...s.environment, interactiveTargetUnknown: false };
+    })();
+    try { return await s.environmentDetection; }
+    finally { s.environmentDetection = null; }
+  }
   input(id, data) { const s = this.get(id); if (s.zmodem?.input(data)) return; s.inputRevision=(s.inputRevision||0)+1; noteInput(s, data); s.stream.write(data); }
   resize(id, cols, rows) { this.get(id).stream.setWindow(rows, cols, 0, 0); }
   execClient(client, command, { timeout = 60000, signal, onData } = {}) {

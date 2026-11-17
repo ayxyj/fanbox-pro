@@ -1,5 +1,17 @@
 'use strict';
 const { randomBytes } = require('crypto');
+function hideProbeText(text, command, marker, originalPrompt) {
+  const plain = value => value.replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g, '').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '');
+  const lines = text.split(/(\r?\n)/);
+  let result = '';
+  for (let i = 0; i < lines.length; i += 2) {
+    const line = plain(lines[i]).trim();
+    if (line.includes(command.trim()) || line.includes(marker)) continue;
+    if (line && line === plain(originalPrompt).trim()) continue;
+    result += lines[i] + (lines[i + 1] || '');
+  }
+  return result;
+}
 function promptKind(output) {
   const text = String(output).replace(/\x1b\][\s\S]*?(?:\x07|\x1b\\)/g,'').replace(/\x1b\[[0-?]*[ -/]*[@-~]/g,'');
   const line = text.split(/[\r\n]/).filter(s=>s.trim()).at(-1)?.trim() || '';
@@ -19,7 +31,8 @@ async function detectEnvironment(session, signal, timeout = 5000) {
   const revision = session.inputRevision || 0;
   return new Promise((resolve,reject)=>{
     let output='',timer,done=false;
-    const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);session.stream.off('data',read);session.stream.off('close',closed);signal?.removeEventListener('abort',abort);session.abort.signal.removeEventListener('abort',closed);error?reject(error):resolve(value);};
+    let releaseProbe;
+    const finish=(error,value)=>{if(done)return;done=true;clearTimeout(timer);session.stream.off('data',read);session.stream.off('close',closed);signal?.removeEventListener('abort',abort);session.abort.signal.removeEventListener('abort',closed);Promise.resolve(releaseProbe?.()).then(()=>error?reject(error):resolve(value),reject);};
     const abort=()=>finish(Error('系统识别已取消'));
     const closed=()=>finish(Error('SSH 连接已关闭'));
     const read=chunk=>{
@@ -35,7 +48,7 @@ async function detectEnvironment(session, signal, timeout = 5000) {
     signal?.addEventListener('abort',abort,{once:true});session.abort.signal.addEventListener('abort',closed,{once:true});
     timer=setTimeout(()=>finish(Error('自动识别系统超时，请确认已进入目标服务器的命令行。')),timeout);
     if(signal?.aborted||session.abort.signal.aborted)return abort();
-    try {session.stream.write(command);}catch(error){finish(error);}
+    try {releaseProbe=session.hideEnvironmentProbe?.(command,marker);session.stream.write(command);}catch(error){finish(error);}
   });
 }
-module.exports={promptKind,detectEnvironment};
+module.exports={promptKind,detectEnvironment,hideProbeText};

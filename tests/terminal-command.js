@@ -1,6 +1,6 @@
 'use strict';
 const assert = require('assert/strict');
-const { terminalCommand } = require('../electron/terminal-command');
+const { terminalCommand, terminalInput } = require('../electron/terminal-command');
 function fixture(shell = '/bin/bash') {
  const listeners = new Set(), writes = [];
  return { writes, emit: text => [...listeners].forEach(fn => fn(text)), listeners, environment: { shell }, input(text) { writes.push(text); }, subscribeOutput(fn) { listeners.add(fn); return () => listeners.delete(fn); } };
@@ -21,6 +21,54 @@ function fixture(shell = '/bin/bash') {
  delayed.emit('\x1b]777;' + delayedToken + ';0\x07'); assert((await pending).completed); assert.equal(delayed.listeners.size, 0);
  const abort = new AbortController(), cancelled = fixture(); const cancelledRun = terminalCommand(cancelled, 'sleep 100', { signal: abort.signal, stopTimeout: 15 }); abort.abort(); const stopped = await cancelledRun; assert(stopped.stopped); assert(!stopped.completed); assert.equal(cancelled.writes.at(-1), '\x03'); assert.equal(cancelled.listeners.size, 0);
  const disconnect = new AbortController(), lost = fixture(); const lostRun = terminalCommand(lost, 'sleep 100', { signal: disconnect.signal }); disconnect.abort('disconnected'); assert((await lostRun).disconnected); assert.equal(lost.writes.length, 1); assert.equal(lost.listeners.size, 0);
+ const detached = fixture(), stopAI = new AbortController();
+ const stopAIRun = terminalCommand(detached, 'sleep 100', { signal: stopAI.signal });
+ stopAI.abort('stop');
+ assert((await stopAIRun).detached);
+ assert.equal(detached.writes.length, 1);
+ assert.equal(detached.listeners.size, 0);
+ const switched = fixture();
+ const switchedRun = terminalCommand(switched, 'some_login_alias', { progressInterval: 10 });
+ switched.emit('Last login: fixture\r\n[hduser1040@bdphdp10jobs06 ~]$ ');
+ const switchedResult = await switchedRun;
+ assert(switchedResult.promptObserved);
+ assert(!switchedResult.completed);
+ assert.equal(switched.listeners.size, 0);
+ const longInput = fixture(), inputProgress = [];
+ let inputFinished = false;
+ const longInputRun = terminalInput(longInput, 'long-interactive-command\r', {
+   timeout: 15, reminderAfter: 25, progressInterval: 5, settleDelay: 5,
+   onProgress: progress => inputProgress.push(progress)
+ }).then(result => { inputFinished = true; return result; });
+ await new Promise(resolve => setTimeout(resolve, 80));
+ assert(!inputFinished);
+ assert(inputProgress.some(progress => progress.longRunning));
+ assert.equal(inputProgress.filter(progress => progress.reminder).length, 1);
+ assert.equal(longInput.writes.length, 1);
+ longInput.emit('[another-user@another-host /opt/app]$ ');
+ assert((await longInputRun).promptObserved);
+ assert.equal(longInput.listeners.size, 0);
+ const menu = fixture();
+ const menuRun = terminalInput(menu, 'gof jgbdp 40\r');
+ menu.emit('1 SIT-1040 10.107.97.64\r\n2 UAT-1040 10.107.108.106\r\nPlease select one to go:');
+ assert((await menuRun).waitingInput);
+ const loginRun = terminalInput(menu, '2\r');
+ menu.emit('Select IP: 10.107.108.106;hduser1040\r\nLast login: fixture\r\n[hduser1040@bdphdp10jobs06 ~]$ ');
+ assert((await loginRun).promptObserved);
+ assert.deepEqual(menu.writes, ['gof jgbdp 40\r', '2\r']);
+ assert.equal(menu.listeners.size, 0);
+ const interacting = fixture(), stopInput = new AbortController();
+ const inputRun = terminalInput(interacting, 'wcsssh target\r', { signal: stopInput.signal });
+ stopInput.abort('stop');
+ assert((await inputRun).detached);
+ assert.equal(interacting.writes.length, 1);
+ assert.equal(interacting.listeners.size, 0);
+ const { noteInput } = require('../electron/shell-context');
+ for (const command of ['gof jgbdp 40\r', 'wcsssh host\r']) {
+   const state = {};
+   noteInput(state, command);
+   assert.equal(state.interactiveTargetUnknown, true);
+ }
  const cmd = fixture('cmd'); const cmdRun = terminalCommand(cmd, 'cd /d C:\\ & echo test'); const marker = cmd.writes[0].replace('^', '').match(/__(fanbox-[a-f0-9-]+)__/)[0]; cmd.emit(cmd.writes[0]); assert.equal(cmd.listeners.size, 1); cmd.emit('\r\n'+marker+'\r\n'); assert((await cmdRun).completed);
  assert.throws(() => terminalCommand(fixture(), 'echo hi\x03'), /控制字符/);
  const bash = process.platform === 'win32' ? 'D:/Program Files/Git/bin/bash.exe' : '/bin/bash';

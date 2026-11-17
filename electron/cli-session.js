@@ -150,6 +150,15 @@ class CLISessions {
       s.attachments ||= new Set(); if (s.attachments.has(event.key)) return; s.attachments.add(event.key);
       this.sendFile(id, event.path, { authorized, turn: taskId }).then(value => s.channel.respond(event.key, value), error => s.channel.respond(event.key, { error: error.message })).catch(() => {}); return;
     }
+    if (event.kind === 'awaiting-input') {
+      if (this.sessions.get(id) !== s || event.createdAt <= (s.interactionsCancelledAt || 0)) return;
+      if (s.native?.current) return;
+      if (s.native?.retry()) return;
+      if (Date.now() - (s.lastInputNotice || 0) < 10000) return;
+      s.lastInputNotice = Date.now();
+      this.deliver(id, s, 'Claude 正在等待选择或文字回答，当前界面未能自动识别。请发送 /retry 重新获取问题，或在本机处理。');
+      return;
+    }
     if (event.kind === 'progress') { if (this.sessions.get(id) === s && s.pending && event.createdAt >= s.started) s.progress?.event(event); return; }
     if (event.kind === 'permission' || event.kind === 'question') {
       if (this.sessions.get(id) !== s || s.name !== 'claude' || event.createdAt <= (s.interactionsCancelledAt || 0)) { s.channel.respond(event.key, false); return; }

@@ -42,6 +42,20 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
   const bottom=await evaluate('(async()=>{const e=mona.editor;e.setScrollTop(e.getScrollHeight());await new Promise(r=>setTimeout(r,100));return {top:e.getScrollTop(),height:e.getScrollHeight(),viewport:e.getLayoutInfo().height};})()');
   assert(bottom.top+bottom.viewport>=bottom.height-3,'Cannot reach last lines');records.push({...metrics,wheel:scrolled});
  }
+ const searchAndPreview=await evaluate(`(async()=>{
+  for(const ext of ['sql','hql']) {
+   renderTextPreview({ext,content:'SELECT id FROM users WHERE id = 1',size:40});
+   if(!document.querySelector('#preview-body .hljs-keyword'))throw Error(ext+' preview missing syntax highlighting');
+  }
+  await onItemClick(state.entries.find(e=>e.name==='long.sql'));
+  mona.editor.getAction('actions.find').run();await new Promise(r=>setTimeout(r,100));
+  const host=document.querySelector('.monaco-editor'),before=state.cursor,content=document.getElementById('content'),top=content.scrollTop;
+  const target=host.querySelector('.find-widget input') || host;
+  for(const key of ['ArrowDown','ArrowUp','Enter'])target.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,cancelable:true}));
+  if(state.cursor!==before || content.scrollTop!==top)throw Error('Editor search moved file list');
+  mona.editor.getContribution('editor.contrib.findController').closeFindWidget();
+  return true;
+ })()`);
  const other=await evaluate(`(async()=>{
   const check=(ok,msg)=>{if(!ok)throw Error(msg);};const entry=state.entries.find(e=>e.name==='long.sql'),editor=mona.editor;
   document.getElementById('preview-max').click();await new Promise(r=>setTimeout(r,350));const restore=document.getElementById('preview-max'),rh=restore.getBoundingClientRect(),ph=document.querySelector('.preview-head').getBoundingClientRect();check(!!restore.querySelector('svg')&&restore.getAttribute('aria-pressed')==='true'&&rh.height>=28&&ph.height>=40&&rh.top>=ph.top&&rh.bottom<=ph.bottom,'Fullscreen restore button is visible');check(getComputedStyle(document.getElementById('terminal-panel')).display==='none','Fullscreen terminal hidden');check(mona.editor===editor,'Fullscreen recreated editor');check(editor.getLayoutInfo().height>300,'Fullscreen did not resize editor');document.getElementById('preview-max').click();check(!previewMaximized,'Restore button exits fullscreen');await new Promise(r=>setTimeout(r,350));

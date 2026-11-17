@@ -1,6 +1,23 @@
 'use strict';
 // FanBox 界面词典：中文原文 → 英文。由 i18n.js 消费；缺词条时英文界面回退显示中文。
 window.FANBOX_DICT = {
+  '文件': 'File',
+  '视图': 'View',
+  '窗口': 'Window',
+  '设置': 'Settings',
+  '应用菜单': 'Application menu',
+  'SSH 连接': 'SSH Connections',
+  'Git 仓库管理': 'Git Repositories',
+  'GIT 仓库管理': 'Git Repositories',
+  '定时任务': 'Scheduled Tasks',
+  '会话管理': 'Sessions',
+  '会话历史': 'Chat History',
+  '任务管理': 'Task Manager',
+  '总览': 'Overview',
+  '工作区': 'Workspaces',
+  '仓库': 'Repositories',
+  '自动同步': 'Auto Sync',
+  '同步日志': 'Sync Logs',
   // ---------- 侧栏 ----------
   '搜索全部文件': 'Search all files',
   '快速入口': 'Quick access',

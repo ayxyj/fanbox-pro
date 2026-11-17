@@ -416,8 +416,10 @@ kbd {
 .fav-btn svg { vertical-align: middle; display: block; }
 .preview-actions button:hover { border-color: var(--accent); }
 .preview-actions button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.preview-foot { display: flex; flex-wrap: wrap; gap: 14px; padding: 8px 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-faint); background: var(--bg-2); }
+.preview-foot { display: flex; align-items: center; flex-wrap: nowrap; flex: none; box-sizing: border-box; height: 22px; min-height: 22px; line-height: 1; overflow-x: auto; white-space: nowrap; scrollbar-width: none; gap: 14px; padding: 0 16px; border-top: 1px solid var(--border); font-size: 11px; color: var(--text-faint); background: var(--bg-2); }
 .preview-foot:empty { display: none; }
+.preview-foot > * { flex: none; }
+.preview-foot::-webkit-scrollbar { display: none; }
 .preview-body { min-height: 0; min-width: 0; overscroll-behavior: contain; flex: 1; overflow: auto; padding: 16px; }
 .preview-body img, .preview-body video { max-width: 100%; border-radius: 8px; }
 .preview-body audio { width: 100%; }

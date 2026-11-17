@@ -2,6 +2,49 @@
 (() => {
   if (!window.fanboxRemote) return;
   const escape = text => String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const renderedMessages = new WeakMap();
+  function renderMessage(element, item) {
+    const text = item.text || item.diagnostic || '';
+    const markdown = item.kind === 'assistant' && !!window.renderChatMarkdown;
+    const previous = renderedMessages.get(element);
+    if (previous?.text === text && previous.markdown === markdown) return;
+    element.classList.toggle('chat-markdown', markdown);
+    if (markdown) element.innerHTML = window.renderChatMarkdown(text);
+    else element.textContent = text;
+    renderedMessages.set(element, { text, markdown });
+  }
+  const copyTimers = new WeakMap();
+  function renderMessageControls(node, item) {
+    if (['user', 'assistant', 'command'].includes(item.kind)) {
+      let copy = node.querySelector('.chat-copy');
+      if (!copy) {
+        copy = document.createElement('button'); copy.type = 'button'; copy.className = 'chat-copy';
+        copy.textContent = '⧉'; copy.title = '复制内容'; copy.setAttribute('aria-label', '复制内容'); copy.setAttribute('aria-live', 'polite');
+        node.append(copy);
+      }
+      copy.hidden = !item.text;
+      copy.onclick = wrap(async () => {
+        copy.disabled = true;
+        try {
+          await navigator.clipboard.writeText(item.text || '');
+          clearTimeout(copyTimers.get(copy));
+          copy.textContent = '✓'; copy.title = '已复制'; copy.setAttribute('aria-label', '已复制'); copy.classList.add('is-copied');
+          copyTimers.set(copy, setTimeout(() => { copy.textContent = '⧉'; copy.title = '复制内容'; copy.setAttribute('aria-label', '复制内容'); copy.classList.remove('is-copied'); }, 1600));
+        } finally { copy.disabled = false; }
+      });
+    }
+    if (!item.metrics) return;
+    let details = node.querySelector('.chat-metrics');
+    if (!details) {
+      details = document.createElement('details'); details.className = 'chat-metrics';
+      details.innerHTML = '<summary></summary><div></div>';
+      (node.querySelector('.chat-content') || node).append(details);
+    }
+    const metrics = item.metrics, usage = metrics.usage;
+    const input = usage?.input_tokens ?? usage?.prompt_tokens, output = usage?.output_tokens ?? usage?.completion_tokens;
+    details.querySelector('summary').textContent = [metrics.model || '模型用量', input != null ? '输入 ' + input : '', output != null ? '输出 ' + output : ''].filter(Boolean).join(' · ');
+    details.querySelector('div').textContent = ['输出上限 ' + (metrics.maxTokens || '服务默认'), '推理设置 ' + (metrics.reasoningEffort || '服务默认'), usage?.completion_tokens_details?.reasoning_tokens != null ? '思考 tokens ' + usage.completion_tokens_details.reasoning_tokens : ''].filter(Boolean).join(' · ');
+  }
   function renderChatAuthor(element, kind) {
     element.className = 'chat-author';
     if (kind === 'user') {
@@ -31,7 +74,7 @@
     if (event.key === 'Escape') { const options = body.querySelector('.chat-options'); if (options) options.open = false; }
   });
   const transfers = new Map(), chats = new Map();
-  const chat = id => { if (!chats.has(id)) chats.set(id, { items: [], prompt: '', context: false, progress: '', policy: null }); return chats.get(id); };
+  const chat = id => { if (!chats.has(id)) chats.set(id, { items: [], prompt: '', context: true, progress: '', policy: null }); return chats.get(id); };
   window.fanboxRemote.on('auth', challenge => {
     const session = term.sessions.find(s => s.id === challenge.sessionId);
     if (session) { session.authenticating = true; term.open(); term.activate(session.id); session.xterm.focus(); }
@@ -62,14 +105,14 @@
   const select = (name, label, options, value, full = false) => `<label class="${full ? 'full' : ''}">${label}<select name="${name}">${options.map(([v, text]) => `<option value="${escape(v)}" ${String(value) === String(v) ? 'selected' : ''}>${escape(text)}</option>`).join('')}</select></label>`;
   const check = (name, label, value) => `<label class="check full"><input name="${name}" type="checkbox" ${value ? 'checked' : ''}>${label}</label>`;
   const values = form => Object.fromEntries(new FormData(form));
-  async function refresh() { data = await api('state'); drawSessionTree(); }
+  async function refresh() { data = await api('state'); drawSessionTree(); renderShortcutBar(); }
   async function open(next = tab) { if (next === 'settings') return modelSettings(); if (dirtyEditor() && !confirm('放弃远程文件尚未保存的修改？')) return; dirtyEditor = () => false; panel.hidden = false; divider.hidden = false; main.classList.add('remote-page-open'); if (term.maximized) term.toggleMax(false); tab = next; await refresh(); await render(); }
   function close() {
     if (dirtyEditor() && !confirm('放弃远程文件尚未保存的修改？')) return false;
     dirtyEditor = () => false; panel.hidden = true; divider.hidden = true; main.classList.remove('remote-page-open'); term.fitActive(); return true;
   }
   async function openAI(id = term.active) { const old = body.querySelector('.remote-prompt'); if (old) { old.disabled = true; old.blur(); } ++revision; selected = id; term.open(); term.activate(id); await open('ai'); term.fitActive(); }
-  window.remoteUI = { open: wrap(open), openAI: wrap(openAI), settings: wrap(modelSettings), shortcutMenu, close };
+  window.remoteUI = { open: wrap(open), openAI: wrap(openAI), settings: wrap(modelSettings), close };
   panel.querySelector('[data-close]').onclick = close;
   panel.querySelectorAll('[data-tab]').forEach(button => button.onclick = wrap(() => open(button.dataset.tab)));
   window.fanboxRemote.on('settings', wrap(modelSettings));
@@ -139,8 +182,11 @@
     for (const item of record.items) {
       const node = document.createElement('article'); node.className = 'chat-message chat-' + item.kind;
       const author = document.createElement('div'); renderChatAuthor(author, item.kind); node.append(author);
-      const text = document.createElement('div'); text.className = 'chat-message-text'; text.textContent = item.text || item.diagnostic || ''; node.append(text);
+      const text = document.createElement('div'); text.className = 'chat-message-text'; renderMessage(text, item); node.append(text);
       if (item.reasoning) { const details = document.createElement('details'), summary = document.createElement('summary'), content = document.createElement('div'); summary.textContent = '分析'; content.textContent = item.reasoning; details.append(summary, content); node.append(details); }
+      const content = document.createElement('div'); content.className = 'chat-content';
+      for (const child of [...node.children].slice(1)) content.append(child);
+      node.append(content); renderMessageControls(node, item);
       log.append(node);
     }
     if (!record.items.length) log.textContent = '此历史尚无消息';
@@ -160,7 +206,7 @@
     if (existing && !forceNew) { term.open(); term.activate(existing.id); selected = existing.id; return existing; }
     notify('正在连接 SSH…');
     const session = await term.openInDir(state.cwd, { sshProfile: id, shell: 'cmd' });
-    if (session && !session.dead) { selected = session.id; await openAI(session.id); }
+    if (session && !session.dead) { selected = session.id; term.open(); term.activate(session.id); session.xterm.focus(); }
     await refresh(); return session;
   }
   function drawSessionTree() {
@@ -192,7 +238,7 @@
     const session = term.sessions.find(s => s.id === id);
     const actions = [{ label: 'AI 操作', fn: wrap(() => openAI(id)) }];
     if (session?.sshProfile && !session.dead) actions.unshift({ label: '远程文件', fn: wrap(async () => { selected = id; directory = '.'; term.open(); term.activate(id); await open('files'); }) });
-    window.fbTerminalClipboard.showMenu(event, [...actions, ...shortcutMenu(id)]);
+    window.fbTerminalClipboard.showMenu(event, actions);
   });
   async function render() {
     const rev = ++revision;
@@ -234,21 +280,73 @@
     dialog.innerHTML = `<header><h2>${escape(title)}</h2>${fanboxUI.closeButton("data-dismiss")}</header><div class="dialog-content"></div><p class="dialog-error" role="status"></p>`;
     document.body.append(dialog); dialog.querySelector('[data-dismiss]').onclick = () => dialog.close(); dialog.onclose = () => dialog.remove(); dialog.showModal(); return dialog;
   }
-  function shortcutMenu(id) {
-    const session = term.sessions.find(s => s.id === id);
-    if (!session?.sshProfile) return [];
-    const profile = data?.profiles.find(p => p.id === session.sshProfile);
-    const commands = [...(profile?.shortcuts || [])].sort((a,b) => a.group.localeCompare(b.group) || a.name.localeCompare(b.name));
-    const groups=[...new Set(commands.map(c=>c.group))];
-    return [{label:'快捷指令',children:groups.length ? groups.map(group=>({label:group||'未分组',children:commands.filter(c=>c.group===group).map(c=>({label:c.name,disabled:!!session.dead,fn:wrap(async()=>{await api('run-shortcut',{sessionId:id,id:c.id});term.activate(id);session.xterm.focus();notify('已发送快捷命令：'+c.name);})}))})) : [{label:'暂无快捷指令',disabled:true}]}, {label:'管理快捷指令…',fn:()=>shortcutManager(session.sshProfile)}];
+  const shortcutGroups = new Map();
+  function renderShortcutBar() {
+    const terminalPanel = document.getElementById('terminal-panel');
+    if (!terminalPanel) return;
+    let bar = terminalPanel.querySelector('.terminal-shortcuts');
+    const session = term.sessions.find(item => item.id === term.active);
+    const profile = data?.profiles.find(item => item.id === session?.sshProfile);
+    if (!profile) { bar?.remove(); return; }
+    if (!bar) {
+      bar = document.createElement('footer'); bar.className = 'terminal-shortcuts'; bar.setAttribute('aria-label', 'SSH 快捷指令');
+      terminalPanel.append(bar);
+    }
+    const commands = profile.shortcuts || [];
+    const groups = [...new Set([...(profile.shortcutGroups || []), ...commands.map(command => command.group || '')])].sort();
+    if (!groups.length) groups.push('');
+    let group = shortcutGroups.get(profile.id);
+    if (!groups.includes(group)) group = groups[0];
+    shortcutGroups.set(profile.id, group);
+    bar.innerHTML = '<div class="shortcut-group-tools"><button data-group-menu title="管理分组" aria-label="管理分组">☰</button><select aria-label="切换快捷指令组">' + groups.map(name => '<option value="'+escape(name)+'" '+(name===group?'selected':'')+'>'+escape(name||'未分组')+'</option>').join('') + '</select></div><div class="shortcut-command-list"></div>';
+    bar.querySelector('select').onchange = event => { shortcutGroups.set(profile.id, event.target.value); renderShortcutBar(); };
+    const groupMenu = event => {
+      event.preventDefault();
+      popupMenu(event, [
+        { label: '新增快捷指令', fn: wrap(() => shortcutManager(profile.id, true, { group })) },
+        { label: '添加组', fn: () => {
+          const dialog = modal('添加快捷指令组');
+          dialog.querySelector('.dialog-content').innerHTML = '<form class="remote-form">' + field('name', '组名称', '', 'text', true) + '<div class="remote-actions full"><button type="submit">添加组</button><button type="button" data-cancel>取消</button></div></form>';
+          const form = dialog.querySelector('form'); form.elements.name.required = true; form.elements.name.maxLength = 100;
+          dialog.querySelector('[data-cancel]').onclick = () => dialog.close();
+          form.onsubmit = async event => {
+            event.preventDefault(); const button = form.querySelector('[type=submit]'); button.disabled = true;
+            try { const name = form.elements.name.value.trim(); await api('save-shortcut-group', { profileId: profile.id, name }); shortcutGroups.set(profile.id, name); await refresh(); dialog.close(); }
+            catch (error) { dialog.querySelector('.dialog-error').textContent = error.message; }
+            finally { button.disabled = false; }
+          };
+          form.elements.name.focus();
+        } },
+        { label: '删除当前组', danger: true, disabled: !group, fn: wrap(async () => { if (!confirm('删除组“' + group + '”？组内指令会移到“未分组”。')) return; await api('rename-shortcut-group', { profileId: profile.id, group, name: '' }); shortcutGroups.set(profile.id, ''); await refresh(); }) },
+        { label: '管理组', fn: wrap(() => shortcutManager(profile.id)) }
+      ]);
+    };
+    bar.querySelector('[data-group-menu]').onclick = groupMenu;
+    bar.querySelector('[data-group-menu]').oncontextmenu = groupMenu;
+    bar.querySelector('select').oncontextmenu = groupMenu;
+    const list = bar.querySelector('.shortcut-command-list');
+    for (const command of commands.filter(item => (item.group || '') === group)) {
+      const entry = document.createElement('span'); entry.className = 'terminal-shortcut';
+      entry.innerHTML = '<button class="shortcut-run"><svg aria-hidden="true" width="14" height="12" viewBox="0 0 20 16" fill="none" stroke="currentColor" stroke-width="1.3"><rect x="1" y="3" width="18" height="12" rx="2"/><path d="M5 6h1m3 0h1m3 0h1M5 9h1m3 0h1m3 0h1M5 12h10M10 3V0"/></svg><span></span></button>';
+      const run = entry.querySelector('.shortcut-run'); run.querySelector('span').textContent = command.name; run.title = command.command + '\n右键编辑或删除'; run.disabled = !!session.dead;
+      run.onclick = wrap(async () => { await api('run-shortcut', { sessionId: session.id, id: command.id }); term.activate(session.id); session.xterm.focus(); notify('已发送快捷指令：' + command.name); });
+      const manage = event => { event.preventDefault(); popupMenu(event, [
+        { label: '编辑指令', fn: wrap(() => shortcutManager(profile.id, true, command)) },
+        { label: '删除指令', danger: true, fn: wrap(async () => { if (!confirm('删除快捷指令“' + command.name + '”？')) return; await api('delete-shortcut', { profileId: profile.id, id: command.id }); await refresh(); }) }
+      ]); };
+      entry.oncontextmenu = manage;
+      list.append(entry);
+    }
+    if (!list.children.length) list.innerHTML = '<span class="shortcut-empty">右键左侧 ☰ 新增指令</span>';
+    list.onwheel = event => { if (list.scrollWidth <= list.clientWidth) return; event.preventDefault(); list.scrollLeft += event.deltaY || event.deltaX; };
   }
-  async function shortcutManager(profileId, create = false) {
+  async function shortcutManager(profileId, create = false, initial = {}) {
     await refresh(); const profile = data.profiles.find(p=>p.id===profileId); if(!profile)return;
     const dialog = modal('快捷命令 · ' + profile.name), content=dialog.querySelector('.dialog-content');
     const act = fn => async () => {try{await fn();}catch(e){dialog.querySelector('.dialog-error').textContent=e.message;}};
     const items = () => data.profiles.find(p=>p.id===profileId)?.shortcuts || [];
     const draw = () => {
-      const groups=[...new Set(items().map(c=>c.group))].sort();
+      const groups=[...new Set([...(data.profiles.find(p=>p.id===profileId)?.shortcutGroups || []), ...items().map(c=>c.group)])].sort();
       content.innerHTML='<div class="remote-actions"><button data-new-shortcut>＋ 新增快捷命令</button></div><p class="remote-help">仅供此 SSH 连接使用。多行命令按顺序输入当前终端，不等待每条命令完成；输出直接在终端查看。</p>' + (groups.map((g,i)=>'<section class="shortcut-group"><header><strong>'+escape(g||'未分组')+'</strong>'+(g?'<button data-rename-group="'+i+'">重命名</button><button data-ungroup="'+i+'">移除分组</button>':'')+'</header>'+items().filter(c=>c.group===g).map(c=>'<div class="shortcut-row"><div class="shortcut-row-name">'+escape(c.name)+'</div><div class="remote-actions"><button data-shortcut-view="'+c.id+'">查看</button><button data-shortcut-edit="'+c.id+'">编辑</button><button data-shortcut-delete="'+c.id+'">删除</button></div></div>').join('')+'</section>').join('')||'<p class="remote-help">尚未保存快捷命令。</p>');
       content.querySelector('[data-new-shortcut]').onclick=()=>edit();
       content.querySelectorAll('[data-shortcut-view]').forEach(b=>b.onclick=()=>{
@@ -269,7 +367,7 @@
       const form=content.querySelector('form');form.elements.name.required=true;form.elements.name.maxLength=100;form.elements.group.maxLength=100;form.elements.command.maxLength=32000;form.elements.group.setAttribute('list','shortcut-groups');form.querySelector('[data-back]').onclick=draw;
       form.onsubmit=event=>{event.preventDefault();act(async()=>{await api('save-shortcut',{...values(form),profileId,id:command.id});await refresh();draw();})();};
     };
-    create?edit():draw();
+    create?edit(initial):draw();
   }
   function profileForm(p = {}) {
     const dialog = modal(p.id ? '编辑 SSH 连接' : '新建 SSH 连接'), content = dialog.querySelector('.dialog-content');
@@ -309,7 +407,7 @@
     };
     const edit = (c = {}) => {
       dialog.classList.add('model-config-dialog');
-      content.innerHTML = `<form class="remote-form model-form">${field('name', '配置名称', c.name, 'text', true)}${select('protocol', 'API 协议', [['openai', 'OpenAI 兼容'], ['anthropic', 'Anthropic / Claude']], c.protocol || 'openai', true)}${field('baseUrl', 'API 基础地址', c.baseUrl || 'https://api.openai.com/v1', 'url', true)}${field('apiKey', c.hasKey ? 'API 密钥（已保存，留空保留）' : 'API 密钥', '', 'password', true)}${check('clearKey', '清除已保存密钥', false)}${check('activate', '保存后启用', !data.aiConfigs.length || c.active)}<div class="full model-discovery"><div class="remote-actions"><button type="button" data-fetch-models>获取所有模型</button><span data-model-status role="status"></span></div><div data-model-picker></div><details class="model-role-settings" open><summary>默认模型与用途映射</summary><div data-model-slots class="remote-form"></div></details></div><p class="remote-help full">支持 HTTP / HTTPS。一份服务配置共用地址与密钥，获取模型后按用途选择，也可手动输入。Claude 的三个位置允许选择相同模型；默认用途决定内置 AI 对话使用的模型。CLI 自身的配置不会被改写。切换配置对下一轮对话生效。</p><div class="remote-actions full"><button type="submit">保存配置</button><button type="button" data-model-back>返回列表</button></div></form>`;
+      content.innerHTML = `<form class="remote-form model-form">${field('name', '配置名称', c.name, 'text', true)}${select('protocol', 'API 协议', [['openai', 'OpenAI 兼容'], ['anthropic', 'Anthropic / Claude']], c.protocol || 'openai', true)}${field('baseUrl', 'API 基础地址', c.baseUrl || 'http://172.21.11.82/public/', 'url', true)}${field('apiKey', c.hasKey ? 'API 密钥（已保存，留空保留）' : 'API 密钥', '', 'password', true)}${check('clearKey', '清除已保存密钥', false)}${check('activate', '保存后启用', !data.aiConfigs.length || c.active)}<div class="full model-discovery"><div class="remote-actions"><button type="button" data-fetch-models>获取所有模型</button><span data-model-status role="status"></span></div><div data-model-picker></div><details class="model-role-settings" open><summary>默认模型与用途映射</summary><div data-model-slots class="remote-form"></div></details></div><p class="remote-help full">支持 HTTP / HTTPS。一份服务配置共用地址与密钥，获取模型后按用途选择，也可手动输入。Claude 的三个位置允许选择相同模型；默认用途决定内置 AI 对话使用的模型。CLI 自身的配置不会被改写。切换配置对下一轮对话生效。</p><div class="remote-actions full"><button type="submit">保存配置</button><button type="button" data-model-back>返回列表</button></div></form>`;
       const form = content.querySelector('form'); form.elements.name.required = true;
       const slots = form.querySelector('[data-model-slots]'), status = form.querySelector('[data-model-status]');
       let picker;
@@ -324,7 +422,7 @@
       };
       renderSlots();
       slots.addEventListener('change',()=>{capture();picker?.sync();});
-      form.elements.protocol.onchange = () => { capture(); if (['https://api.openai.com/v1', 'https://api.anthropic.com'].includes(form.elements.baseUrl.value)) form.elements.baseUrl.value = form.elements.protocol.value === 'anthropic' ? 'https://api.anthropic.com' : 'https://api.openai.com/v1'; models=[];renderSlots(); };
+      form.elements.protocol.onchange = () => { capture(); if (['http://172.21.11.82/public/', 'https://api.anthropic.com'].includes(form.elements.baseUrl.value)) form.elements.baseUrl.value = form.elements.protocol.value === 'anthropic' ? 'https://api.anthropic.com' : 'http://172.21.11.82/public/'; models=[];renderSlots(); };
       form.querySelector('[data-model-back]').onclick = draw;
       const secretField = fanboxUI.secretInput(form.elements.apiKey, { saved:c.hasKey, read:()=>api('reveal-ai-key',{id:c.id}), onError:e=>dialog.querySelector('.dialog-error').textContent=e.message });
       const requestConfig = () => ({ ...values(form), apiKey:secretField.value(), id: c.id, clearKey: form.elements.clearKey.checked });
@@ -448,7 +546,7 @@
       const size = resizePrompt(prompt.getBoundingClientRect().height + (event.key === 'ArrowUp' ? 10 : -10));
       localStorage.setItem('fb_chat_prompt_height', String(size));
     };
-    prompt.onkeydown = event => { if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); wrap(startAI)(); } };
+    prompt.onkeydown = event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'c') { event.stopPropagation(); return; } if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) { event.preventDefault(); wrap(startAI)(); } };
     body.querySelector('[name=context]').onchange = event => { current.context = event.target.checked; };
     body.querySelector('[name=target]').onchange = wrap(event => openAI(event.target.value));
     const updatePolicy = wrap(async () => { current.policy = await api('policy', { id: selected, policy: { mode: body.querySelector('[name=mode]').value, interactive: body.querySelector('[name=interactive]').checked, upload: body.querySelector('[name=upload]').checked } }); drawLog(); notify('权限已更新，执行中的任务也会重新检查权限'); });
@@ -462,7 +560,7 @@
     body.querySelector('[name=mode]').value = policy.mode; body.querySelector('[name=interactive]').checked = policy.interactive;
     body.querySelector('[data-environment]').textContent = `${env.host} · ${env.os} · ${env.shell}\n命令直接在右侧终端执行，继承当前目录和环境。${env.interactiveTargetUnknown ? '\n检测到手动环境切换，执行前需重新确认目标。' : ''}`;
     if (sessions(true).some(s=>s.id===selected) && (env.os === 'unknown' || env.interactiveTargetUnknown)) {
-      const hint=body.querySelector('[data-target-confirm]');hint.hidden=false;body.querySelector('.chat-options-menu').append(hint);
+      const hint=body.querySelector('[data-target-confirm]');hint.hidden=false;
       hint.innerHTML='<span>'+escape(env.os==='unknown'?'执行前会自动识别系统，无需手动确认；识别失败时可在此选择。':'当前系统：'+env.os+' · '+env.shell)+'</span><button type="button" data-confirm-system>确认当前系统</button>';
       hint.querySelector('button').onclick=()=>{
         const sessionId=selected,d=modal('确认当前 SSH 目标系统');
@@ -487,27 +585,41 @@
     await openAI(sessionId);
     notify('历史对话已加载，可发送新消息继续；此前命令不会自动重复执行');
   }
-  function drawLog() {
+  function drawLog({ preserveScroll = false } = {}) {
     if (tab !== 'ai') return;
     const current = chat(selected), element = body.querySelector('.remote-log');
     if (!panel.hidden && tab === 'ai') current.unread = false;
     if (element) {
-      const atBottom = element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+      const atBottom = !preserveScroll && element.scrollHeight - element.scrollTop - element.clientHeight < 80;
+      const top = element.getBoundingClientRect().top;
+      const anchor = [...element.querySelectorAll('[data-message-id]')].find(node => node.getBoundingClientRect().bottom > top);
+      const anchorTop = anchor?.getBoundingClientRect().top;
+      const added = Math.max(0, current.items.length - Number(element.dataset.itemCount || current.items.length));
+      if (added && (!atBottom || current.visibleCount > 100)) current.visibleCount = (current.visibleCount || 100) + added;
+      element.dataset.itemCount = current.items.length;
+      const loadEarlier = () => {
+        if ((current.visibleCount || 100) >= current.items.length) return;
+        current.visibleCount = (current.visibleCount || 100) + 100;
+        drawLog({ preserveScroll: true });
+      };
+      element.onscroll = () => { if (element.scrollTop <= 40) loadEarlier(); };
       if (!current.items.length) element.innerHTML = '<div class="chat-empty"><span>✦</span><strong>和当前终端一起工作</strong><p>描述目标，执行过程会在这里显示。<br>命令输出请在右侧终端查看。</p></div>';
       else {
         element.querySelector('.chat-empty')?.remove();
         const visible = current.items.slice(-(current.visibleCount || 100));
         const keys = new Set(visible.map(item => item.key));
         for (const child of [...element.children]) if (!keys.has(child.dataset.messageId)) child.remove();
+        let previous = null;
         for (const item of visible) {
           let node = [...element.children].find(child => child.dataset.messageId === item.key);
           if (!node) {
             node = document.createElement('article'); node.dataset.messageId = item.key; node.className = 'chat-message chat-' + item.kind;
             node.innerHTML = '<div class="chat-author"></div><div class="chat-content"><details class="chat-reasoning"><summary>思考 / 分析</summary><div></div></details><div class="chat-message-text"></div></div>';
             renderChatAuthor(node.querySelector('.chat-author'), item.kind);
-            if (item.kind === 'command') { const copy = document.createElement('button'); copy.className = 'chat-copy'; copy.textContent = '⧉'; copy.title = '复制命令'; copy.onclick = wrap(() => navigator.clipboard.writeText(item.text)); node.append(copy); }
-            element.append(node);
           }
+          const next = previous ? previous.nextSibling : element.firstChild;
+          if (node !== next) element.insertBefore(node, next);
+          previous = node;
           const details = node.querySelector('.chat-reasoning'); details.hidden = !item.reasoning;
           const analysis = details.querySelector('div'); if (!analysis.textContent && item.reasoning) details.open = false; if (analysis.textContent !== item.reasoning) analysis.textContent = item.reasoning;
           if (item.diagnostic && !node.querySelector('.chat-diagnostic')) {
@@ -516,16 +628,18 @@
             const text = document.createElement('pre'); text.textContent = item.diagnostic;
             details.append(summary, text); node.querySelector('.chat-content').append(details);
           }
-          const content = node.querySelector('.chat-message-text'); if (content.textContent !== item.text) content.textContent = item.text;
+          const content = node.querySelector('.chat-message-text'); renderMessage(content, item);
+          renderMessageControls(node, item);
           node.classList.toggle('is-thinking', !!item.thinking);
         }
         if (current.items.length > visible.length) {
           const more = document.createElement('button'); more.textContent = '加载更早的消息';
-          more.onclick = () => { const before = element.scrollHeight; current.visibleCount = (current.visibleCount || 100) + 100; drawLog(); element.scrollTop += element.scrollHeight - before; };
+          more.onclick = loadEarlier;
           element.prepend(more);
         }
       }
       if (atBottom) element.scrollTop = element.scrollHeight;
+      else if (anchor?.isConnected) element.scrollTop += anchor.getBoundingClientRect().top - anchorTop;
     }
     const progress = body.querySelector('.chat-progress'); if (progress) {
       progress.hidden = !current.runId;
@@ -551,7 +665,7 @@
     const pill = body.querySelector('[data-permission-pill]');
     if (pill) { const p = current.policy; pill.textContent = !p ? '读取权限…' : p.mode === 'read' || !p.interactive ? '◉ 仅聊天' : p.mode === 'auto' ? '◉ 自动执行' : '◉ 确认后执行'; pill.classList.toggle('enabled', !!p && p.mode !== 'read' && p.interactive); }
     const run = body.querySelector('[data-run]'); if (run) run.disabled = !!current.runId || !selected;
-    const stop = body.querySelector('[data-stop]'); if (stop) { stop.disabled = !current.runId; stop.hidden = !current.runId; stop.title = '停止命令及 AI（发送 Ctrl+C）'; stop.setAttribute('aria-label', stop.title); }
+    const stop = body.querySelector('[data-stop]'); if (stop) { stop.disabled = !current.runId; stop.hidden = !current.runId; stop.title = '停止 AI 并交还终端'; stop.setAttribute('aria-label', stop.title); }
   }
   async function startAI() {
     if (body.dataset.chatSession !== selected || body.querySelector('.remote-prompt')?.disabled) throw Error('正在切换会话，请稍候再发送');
@@ -563,14 +677,14 @@
     const id = crypto.randomUUID(), sessionId = selected; current.runId = id; current.lastRunId = id; current.paused = false; current.unread = false;
     addItem(current, 'user', prompt); current.progress = '正在连接模型…'; current.prompt = ''; body.querySelector('.remote-prompt').value = ''; drawLog();
     let outcome = 'AI 本轮已结束，请在右侧终端查看命令结果';
-    try { const result = await api('ai-run', { id, sessionId, conversationId: current.conversationId, modelOptions: current.modelOptions, prompt, context: context.slice(-16000) }); current.conversationId = result.conversationId || current.conversationId; if (result.pending) { outcome = '命令未确认结束，已暂停后续执行；请查看终端或接管'; addItem(current, 'notice', outcome); } else if (result.noToolsReason) { outcome = result.noToolsReason; addItem(current, 'notice', result.noToolsReason + (result.noToolsReason.includes('权限') || result.noToolsReason.includes('仅建议') ? '。点击输入框旁的权限按钮可设置。' : '。如果您要求执行操作，请检查模型是否支持工具调用。')); } }
+    try { const result = await api('ai-run', { id, sessionId, conversationId: current.conversationId, modelOptions: current.modelOptions, prompt, context: context.slice(-16000) }); current.conversationId = result.conversationId || current.conversationId; if (result.pending) { outcome = '本轮自动执行已暂停，终端结果或目标需要核对；请查看右侧终端'; addItem(current, 'notice', outcome); } else if (result.noToolsReason) { outcome = result.noToolsReason; addItem(current, 'notice', result.noToolsReason + (result.noToolsReason.includes('权限') || result.noToolsReason.includes('仅建议') ? '。点击输入框旁的权限按钮可设置。' : '。如果您要求执行操作，请检查模型是否支持工具调用。')); } }
     catch (error) { outcome = error.message; addItem(current, 'error', error.message); throw error; }
-    finally { current.runId = ''; current.paused = false; current.unread = selected !== sessionId || panel.hidden; current.items.forEach(item => item.thinking = false); if (selected === sessionId) notify(outcome); drawLog(); }
+    finally { current.runId = ''; current.paused = false; current.unread = selected !== sessionId || panel.hidden; current.items.forEach(item => item.thinking = false); current.progress = outcome; if (selected === sessionId) notify(outcome); drawLog(); if (selected === sessionId && !panel.hidden && tab === 'ai') await render(); }
   }
-  window.addEventListener('terminal-active', event => { if (!panel.hidden && tab === 'ai' && selected !== event.detail) { selected = event.detail; wrap(render)(); } });
+  window.addEventListener('terminal-active', event => { renderShortcutBar(); if (!panel.hidden && tab === 'ai' && selected !== event.detail) { selected = event.detail; wrap(render)(); } });
   wrap(refresh)();
   window.addEventListener('beforeunload', event => { if (dirtyEditor()) { event.preventDefault(); event.returnValue = ''; } });
-  window.fanboxRemote.on('status', message => { drawSessionTree(); if (!panel.hidden) notify(`SSH ${message.id}：${message.status}${message.error ? ' · ' + message.error : ''}`); });
+  window.fanboxRemote.on('status', message => { drawSessionTree(); if (message.environment && selected === message.id && !panel.hidden && tab === 'ai' && !chat(selected).runId) wrap(render)(); if (!panel.hidden) notify(`SSH ${message.id}：${message.status}${message.error ? ' · ' + message.error : ''}`); });
   window.fanboxRemote.on('transfer', message => { transfers.set(message.id, { ...transfers.get(message.id), ...message }); drawTransfers(); });
   window.fanboxRemote.on('im-task', message => { const current=chat(message.sessionId); current.runId=message.id; current.lastRunId=message.id; current.conversationId=message.conversationId; addItem(current,'user',message.prompt); drawLog(); });
   window.fanboxRemote.on('im-task-done', message => { const current=chat(message.sessionId); if(current.runId===message.id) {current.runId=''; current.progress='本轮远程任务结束'; drawLog();} });
@@ -581,17 +695,13 @@
     if (message.type === 'status' || message.type === 'control') {
       if (message.paused !== undefined) current.paused = message.paused;
       current.progress = current.paused && !message.paused ? '已接管终端，AI 后续操作已暂停' : message.text;
-      if (message.reminder) addItem(current, 'notice', '命令已运行超过 5 分钟，仍在监听。您可以继续等待、停止命令或接管终端。');
+      if (message.reminder) addItem(current, 'notice', '命令已运行超过 5 分钟，仍在监听。您可以继续等待、停止 AI 或接管终端。');
       if (selected === message.sessionId) notify(current.progress);
     }
+    else if (message.type === 'done') { current.runId = ''; current.paused = false; current.items.forEach(item => item.thinking = false); }
     else if (message.type === 'analysis-start') { const item = addItem(current, 'assistant', '', key); item.thinking = true; }
     else if (message.type === 'metrics') {
-      const usage = message.usage;
-      const input = usage?.input_tokens ?? usage?.prompt_tokens;
-      const output = usage?.output_tokens ?? usage?.completion_tokens;
-      const reasoning = usage?.completion_tokens_details?.reasoning_tokens;
-      const text = `${message.model} · 输出上限 ${message.maxTokens || '服务默认'} · 推理 ${message.reasoningEffort || '服务默认'}${input != null ? ' · 输入 ' + input : ''}${output != null ? ' · 输出 ' + output : ''}${reasoning != null ? ' · 思考 ' + reasoning : ''}`;
-      addItem(current, 'notice', text, key + '-metrics');
+      addItem(current, 'assistant', '', key).metrics = { model: message.model, maxTokens: message.maxTokens, reasoningEffort: message.reasoningEffort, usage: message.usage };
     }
     else if (message.type === 'diagnostic') { const item = addItem(current, 'notice', '', key + '-diagnostic'); item.diagnostic = message.text; }
     else if (message.type === 'analysis-end') { const item = current.items.find(item => item.key === key); if (item) item.thinking = false; }

@@ -289,7 +289,9 @@ ipcMain.handle('win:focus', () => {
 });
 
 // 界面语言：用户手动选过的存在 ~/.fanbox/config.json（渲染层切换时写入），没选过跟随系统
+let rendererUiLang;
 function uiLang() {
+  if (rendererUiLang) return rendererUiLang;
   try {
     const c = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.fanbox', 'config.json'), 'utf8'));
     if (c.lang === 'zh' || c.lang === 'en') return c.lang;
@@ -606,7 +608,7 @@ global.__fanboxAgent = { create: ({ cwd, autorun }) => new Promise(resolve => {
  win.webContents.send('schedule:create', { reqId, cwd, command: autorun });
 }) };
 
-ipcMain.handle('window:menus',event=>{remoteWorkspace.guard(event);return process.platform==='win32'?Menu.getApplicationMenu().items.map(item=>item.label):[];});
+ipcMain.handle('window:menus',(event,lang)=>{remoteWorkspace.guard(event);if(['zh','en'].includes(lang)&&rendererUiLang!==lang){rendererUiLang=lang;buildMenu();}return process.platform==='win32'?Menu.getApplicationMenu().items.map(item=>item.label):[];});
 ipcMain.handle('window:menu',(event,{index,x,y}={})=>{remoteWorkspace.guard(event);if(process.platform!=='win32'||!Number.isInteger(index)||!Number.isFinite(x)||!Number.isFinite(y))return;const item=Menu.getApplicationMenu()?.items[index];item?.submenu?.popup({window:win,x:Math.max(0,Math.round(x)),y:Math.max(0,Math.round(y))});});
 
 ipcMain.handle('window:colors',(event,{color,symbolColor}={})=>{remoteWorkspace.guard(event);if(process.platform!=='win32'||!/^#[0-9a-f]{6}$/i.test(color)||!/^#[0-9a-f]{6}$/i.test(symbolColor))return;win.setTitleBarOverlay({color,symbolColor,height:34});});

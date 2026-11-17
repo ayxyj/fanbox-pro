@@ -627,7 +627,7 @@ function renderTextPreview(data) {
   } else {
     const pre = document.createElement('pre');
     const code = document.createElement('code');
-    if (ex) code.className = 'language-' + ex;
+    if (ex) code.className = 'language-' + (ex === 'hql' ? 'sql' : ex);
     code.textContent = data.content || '';
     pre.appendChild(code);
     body.innerHTML = meta;
@@ -2208,6 +2208,8 @@ function bindEvents() {
 
   document.addEventListener('keydown', (e) => {
     if (e.isComposing || e.keyCode === 229 || e.target.closest?.('[data-ime-composing]')) return;
+    // Monaco owns search, navigation and Escape inside the editor and its widgets.
+    if (e.defaultPrevented || e.target.closest?.('.monaco-editor, .monaco-diff-editor, .monaco-overflowing-content-widgets')) return;
     if (e.key === 'Escape' && $('#context-menu')) { closeContextMenu(); return; }
     const cmdkOpen = !$('#cmdk').classList.contains('hidden');
     const lbOpen = !!document.querySelector('.lightbox');
@@ -3560,6 +3562,7 @@ function splitHighlighted(html) {
   return out;
 }
 function highlightLines(content, ext) {
+  if (ext === 'hql') ext = 'sql';
   if (window.hljs && !window.__noHljs && ext && window.hljs.getLanguage(ext)) {
     try { return splitHighlighted(window.hljs.highlight(content, { language: ext, ignoreIllegals: true }).value); }
     catch { /* 高亮失败退纯文本 */ }

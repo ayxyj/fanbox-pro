@@ -97,11 +97,11 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   const local = new Map();
   const target = id => {
     if (ssh.sessions.has(id)) {
-      const s = ssh.get(id); return { detectEnvironment: signal => ssh.detectEnvironment(id,signal), pendingInput: s.zmodem?.job ? '文件传输中' : s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => ssh.input(id, text), output: () => s.output };
+      const s = ssh.get(id); return { detectEnvironment: signal => ssh.detectEnvironment(id,signal), pendingInput: s.zmodem?.job ? '文件传输中' : s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown, autoDetectAfterLogin: !!s.autoDetectAfterLogin }, input: text => ssh.input(id, text), output: () => s.output };
     }
     const p = terminals.get(id), s = local.get(id);
     if (!p || !s) throw Error('终端已关闭，请重新选择');
-    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: p, size: () => ({cols:p.cols,rows:p.rows}), environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
+    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: p, size: () => ({cols:p.cols,rows:p.rows}), environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown, autoDetectAfterLogin: !!s.autoDetectAfterLogin }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
   };
   const sendFile = async (id, file, options = {}) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
@@ -167,6 +167,7 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   handle('save-profile', p => store.save(p)); handle('delete-profile', ({ id }) => store.remove(id));
   handle('save-shortcut', p => store.saveShortcut(p));
   handle('delete-shortcut', p => store.deleteShortcut(p));
+  handle('save-shortcut-group', p => store.saveShortcutGroup(p));
   handle('rename-shortcut-group', p => store.renameShortcutGroup(p));
   handle('run-shortcut', ({ sessionId, id }) => {
     const t = target(sessionId);

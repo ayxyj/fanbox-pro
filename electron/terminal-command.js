@@ -1,5 +1,6 @@
 'use strict';
 const { randomUUID } = require('crypto');
+const { promptKind } = require('./ssh-environment');
 
 // Run in the already-open PTY, retaining its directory, variables and SSH connection.
 // Completion is acknowledged by the shell, never inferred from a quiet terminal.
@@ -34,6 +35,7 @@ function terminalCommand(target, command, { signal, timeout = 60000, reminderAft
     };
     const abort = () => {
       if (signal?.reason === 'disconnected') { finish({ disconnected: true, completed: false }); return; }
+      if (signal?.reason === 'stop') { finish({ stopped: true, detached: true, completed: false, note: 'AI monitoring stopped. Terminal handed back to user; remote process status is unknown.' }); return; }
       stopping = true;
       onProgress?.({ elapsed: Date.now() - started, stopping: true });
       stopTimer = setTimeout(() => finish({ stopped: true, completed: false, note: 'Interrupt sent, completion not confirmed. Inspect terminal before continuing.' }), stopTimeout);
@@ -42,8 +44,12 @@ function terminalCommand(target, command, { signal, timeout = 60000, reminderAft
     const timer = setInterval(() => {
       if (stopping) return;
       const elapsed = Date.now() - started, idle = Date.now() - lastOutput;
+      if (idle >= 1000 && promptKind(tail)) {
+        finish({ pending: true, completed: false, promptObserved: true, note: 'A shell prompt is visible, but the command completion marker is missing. The foreground shell may have changed. Verify target and result before continuing.' });
+        return;
+      }
       const reminder = !reminded && elapsed >= reminderAfter; if (reminder) reminded = true;
-      onProgress?.({ elapsed, idle, longRunning: elapsed >= timeout, reminder, waitingInput: /(?:password\s*:|passphrase[^\r\n]*:|\[y\/n\]|\(yes\/no[^)]*\)|密码[^\r\n]*[:：])\s*$/i.test(tail.slice(-500)) });
+      onProgress?.({ elapsed, idle, longRunning: elapsed >= timeout, reminder, waitingInput: /(?:please select[^\r\n]*[:：]|password\s*:|passphrase[^\r\n]*:|\[y\/n\]|\(yes\/no[^)]*\)|密码[^\r\n]*[:：])\s*$/i.test(tail.slice(-500)) });
     }, progressInterval);
     unsubscribe = target.subscribeOutput(text => {
       lastOutput = Date.now();
@@ -59,4 +65,38 @@ function terminalCommand(target, command, { signal, timeout = 60000, reminderAft
     try { target.input(payload); } catch (error) { finish(null, error); }
   });
 }
-module.exports = { terminalCommand };
+// Observe interactive login/menu output without waiting for the parent shell to exit.
+function terminalInput(target, input, { signal, onProgress, timeout = 60000, reminderAfter = 300000, progressInterval = 1000, settleDelay = 500 } = {}) {
+  return new Promise((resolve, reject) => {
+    let output = '', updated = Date.now(), finished = false, unsubscribe = () => {};
+    const started = Date.now();
+    let reminded = false;
+    const finish = (result, error) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(timer);
+      unsubscribe();
+      signal?.removeEventListener('abort', abort);
+      if (error) reject(error);
+      else resolve({ output, completed: false, ...result });
+    };
+    const abort = () => finish({ stopped: true, detached: true, disconnected: signal?.reason === 'disconnected' });
+    const timer = setInterval(() => {
+      const elapsed = Date.now() - started;
+      const waitingInput = /(?:please select[^\r\n]*[:：]|password\s*:|passphrase[^\r\n]*:|\(yes\/no[^)]*\)|\[y\/n\]|密码[^\r\n]*[:：])\s*$/i.test(output);
+      const promptObserved = !!promptKind(output);
+      if (output && Date.now() - updated >= settleDelay && (waitingInput || promptObserved)) {
+        finish({ waitingInput, promptObserved, note: 'Observed terminal state only. Verify the menu selection and actual target with the user before further input. Exit code is unknown.' });
+      } else {
+        const reminder = !reminded && elapsed >= reminderAfter;
+        if (reminder) reminded = true;
+        onProgress?.({ elapsed, idle: Date.now() - updated, waitingInput, longRunning: elapsed >= timeout, reminder });
+      }
+    }, progressInterval);
+    unsubscribe = target.subscribeOutput(text => { output = (output + text).slice(-16000); updated = Date.now(); });
+    signal?.addEventListener('abort', abort, { once: true });
+    if (signal?.aborted) { abort(); return; }
+    try { target.input(input); } catch (error) { finish({}, error); }
+  });
+}
+module.exports = { terminalCommand, terminalInput };
