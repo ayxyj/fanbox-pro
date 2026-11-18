@@ -1,11 +1,11 @@
 'use strict';
 const { Terminal } = require('@xterm/headless');
 const { createHash } = require('crypto');
-const customOption = label => /^(?:Type something|Other|Custom answer|Chat about this|输入|自定义)/i.test(label.replace(/^(?:\[[ x]\]|[☐☑✓✔])\s*/i,''));
+const customOption = label => /^(?:Type something|Other|Custom answer|Chat about this|输入|自定义)/i.test(label.replace(/^(?:\[[ x]\]|[☐☑☒✓✔])\s*/i,''));
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const { isTerminalReply: reply } = require('./terminal-protocol');
 const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
-const menuKey = menu => menu && hash({kind:menu.kind,question:menu.question,options:menu.options.map(o=>o.label.replace(/^(?:\[[ x]\]|[☐☑✓✔])\s*/i,''))});
+const menuKey = menu => menu && hash({kind:menu.kind,question:menu.question,options:menu.options.map(o=>o.label.replace(/^(?:\[[ x]\]|[☐☑☒✓✔])\s*/i,''))});
 function parseMenu(lines) {
  lines=lines.map(line=>line.replace(/^\s*│ ?/,'').replace(/\s*│\s*$/,''));
  let footer = lines.findLastIndex(l => /(?:enter.*(?:select|confirm|submit)|space.*(?:select|toggle)|esc.*(?:cancel|back|exit))/i.test(l));
@@ -19,7 +19,7 @@ function parseMenu(lines) {
  for(let row=0;row<body.length;row++){
   const line=body[row];
   const numbered=line.match(/^\s*([❯>›])?\s*(\d+)[.)]\s+(.*\S)\s*$/);
-  if(numbered){if(numbered[1])selected=options.length;options.push({label:numbered[3],row,number:Number(numbered[2]),checked:/^[☑✓✔]|\[x\]/i.test(numbered[3])});}
+  if(numbered){if(numbered[1])selected=options.length;options.push({label:numbered[3],row,number:Number(numbered[2]),checked:/^(?:[☑☒✓✔]|\[x\])/i.test(numbered[3])});}
  }
  // Only recognize a numbered menu with a real focused item and contiguous numbering.
  if(options.length){
@@ -74,13 +74,13 @@ function parseMenu(lines) {
  const first=options[0]?.row ?? body.length;
  const context=body.slice(Math.max(contextStart,first-12),first).filter(l=>l.trim()&&!/^\s*[─━╭╮╰╯│]+\s*$/.test(l)).map(l=>l.replace(/((?:API[_ ]?KEY|TOKEN|SECRET|PASSWORD)\s*[:=]).*/ig,'$1 [已隐藏]')).join('\n').trim().slice(-3000);
  if(!context)return null;
- const help=lines.slice(Math.max(0,footer-2),footer+1).join(' '),multi=body.some(l=>/^\s*[❯>›]?\s*(?:\[[ x]\]|[☐☑☒])\s+\S/i.test(l))||/space.*(?:select|toggle)|select.*space/i.test(help);
- const menu={kind:resume?'resume':customOption(options[selected]?.label||'')&&/enter.*submit/i.test(help)?'input':multi?'multi':'choice',question:context,options,selected,footer:help,multi};
+ const help=lines.slice(Math.max(0,footer-2),footer+1).join(' '),multi=options.some(o=>/^\s*[❯>›]?\s*(?:\d+[.)]\s*)?(?:\[[ x]\]|[☐☑☒])\s+\S/i.test(body[o.row]))||/space.*(?:select|toggle)|select.*space/i.test(help);
+ const menu={kind:resume?'resume':multi?'multi':options.length===1&&customOption(options[selected]?.label||'')&&/enter.*submit/i.test(help)?'input':'choice',question:context,options,selected,footer:help,multi};
  menu.fingerprint=hash(menu);return menu;
 }
 class NativeInteraction {
- constructor({target,ask,notify=()=>{},onMenu=()=>{},onDismiss=()=>{},onIdle=()=>{},settle=400,keyDelay=100,ackTimeout=3000,confirmDelay=200}){
-  Object.assign(this,{target,ask,notify,onMenu,onDismiss,onIdle,settle,keyDelay,ackTimeout,confirmDelay});this.revision=0;this.closed=false;this.lastFingerprint=null;
+ constructor({target,ask,name='claude',notify=()=>{},onMenu=()=>{},onDismiss=()=>{},onIdle=()=>{},settle=400,keyDelay=100,ackTimeout=3000,confirmDelay=200}){
+  Object.assign(this,{target,ask,name,notify,onMenu,onDismiss,onIdle,settle,keyDelay,ackTimeout,confirmDelay});this.revision=0;this.closed=false;this.lastFingerprint=null;
   const size=target.size?.()||{};this.screen=new Terminal({cols:size.cols||80,rows:size.rows||24,scrollback:0,allowProposedApi:true});
  }
  lines(){const b=this.screen.buffer.active;return Array.from({length:this.screen.rows},(_,i)=>b.getLine(b.baseY+i)?.translateToString(true)||'');}
@@ -95,6 +95,11 @@ class NativeInteraction {
  refresh(){
   clearTimeout(this.maxTimer);this.maxTimer=null;
   if(this.closed||this.current?.processing)return;const lines=this.lines(),menu=this.menu();
+  // TUIs often clear first and repaint the same menu in the next output chunk.
+  // Dismiss only after a sustained disappearance; apply() still checks the live
+  // screen before sending keys while this grace period is active.
+  if(!menu&&this.current){this.missingSince ||= Date.now();const remaining=Math.max(100,this.settle)-(Date.now()-this.missingSince);if(remaining>0){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),remaining);return;}}
+  this.missingSince=null;
   if(!menu){this.submittedKey=null;if(lines.some(l=>/^\s*[❯>]\s*$/.test(l)))this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(/^\s*[❯>](?:\s|$)/.test(lines[this.screen.buffer.active.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l)))this.onIdle();return;}
   this.onMenu(menu);
   // Repainting or moving the visible rows does not introduce the next question.
@@ -106,7 +111,7 @@ class NativeInteraction {
   this.lastFingerprint=menu.fingerprint;const controller=new AbortController(),entry={controller,menu};this.current=entry;
   const options=(menu.kind==='input'?[]:menu.options).map(o=>({label:o.label,description:o.description}));
   if(menu.kind==='resume')options.push({label:'〔终端下一屏〕'},{label:'〔终端上一屏〕'});
-  const q={title:menu.kind==='resume'?'Claude 历史会话选择':'Claude 等待处理',question:menu.question,options,multiSelect:menu.multi,nativeMenu:true,fixedOptions:true,searchable:menu.kind==='resume',nativeText:menu.kind==='input',selectedIndices:menu.options.flatMap((o,i)=>o.checked?[i]:[])};
+  const q={title:this.name+(menu.kind==='resume'?' 历史会话选择':' 等待处理'),question:menu.question,options,multiSelect:menu.multi,nativeMenu:true,fixedOptions:true,searchable:menu.kind==='resume',nativeText:menu.kind==='input',selectedIndices:menu.options.flatMap((o,i)=>o.checked?[i]:[])};
   Promise.resolve().then(()=>this.ask(q,controller.signal)).then(answer=>{
    if(!answer){if(this.current===entry){this.current=null;this.notify('终端仍在等待处理。问题已过期或发送未完成，可发送 /retry 重新获取当前问题，也可在本机处理。');}return;}
    return this.apply(entry,answer);
@@ -131,7 +136,7 @@ class NativeInteraction {
    const move=i=>{while(selected!==i){const delta=i>selected?1:-1;selected+=delta;steps.push({key:delta>0?'\x1b[B':'\x1b[A',selected});}};
    if(menu.kind==='resume'&&ids.length===1&&ids[0]>=menu.options.length){for(let i=0;i<Math.max(1,menu.options.length);i++)steps.push({key:ids[0]===menu.options.length?'\x1b[B':'\x1b[A'});navigation=true;}
    else if(menu.multi){const desired=new Set(ids);
-    for(let i=0;i<menu.options.length;i++){if(!!menu.options[i].checked===desired.has(i))continue;move(i);steps.push({key:' ',checked:i,value:desired.has(i)});}steps.push({key:'\r',selected});
+    for(let i=0;i<menu.options.length;i++){if(!!menu.options[i].checked===desired.has(i))continue;move(i);steps.push({key:' ',checked:i,value:desired.has(i)});}steps.push({key:'\r',selected,desired});
    }else{
     if(ids.length!==1)throw Error('Invalid selection');if(customOption(menu.options[ids[0]].label))this.customContext=menu.question;move(ids[0]);steps.push({key:'\r',selected});
    }
@@ -143,7 +148,7 @@ class NativeInteraction {
     if(!live())return;
     if(step.key==='\r' && step.selected!==undefined && !await waitFor(m=>menuKey(m)===key&&m.selected===step.selected))throw Error('Focus not acknowledged');
     if(step.key==='\r' && this.target.validate && !await this.target.validate())throw Error('Terminal changed');
-    if(step.key==='\r' && step.selected!==undefined){await flush();const actual=this.menu();if(menuKey(actual)!==key||actual.selected!==step.selected)throw Error('Menu changed before confirmation');}
+    if(step.key==='\r' && step.selected!==undefined){await flush();const actual=this.menu();if(menuKey(actual)!==key||actual.selected!==step.selected)throw Error('Menu changed before confirmation');if(step.desired&&actual.options.some((o,i)=>!!o.checked!==step.desired.has(i)))throw Error('Selection changed before confirmation');}
     if(!live())return;
     this.target.input(step.key);await delay(this.keyDelay);
     if(step.selected!==undefined && step.key!=='\r' && !await waitFor(m=>menuKey(m)===key&&m.selected===step.selected))throw Error('Navigation not acknowledged');

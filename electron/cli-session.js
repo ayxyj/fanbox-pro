@@ -38,13 +38,14 @@ class CLISessions {
       const s = { name, identity: t.identity, tail: '', sending: Promise.resolve(), seen: new Set(), pending: false, startup: true, startupOutput: '', permissions: new Map(), permissionSeen: new Set() };
       s.channel = this.resultChannel(name, event => this.result(id, s, event));
       this.sessions.set(id, s);
-      if (name === 'claude' && this.askNative) s.native = new NativeInteraction({
+      if (this.askNative) s.native = new NativeInteraction({
+        name,
         target: { ...t, validate: async () => this.sessions.get(id) === s && this.target(id).identity === s.identity && (await this.inspect(t)).name === s.name },
         ask: (question, signal) => this.askNative(id, question, signal),
         notify: text => this.deliver(id,s,text),
         onMenu: () => { s.nativeMenu = true; if(s.progress)s.progress.paused=true; },
         onDismiss: () => { s.nativeMenu=false; if(s.progress)s.progress.paused=false; },
-        onIdle: () => { if(s.nativeMenu || s.slashCommand){ const resume=s.slashCommand?.startsWith('/resume'); s.nativeMenu=false;s.slashCommand=null;s.pending=false;this.finishProgress(s);if(resume)this.deliver(id,s,'Claude 会话选择已结束，终端已返回输入状态。'); } }
+        onIdle: () => { if(s.nativeMenu || s.slashCommand){ const resume=s.slashCommand?.startsWith('/resume'); s.nativeMenu=false;s.slashCommand=null;s.pending=false;this.finishProgress(s);if(resume)this.deliver(id,s,s.name+' 会话选择已结束，终端已返回输入状态。'); } }
       });
       // PTY bytes are only inspected for a bounded error notice, never forwarded.
       s.unsubscribe = t.subscribeOutput(text => {
@@ -129,6 +130,9 @@ class CLISessions {
     // Match only complete protocol responses; ordinary keys/pastes still cancel.
     if (isTerminalReply(text)) return;
     const s = this.sessions.get(id); if (!s) return;
+    s.inputRevision = (s.inputRevision || 0) + 1;
+    if (s.name === 'codex' && /[\r\n]/.test(text || '')) s.localSubmittedAt = Date.now();
+    if (!text || /[\x03\x04]/.test(text)) s.localSubmittedAt = null;
     s.native?.input(text);
     s.localInput = true; s.interactionsCancelledAt = Date.now(); s.startup = false; s.trustPending = false; s.trustController?.abort(); this.cancelPermissions(s);
   }
@@ -142,7 +146,7 @@ class CLISessions {
       if(!s.pending || s.localInput){this.beginTask(id,s,event.createdAt);s.localInput=false;}
       return;
     }
-    if(event.kind === 'session') { if(this.sessions.get(id)===s && event.source==='resume'){s.nativeMenu=false;s.pending=false;s.slashCommand=null;this.finishProgress(s);this.deliver(id,s,'Claude 已恢复历史会话：'+event.sessionId);} return; }
+    if(event.kind === 'session') { if(this.sessions.get(id)===s && event.source==='resume'){s.native?.invalidate();s.nativeMenu=false;s.pending=false;s.slashCommand=null;this.finishProgress(s);this.deliver(id,s,'Claude 已恢复历史会话：'+event.sessionId);} return; }
     if (event.kind === 'attachment') {
       const taskId = s.taskId;
       const authorized = () => this.sessions.get(id) === s && s.pending && s.taskId === taskId && event.createdAt >= s.started && s.channel.hasRequest(event.key);
@@ -156,7 +160,7 @@ class CLISessions {
       if (s.native?.retry()) return;
       if (Date.now() - (s.lastInputNotice || 0) < 10000) return;
       s.lastInputNotice = Date.now();
-      this.deliver(id, s, 'Claude 正在等待选择或文字回答，当前界面未能自动识别。请发送 /retry 重新获取问题，或在本机处理。');
+      this.deliver(id, s, s.name+' 正在等待选择或文字回答，当前界面未能自动识别。请发送 /retry 重新获取问题，或在本机处理。');
       return;
     }
     if (event.kind === 'progress') { if (this.sessions.get(id) === s && s.pending && event.createdAt >= s.started) s.progress?.event(event); return; }
@@ -164,10 +168,13 @@ class CLISessions {
       if (this.sessions.get(id) !== s || s.name !== 'claude' || event.createdAt <= (s.interactionsCancelledAt || 0)) { s.channel.respond(event.key, false); return; }
       this.requestPermission(id, s, event).catch(() => {}); return;
     }
+    // Codex notify has no UserPromptSubmit hook. A locally submitted turn still
+    // owns its completion, but an interrupt/stop must revoke that ownership.
+    if (this.sessions.get(id) === s && s.name === 'codex' && !s.pending && s.localSubmittedAt && event.createdAt >= s.localSubmittedAt && ['result','error','missing'].includes(event.kind)) this.beginTask(id,s,s.localSubmittedAt);
     if (this.sessions.get(id) !== s || !s.pending || event.createdAt < s.started || !event.key || s.seen.has(event.key)) return;
     s.seen.add(event.key); if (s.seen.size > 200) s.seen.delete(s.seen.values().next().value);
     if (!['result', 'error', 'missing'].includes(event.kind)) return;
-    s.nativeMenu=false; s.pending = false; this.finishProgress(s);
+    s.localSubmittedAt=null; s.nativeMenu=false; s.pending = false; this.finishProgress(s);
     if (event.kind === 'result' && typeof event.text === 'string' && event.text.trim()) this.deliver(id, s, event.text);
     else if (event.kind === 'missing') this.deliver(id, s, 'CLI 已结束本轮，但当前版本未提供最终回复。请查看本机 CLI 并检查版本；未转发终端界面内容。');
     else if (!s.errorNotified) this.deliver(id, s, s.name + ' 本轮未完成：' + String(event.text || 'CLI 返回错误').slice(0, 2000));
@@ -206,11 +213,20 @@ class CLISessions {
       if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(prompt)) throw Error('消息为空、过长或包含终端控制字符');
       s.slashCommand = prompt.trim().startsWith('/') ? prompt.trim().split(/\s/)[0] : null;
       this.beginTask(id,s); s.localInput=false;
-      // Bracketed paste protects multiline text from being submitted one line at a time.
-      t.input('\x1b[200~' + prompt + '\x1b[201~');
-      await this.wait(100);
-      if (this.sessions.get(id) !== s) throw Error('CLI 接入已关闭');
-      t.input('\r');
+      const taskId = s.taskId;
+      const inputRevision = s.inputRevision;
+      try {
+        // Bracketed paste protects multiline text from being submitted one line at a time.
+        t.input('\x1b[200~' + prompt + '\x1b[201~');
+        await this.wait(100);
+        if (this.sessions.get(id) !== s) throw Error('CLI 接入已关闭');
+        const current = await this.inspect(this.target(id));
+        if (this.target(id).identity !== s.identity || this.sessions.get(id) !== s || current.name !== s.name || s.inputRevision !== inputRevision || s.localInput || !s.pending || s.taskId !== taskId) throw Error('终端已变化或已由本机接管，未发送回车；请检查终端中的输入');
+        t.input('\r');
+      } catch (error) {
+        if (this.sessions.get(id) === s && s.taskId === taskId) { s.pending=false; this.finishProgress(s); }
+        throw error;
+      }
       return { text: '已发送给 ' + s.name + '，正在处理。需要您确认或补充信息时，会在这里通知。' };
     });
   }
@@ -224,7 +240,7 @@ class CLISessions {
   }
   retryInteraction(id) { const s=this.sessions.get(id);if(!s?.native?.retry())throw Error('当前未识别到待确认的终端问题，请查看本机终端');return '已重新转发当前终端问题，请查看新卡片。'; }
   status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: s.nativeMenu || s.permissions.size || s.trustPending ? '等待您确认或回答' : !s.pending ? '本轮已结束或已请求中断' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
-  stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
+  stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.localSubmittedAt=null; s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
   async leave(id) {
     this.userInput(id);
     return this.exclusive(id, async () => {

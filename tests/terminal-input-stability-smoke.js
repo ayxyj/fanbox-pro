@@ -33,7 +33,7 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  for(let i=0;i<80;i++)term.markBusy(s);
  const echoClassWrites=panelObserver.takeRecords().length;panelObserver.disconnect();
  const tab=bar.querySelector('[data-session-id="'+s.id+'"]');
- const tabsObserver=new MutationObserver(()=>{});tabsObserver.observe(bar,{childList:true});tabsObserver.observe(target,{childList:true});
+ const tabsObserver=new MutationObserver(()=>{});tabsObserver.observe(bar,{childList:true});if(target)tabsObserver.observe(target,{childList:true});
  for(let i=0;i<20;i++){s.status=i%2?'idle':'busy';term.renderTabs();}
  const headerReplacements=tabsObserver.takeRecords().length;tabsObserver.disconnect();
  const tabPreserved=bar.querySelector('[data-session-id="'+s.id+'"]')===tab;

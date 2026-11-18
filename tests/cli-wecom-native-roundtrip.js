@@ -9,21 +9,22 @@ const delay = ms => new Promise(r=>setTimeout(r,ms));
 const until = async fn => { for(let i=0;i<100;i++){if(fn())return;await delay(10);}assert.fail('timed out waiting for bridge'); };
 const choice = 'Allow this command?\r\n❯ 1. Yes\r\n  2. No\r\nEnter to confirm · Esc to cancel';
 (async()=>{
+ for (const name of ['claude','codebuddy','codex']) {
   const writes=[],sent=[];let emit,seq=0,failCard=false;
-  const route={key:'r',id:'11111111-1111-1111-1111-111111111111',userid:'alice',number:1,project:'fixture',mode:'claude',sessionId:'t',generation:0};
+  const route={key:'r',id:'11111111-1111-1111-1111-111111111111',userid:'alice',number:1,project:'fixture',mode:name,sessionId:'t',generation:0};
   const store={data:{im:{enabled:true,allowExecution:true,botId:'bot',users:['alice']}},persist(){}};
-  const service=new WecomService({store,emit(){},target:()=>terminal,activeCLI:()=> 'claude',runCLI:()=>{throw Error('An answer must not start a new task');}});
+  const service=new WecomService({store,emit(){},target:()=>terminal,activeCLI:()=> name,runCLI:()=>{throw Error('An answer must not start a new task');}});
   service.client={disconnect(){},sendMessage:async(u,b)=>{if(failCard && b.template_card)throw Error('card unavailable');sent.push(b);},updateTemplateCard:async()=>{}};
   service.routes.set('r',route);service.focus.set('alice','r');
   const terminal={identity:{},state:{idle:true},size:()=>({cols:100,rows:30}),input:t=>{writes.push(t);const native=cli.sessions.get('t')?.native,m=native&&parseMenu(native.lines());if(m&&t==='\x1b[B')emit('\x1b[2J\x1b[H'+choice.replace('❯ 1. Yes','  1. Yes').replace('  2. No','❯ 2. No'));else if(t==='\r'||t==='\x1b')emit('\x1b[2J\x1b[H> ');},subscribeOutput:fn=>{emit=fn;return()=>{};}};
-  const cli=new CLISessions({target:()=>terminal,inspect:async()=>({idle:true,name:'claude'}),command:()=> 'claude',wait:async()=>{},resultChannel:()=>({args:'',close(){}}),
+  const cli=new CLISessions({target:()=>terminal,inspect:async()=>({idle:true,name}),command:()=> name,wait:async()=>{},resultChannel:()=>({args:'',close(){}}),
     askNative:(id,q,signal)=>service.askCLIQuestion(route,q,signal,Date.now()+10000),notify:(id,text)=>service.say(route,text)});
   service.retryCLIInteraction=id=>cli.retryInteraction(id);service.cliStatus=id=>cli.status(id);service.closeCLI=id=>cli.close(id);
   const frame=text=>({body:{aibotid:'bot',msgid:String(++seq),chattype:'single',msgtype:'text',from:{userid:'alice'},text:{content:text}}});
   const entry=()=>[...(service.questions?.values()||[])][0];
   const draw=text=>emit('\x1b[2J\x1b[H'+text);
   try {
-    await cli.start('t','claude');const s=cli.sessions.get('t');s.native.settle=10;s.native.keyDelay=1;s.native.ackTimeout=50;s.native.confirmDelay=5;
+    await cli.start('t',name);const s=cli.sessions.get('t');s.native.settle=10;s.native.keyDelay=1;s.native.ackTimeout=50;s.native.confirmDelay=5;
     draw(choice);await until(()=>entry());const old=entry();
     // A transient clear followed by the same question keeps the live card.
     emit('\x1b[2J\x1b[H');await delay(20);emit(choice);await delay(40);assert.equal(entry(),old);
@@ -55,4 +56,5 @@ const choice = 'Allow this command?\r\n❯ 1. Yes\r\n  2. No\r\nEnter to confirm
     assert.deepEqual(liveTrust.options.map(o=>o.label),['No, exit','Yes, I trust this folder']);assert.equal(liveTrust.selected,0);
     console.log('PASS native screen -> WeCom -> actual terminal keys: redraw, stale clicks, resize, expiry/resend, text/control validation, slash answer, card fallback, local final result and terminal reports');
   } finally {cli.close('t');service.stop();}
+ }
 })().catch(e=>{console.error(e);process.exitCode=1;});

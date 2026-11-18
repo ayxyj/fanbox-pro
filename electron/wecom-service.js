@@ -142,7 +142,7 @@ class WecomService {
       else await this.send(userid, '该确认请求已过期或不属于当前会话');
       return;
     }
-    if (text.startsWith('/回答 ') && await this.answerQuestionText(userid, null, rawText)) return;
+    if (/^\/回答(?:\s|$)/.test(text) && await this.answerQuestionText(userid, null, rawText)) return;
     let route;
     try {
       if (body.quote) { route = this.quotedRoute(userid, body.quote); this.focus.set(userid, route.key); this.changed(); }

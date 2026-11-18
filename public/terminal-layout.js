@@ -10,7 +10,10 @@
       core?._charSizeService?.measure();
       xterm.clearTextureAtlas?.();
     }
-    fit.fit();
+    // Skip fitting unchanged cell dimensions. Repeated observer notifications
+    // still refresh the viewport, without invoking the resize path again.
+    const proposed = fit.proposeDimensions?.();
+    if (recoverDisplay || !proposed || proposed.cols !== xterm.cols || proposed.rows !== xterm.rows) fit.fit();
     host.scrollLeft = 0;
     if (host.parentElement?.id === 'xterm-host') host.parentElement.scrollLeft = 0;
     const panel = host.closest('#terminal-panel');

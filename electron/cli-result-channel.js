@@ -24,7 +24,7 @@ function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval
     else {
       const command = paths.map(p => '"' + p + '"').join(' ');
       const hook = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
-      fs.writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook, ...(name === 'claude' ? { UserPromptSubmit: hook, StopFailure: hook, SessionStart: hook, PreToolUse: [ { matcher: 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash|PowerShell|WebFetch|WebSearch|Agent|Task', hooks: [{ type: 'command', command, timeout: 10 }] }], PostToolUse: hook, PostToolUseFailure: hook, Notification: [{ matcher: 'elicitation_dialog|permission_prompt', hooks: [{ type: 'command', command, timeout: 10 }] }] } : {}) } }));
+      fs.writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook, UserPromptSubmit: hook, ...(name === 'claude' ? { StopFailure: hook, SessionStart: hook, PreToolUse: [ { matcher: 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash|PowerShell|WebFetch|WebSearch|Agent|Task', hooks: [{ type: 'command', command, timeout: 10 }] }], PostToolUse: hook, PostToolUseFailure: hook } : {}), Notification: [{ matcher: 'elicitation_dialog|permission_prompt', hooks: [{ type: 'command', command, timeout: 10 }] }] } }));
       args = ' --settings "' + safe(settings) + '"';
     }
     if (name === 'codex') args += ` -c "mcp_servers.fanbox_delivery.command='${safe(runtime)}'" -c "mcp_servers.fanbox_delivery.args=['${safe(mcpScript)}','${safe(directory)}']" -c "mcp_servers.fanbox_delivery.tool_timeout_sec=200"`;

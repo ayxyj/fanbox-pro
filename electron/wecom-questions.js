@@ -35,7 +35,7 @@ module.exports = {
         const guide = mode === '文字输入'
           ? '请直接回复文字内容（支持换行，最多 4000 字符）。'
           : q.multiSelect
-            ? '点击选项可勾选/取消，最后点击“提交选择”；也可直接回复多个编号，如：1 3 或 1,3。'
+            ? '点击选项可勾选/取消，最后点击“提交选择”；也可直接回复完整的选择编号，如：1 3 或 1,3（会立即提交，以本次编号替换卡片勾选）。至少选择一项。'
             : q.fixedOptions ? '点击选项或直接回复编号，如：1。选择“其他/自定义”后可继续填写文字。' : '点击选项、回复编号，或直接回复自定义内容。';
         await this.say(route, `${q.title || 'Claude 提问'} · ${mode}\n会话 #${route.number} · ${route.project}\n\n${q.question}\n\n${details}\n\n${guide}\n${q.nativeMenu ? '回复“取消”可退出当前问题。终端与企业微信同步，本机操作后旧问题可能失效。' : ''}${q.searchable ? '\n回复“搜索 关键词”筛选历史会话。' : ''}\n多个问题并存时请指定回答：/回答 ${token} 您的答案\n4 分钟内有效。`);
         if (settled || !this.valid(route)) return abort();
@@ -73,7 +73,11 @@ module.exports = {
     if (!match || event.task_id !== 'question_' + match[1]) return;
     const entry = this.questions?.get(match[1]);
     if (!entry || entry.userid !== userid || !this.valid(entry.route)) { await this.send(userid,'该问题已处理、已过期或不属于当前账号。'); return; }
-    if (entry.busy) return; entry.busy = true;
+    const callbackId = frame.body?.msgid || frame.headers?.req_id;
+    if (callbackId) { entry.callbacks ||= new Set(); if(entry.callbacks.has(callbackId))return; entry.callbacks.add(callbackId); }
+    while (entry.busy) await new Promise(resolve => (entry.waiters ||= []).push(resolve));
+    if (this.questions.get(entry.token) !== entry || !this.valid(entry.route)) { await this.send(userid,'该问题已处理或已过期。'); return; }
+    entry.busy = true;
     try {
       const action = match[2];
       if(entry.q.nativeMenu && (action==='prev'||action==='next')) { entry.page=Math.max(0,Math.min(Math.ceil(entry.q.options.length/2)-1,entry.page+(action==='next'?1:-1))); }
@@ -85,19 +89,21 @@ module.exports = {
       else if (action === 'done' && entry.q.multiSelect) {
         if (!entry.selected.size) { await this.send(userid,'请先选择至少一项。'); return; }
         entry.finish(entry.q.nativeMenu ? {indices:[...entry.selected].sort((a,b)=>a-b)} : [...entry.selected].sort().map(i=>entry.q.options[i].label).join(', '));
-      } else if (action === 'custom' && (!entry.q.fixedOptions || entry.q.nativeText)) { await this.say(entry.route,`请发送：/回答 ${entry.token} 自定义内容`); return; }
+      } else if (action === 'custom' && (!entry.q.fixedOptions || entry.q.nativeText)) { await this.say(entry.route,`请直接回复文字内容；当前会话有多个待回答问题或需要指定本题时，请发送：/回答 ${entry.token} 自定义内容`); return; }
       try { await this.client.updateTemplateCard(frame,this.questionCard(entry,!this.questions.has(entry.token)),[userid]); }
       catch { await this.send(userid,this.questions.has(entry.token)?'选择已记录，卡片显示暂未更新。':'回答已记录，卡片显示暂未更新。'); }
-    } finally { entry.busy = false; }
+    } finally { entry.busy = false; for (const resolve of entry.waiters?.splice(0) || []) resolve(); }
   },
   async answerQuestionText(userid, route, text) {
-    const explicit = /^\/回答\s+([a-f0-9]{12})\s+([\s\S]+)$/.exec(text);
+    const explicit = /^\s*\/回答\s+([a-f0-9]{12})[ \t]+([\s\S]+)$/.exec(text);
+    if (/^\s*\/回答(?:\s|$)/.test(text) && !explicit) { await this.send(userid,'用法：/回答 问题编号 回答内容。请复制问题详情中的编号；当前聚焦会话只有一个问题时，也可直接回复编号或文字。'); return true; }
     let entries = [...(this.questions?.values() || [])].filter(e => e.userid === userid && this.valid(e.route) && (explicit ? e.token === explicit[1] : e.route === route));
     if (!entries.length) { if(explicit){await this.send(userid,'该问题已处理或已过期。');return true;} return false; }
     if (entries.length > 1) { await this.send(userid,'当前有多个待回答问题，请按问题提示使用 /回答 编号 内容。');return true; }
     const entry = entries[0], raw = explicit ? explicit[2] : text;
+    while(entry.busy)await new Promise(resolve=>(entry.waiters ||= []).push(resolve));
+    if(entry.token && this.questions.get(entry.token)!==entry)return true;
     if(entry.q.nativeMenu){
-      if(entry.busy)return true;
       if(entry.q.nativeText && raw.trim()!=='取消'){
         if(!raw.trim() || raw.length>4000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(raw)){await this.say(entry.route,'回答为空、过长或包含终端控制字符，请重新输入（最多 4000 字符）。');return true;}
         entry.finish({text:raw});return true;
@@ -113,8 +119,9 @@ module.exports = {
       if(indices.some(i=>!entry.q.options[i])||(!entry.q.multiSelect&&indices.length!==1)){await this.say(entry.route,'选项编号无效，请查看当前问题。');return true;}
       entry.finish({indices});return true;
     }
+    if (!raw.trim() || raw.length > 4000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(raw)) { await this.say(entry.route,'回答为空、过长或包含终端控制字符，请重新输入（最多 4000 字符）。'); return true; }
     let answer = raw;
-    if (/^\s*\d+(?:[\s,，、]+\d+)*\s*$/.test(raw)) {
+    if (entry.q.options.length && /^\s*\d+(?:[\s,，、]+\d+)*\s*$/.test(raw)) {
       const ids = [...new Set(raw.trim().split(/[\s,，、]+/).map(n=>Number(n.trim())-1))];
       if(ids.some(i=>!entry.q.options[i])||(!entry.q.multiSelect&&ids.length!==1)){await this.send(userid,'选项编号无效，请重新选择。');return true;}
       answer=ids.map(i=>entry.q.options[i].label).join(', ');
