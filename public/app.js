@@ -2129,7 +2129,10 @@ function bindEvents() {
   $('#file-follow').onclick = () => setFileFollow(!follow.on);
   $('#term-locate').onclick = () => term.locateCwd();
   // 终端随窗口尺寸变化重排，避免 TUI 错位
-  window.addEventListener('resize', () => term.fitActive());
+  watchTerminalDisplay(() => {
+    term.sessions.forEach(session => { session.needsDisplayRecovery = true; });
+    term.fitActive();
+  });
   if (window.ResizeObserver) new ResizeObserver(() => term.fitActive()).observe($('#xterm-host'));
   bindTerminalResizer();
   // 拖拽文件/文件夹到终端 → 插入路径
@@ -2826,9 +2829,9 @@ const term = {
       const current = this.sessions.find(x => x.id === this.active);
       if (!current || !current.host.isConnected || !current.host.clientWidth || !current.host.clientHeight) return;
       try {
-        const dimensions = current.fit?.proposeDimensions?.();
-        if (dimensions && dimensions.cols === current.xterm.cols && dimensions.rows === current.xterm.rows) return;
-        current.fit?.fit();
+        if (refreshTerminalLayout(current, !!current.needsDisplayRecovery)) {
+          current.needsDisplayRecovery = false;
+        }
       } catch { /* disposed */ }
     });
   },

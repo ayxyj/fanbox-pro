@@ -97,6 +97,20 @@ function createWindow() {
   // 拖动/缩放后防抖记忆，关窗再存一次兜底
   let bt = null;
   const remember = () => { clearTimeout(bt); bt = setTimeout(saveBounds, 400); };
+  let terminalLayoutTimer;
+  const terminalWindow = win;
+  const recoverTerminalLayout = () => {
+    clearTimeout(terminalLayoutTimer);
+    terminalLayoutTimer = setTimeout(() => {
+      if (!terminalWindow.isDestroyed()) terminalWindow.webContents.send('terminal:layout');
+    }, 120);
+  };
+  for (const event of ['resize', 'restore', 'maximize', 'unmaximize']) terminalWindow.on(event, recoverTerminalLayout);
+  for (const event of ['display-metrics-changed', 'display-added', 'display-removed']) screen.on(event, recoverTerminalLayout);
+  terminalWindow.once('closed', () => {
+    clearTimeout(terminalLayoutTimer);
+    for (const event of ['display-metrics-changed', 'display-added', 'display-removed']) screen.removeListener(event, recoverTerminalLayout);
+  });
   win.on('resize', remember);
   win.on('move', remember);
   win.on('close', saveBounds);
