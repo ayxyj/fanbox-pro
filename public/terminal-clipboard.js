@@ -15,7 +15,54 @@
   async function paste(xterm) {
     try { const text=await read(); if(text)xterm.paste(text); } catch(err) { window.fanboxClipboardError?.('粘贴失败：'+err.message); }
   }
+  function attachMouseSelection(xterm, host) {
+    // Keep application clicks, but reserve a drag for selecting output even
+    // when a TUI enables mouse tracking. Shift keeps xterm's native override;
+    // Alt deliberately sends the full drag to the application.
+    const selection = xterm._core?._selectionService;
+    if (!selection?.handleMouseDown) return;
+    let replaying = false, cancel;
+    const mouse = (type, event, extra = {}) => new MouseEvent(type, {
+      bubbles:true, cancelable:true, view:window, clientX:event.clientX, clientY:event.clientY,
+      screenX:event.screenX, screenY:event.screenY, button:event.button, buttons:event.buttons,
+      detail:event.detail, ctrlKey:event.ctrlKey, altKey:event.altKey, shiftKey:event.shiftKey, metaKey:event.metaKey, ...extra,
+    });
+    const dispatch = (target, event) => { replaying=true; try { target.dispatchEvent(event); } finally { replaying=false; } };
+    host.addEventListener('mousedown', down => {
+      if (replaying || down.button!==0 || down.shiftKey || down.altKey || down.ctrlKey || down.metaKey || xterm.modes.mouseTrackingMode==='none') return;
+      const screen=host.querySelector('.xterm-screen'), rect=screen?.getBoundingClientRect();
+      if (!rect || down.clientX<rect.left || down.clientX>=rect.right || down.clientY<rect.top || down.clientY>=rect.bottom) return;
+      cancel?.(); down.preventDefault(); down.stopImmediatePropagation(); xterm.focus();
+      const doc=host.ownerDocument;
+      let selecting=false;
+      const start=()=>{
+        selecting=true;
+        const force=selection.shouldForceSelection;
+        selection.shouldForceSelection=()=>true;
+        try { selection.handleMouseDown(mouse('mousedown',down)); }
+        finally { selection.shouldForceSelection=force; }
+      };
+      const move=event=>{
+        if(replaying)return;
+        if(!selecting && Math.hypot(event.clientX-down.clientX,event.clientY-down.clientY)>=3)start();
+        if(selecting){event.preventDefault();event.stopImmediatePropagation();dispatch(doc,mouse('mousemove',event));}
+      };
+      const cleanup=()=>{doc.removeEventListener('mousemove',move,true);doc.removeEventListener('mouseup',up,true);window.removeEventListener('blur',blur);cancel=null;};
+      const up=event=>{
+        if(replaying || event.button!==0)return;
+        event.preventDefault();event.stopImmediatePropagation();cleanup();
+        if(selecting)dispatch(doc,mouse('mouseup',event));
+        else { xterm.clearSelection(); dispatch(down.target,mouse('mousedown',down));dispatch(event.target,mouse('mouseup',event)); }
+      };
+      const blur=()=>{cleanup();if(selecting)dispatch(doc,mouse('mouseup',down,{buttons:0}));};
+      cancel=blur;
+      doc.addEventListener('mousemove',move,true);doc.addEventListener('mouseup',up,true);window.addEventListener('blur',blur);
+      if(down.detail>=2)start();
+    },true);
+    xterm._core.register?.({dispose:()=>cancel?.()});
+  }
   function attach(xterm, host) {
+    attachMouseSelection(xterm,host);
     let composing = false;
     host.addEventListener('compositionstart', () => { composing = true; host.dataset.imeComposing = 'true'; }, true);
     host.addEventListener('compositionend', () => { composing = false; delete host.dataset.imeComposing; }, true);
@@ -40,7 +87,7 @@
     host.addEventListener('contextmenu',event=>{
       event.preventDefault(); event.stopPropagation();
       const session = typeof term !== 'undefined' ? term.sessions.find(s=>s.xterm===xterm) : null;
-      showMenu(event,[{label:'复制选中内容',fn:()=>copy(xterm),disabled:!xterm.hasSelection()},{label:'粘贴',fn:()=>paste(xterm)},{label:'全选',fn:()=>xterm.selectAll()},...(session ? window.remoteUI?.shortcutMenu(session.id) || [] : [])]);
+      showMenu(event,[{label:'复制选中内容',fn:()=>copy(xterm),disabled:!xterm.hasSelection()},{label:'粘贴',fn:()=>paste(xterm)},{label:'全选',fn:()=>xterm.selectAll()},...(session ? window.remoteUI?.shortcutMenu?.(session.id) || [] : [])]);
     });
   }
   function showMenu(event, items) {
