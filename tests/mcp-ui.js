@@ -11,7 +11,9 @@ async function evaluate(expression){const id=++seq;const message=await new Promi
 (async()=>{try{
   let target;for(let i=0;i<100;i++){await delay(300);try{target=(await(await fetch('http://127.0.0.1:14984/json')).json()).find(value=>value.url==='http://127.0.0.1:14983/');if(target)break;}catch{}}
   assert.ok(target,'test app starts');socket=new WebSocket(target.webSocketDebuggerUrl);await new Promise(resolve=>socket.addEventListener('open',resolve,{once:true}));socket.addEventListener('message',event=>{const message=JSON.parse(event.data);pending.get(message.id)?.(message);pending.delete(message.id);});
-  await delay(2000);
+  let ready=false;
+  for(let i=0;i<100;i++){try{if(await evaluate("document.readyState==='complete' && typeof window.remoteUI?.mcpSettings==='function'")){ready=true;break;}}catch{}await delay(100);}
+  assert(ready,'MCP settings UI is ready');
   assert.equal(await evaluate(`(async()=>{
     await remoteUI.mcpSettings();
     const dialog=document.querySelector('.mcp-settings'),editor=dialog.querySelector('[data-json]');
@@ -35,4 +37,4 @@ async function evaluate(expression){const id=++seq;const message=await new Promi
   assert.equal(await evaluate(`window.open('data:text/html,blocked');true`),true);await delay(200);
   const targets=await(await fetch('http://127.0.0.1:14984/json')).json();assert.ok(!targets.some(target=>target.url.startsWith('data:')),'non-HTTP child windows denied');
   console.log('PASS MCP editor, Windows encryption, reload, enable toggle, close, main navigation and child window isolation');
-}finally{socket?.close();try{execFileSync('taskkill',['/pid',String(child.pid),'/t','/f'],{stdio:'ignore'});}catch{}}})().catch(error=>{console.error(error);process.exitCode=1;});
+}finally{socket?.close();try{execFileSync('taskkill',['/pid',String(child.pid),'/t','/f'],{stdio:'ignore'});}catch{}}})().catch(error=>{console.error(error);if(process.env.GITHUB_ACTIONS)console.log('::error title=MCP UI validation::'+String(error.stack||error).replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A'));process.exitCode=1;});

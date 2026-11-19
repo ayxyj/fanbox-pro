@@ -21,16 +21,18 @@ async function contextMenu(copyText){
  const p=await evaluate(`(()=>{const r=selectionSession.host.querySelector('.xterm-screen').getBoundingClientRect();return {x:r.x+55,y:r.y+10};})()`);
  await request('Input.dispatchMouseEvent',{type:'mouseMoved',...p,buttons:0});
  await request('Input.dispatchMouseEvent',{type:'mousePressed',...p,button:'right',buttons:2,clickCount:1});
- await request('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'right',clickCount:1});await delay(120);
- const menu=await evaluate(`(()=>{const m=document.querySelector('.terminal-context-menu'),b=m?.querySelector('button');if(!b)return null;const r=b.getBoundingClientRect();return {text:b.textContent,disabled:b.disabled,x:r.x+r.width/2,y:r.y+r.height/2,visible:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===b};})()`);
- assert(menu,'real right-click must display Copy');assert.equal(menu.text,'复制选中内容');assert(menu.visible,'Copy must be visible and clickable');
+ await request('Input.dispatchMouseEvent',{type:'mouseReleased',...p,button:'right',clickCount:1});
+ let menu;
+ for(let i=0;i<40;i++){menu=await evaluate(`(()=>{const m=document.querySelector('.terminal-context-menu'),b=m?.querySelector('button');if(!b)return null;const r=b.getBoundingClientRect();return {text:b.textContent,disabled:b.disabled,x:r.x+r.width/2,y:r.y+r.height/2,visible:document.elementFromPoint(r.x+r.width/2,r.y+r.height/2)===b};})()`);if(menu)break;await delay(50);}
+ assert(menu,'real right-click must display Copy: '+JSON.stringify(await evaluate(`(()=>{const e=document.elementFromPoint(${p.x},${p.y});return {target:e?.className,guide:!!document.getElementById('guide-ok'),active:term.active,session:selectionSession.id,shown:selectionSession.host.classList.contains('show')};})()`)));assert.equal(menu.text,'复制选中内容');assert(menu.visible,'Copy must be visible and clickable');
  if(copyText!==undefined){assert(!menu.disabled);await request('Input.dispatchMouseEvent',{type:'mousePressed',x:menu.x,y:menu.y,button:'left',clickCount:1});await request('Input.dispatchMouseEvent',{type:'mouseReleased',x:menu.x,y:menu.y,button:'left',clickCount:1});await delay(100);assert.equal(await evaluate('fanboxClipboard.read()'),copyText);}
  else await request('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
 }
 (async()=>{try{
  let target;for(let i=0;i<100;i++){await delay(300);try{target=(await(await fetch('http://127.0.0.1:14782/json')).json()).find(t=>t.url==='http://127.0.0.1:14781/');if(target)break;}catch{}}
  if(!target)throw Error('Page failed '+logs);socket=new WebSocket(target.webSocketDebuggerUrl);await new Promise(r=>socket.addEventListener('open',r,{once:true}));socket.addEventListener('message',e=>{const m=JSON.parse(e.data);pending.get(m.id)?.(m);pending.delete(m.id);});
- await delay(2000);await request('Page.bringToFront',{});
+ for(let i=0;i<100;i++){try{if(await evaluate("document.readyState==='complete' && typeof term!=='undefined' && typeof fanboxClipboard!=='undefined'"))break;}catch{}await delay(100);}
+ await delay(500);await request('Page.bringToFront',{});
  previous=await evaluate('fanboxClipboard.read()');
  await evaluate(`(async()=>{document.getElementById('guide-ok')?.click();window.__noWebgl=${process.env.TERMINAL_TEST_DOM==='1'};term.open();window.selectionSession=await term.newTab(undefined,'echo SELECTION_READY',{shell:${JSON.stringify(process.env.TERMINAL_TEST_SHELL||'powershell')}});for(let i=0;i<150&&!term.tailText(selectionSession,40).includes('SELECTION_READY');i++)await new Promise(r=>setTimeout(r,100));await new Promise(r=>setTimeout(r,1000));selectionSession.xterm.reset();await new Promise(r=>selectionSession.xterm.write('SELECT-COPY 中文\\r\\nsecond line\\r\\n',r));window.selectionInput=[];selectionSession.xterm.onData(d=>selectionInput.push(d));selectionSession.xterm.focus();})()`);
  await contextMenu();
