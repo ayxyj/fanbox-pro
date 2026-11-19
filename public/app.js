@@ -3707,6 +3707,20 @@ function igniteCard(top, count) {
 
 // pty 数据回流（全局一次）
 if (window.fanboxPty) {
+  window.fanboxPty.onQuestion?.(async ({id,requestId,customContext})=>{
+    const session=term.sessions.find(s=>s.id===id);
+    try {
+      if(!session||session.dead||!await session.output.flush())throw Error('Terminal unavailable');
+      await new Promise(resolve=>session.xterm.write('',resolve));
+      if(session.dead||!term.sessions.includes(session))throw Error('Terminal closed');
+      const xterm=session.xterm,buffer=xterm.buffer.active;
+      const lines=Array.from({length:xterm.rows},(_,i)=>buffer.getLine(buffer.baseY+i)?.translateToString(true)||'');
+      let menu=window.parseTerminalMenu(lines);
+      if(!menu&&customContext&&lines.some(l=>/enter.*submit/i.test(l))&&lines.some(l=>/^\s*[❯>›]\s*(?:\d+[.)]\s*)?$/.test(l)))menu={kind:'input',question:customContext,options:[],selected:0,multi:false,footer:'Enter to submit'};
+      // Only recognized question data crosses IPC; the full screen stays here.
+      window.fanboxPty.sendQuestion({id,requestId,menu,idle:!menu&&/^\s*[❯>](?:\s|$)/.test(lines[buffer.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l))});
+    }catch{window.fanboxPty.sendQuestion({id,requestId,error:true});}
+  });
   window.fanboxPty.onData(({ id, data, generation }) => {
     const s = term.sessions.find(x => x.id === id);
     if (s) { s.output.receive(data, generation); term.markBusy(s); }

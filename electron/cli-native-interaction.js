@@ -6,78 +6,7 @@ const hash = value => createHash('sha256').update(JSON.stringify(value)).digest(
 const { isTerminalReply: reply } = require('./terminal-protocol');
 const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
 const menuKey = menu => menu && hash({kind:menu.kind,question:menu.question,options:menu.options.map(o=>o.label.replace(/^(?:\[[ x]\]|[☐☑☒✓✔])\s*/i,''))});
-function parseMenu(lines) {
- lines=lines.map(line=>line.replace(/^\s*│ ?/,'').replace(/\s*│\s*$/,''));
- let footer = lines.findLastIndex(l => /(?:enter.*(?:select|confirm|submit)|space.*(?:select|toggle)|esc.*(?:cancel|back|exit))/i.test(l));
- // The workspace trust dialog has no keyboard-help footer in some Claude versions.
- if (footer < 0 && lines.some(l=>/Quick safety check:|Do you trust (?:the files in )?this folder/i.test(l)) && lines.some(l=>/Yes, I trust this folder/i.test(l)) && lines.some(l=>/No, exit/i.test(l))) footer=lines.findLastIndex(l=>l.trim())+1;
- if (footer < 0) return null;
- const tail = lines.slice(footer + 1).filter(line=>!/^\s*[─━┌┐└┘╭╮╰╯]+\s*$/.test(line)).join('').trim();
- if (tail) return null;
- const body=lines.slice(0,footer), resume=body.some(l=>/(?:Resume|Continue|Search).*session|Select a conversation/i.test(l));
- let options=[];let selected=-1,contextStart=0,optionsEnd=body.length;
- for(let row=0;row<body.length;row++){
-  const line=body[row];
-  const numbered=line.match(/^\s*([❯>›])?\s*(\d+)[.)]\s+(.*\S)\s*$/);
-  if(numbered){if(numbered[1])selected=options.length;options.push({label:numbered[3],row,number:Number(numbered[2]),checked:/^(?:[☑☒✓✔]|\[x\])/i.test(numbered[3])});}
- }
- // Only recognize a numbered menu with a real focused item and contiguous numbering.
- if(options.length){
-  // A question wizard may leave several numbered blocks on screen. Only the
-  // block containing the actual terminal focus is answerable now.
-  const groups=[];for(const option of options){const group=groups.at(-1);if(!group||option.number!==group.at(-1).number+1)groups.push([option]);else group.push(option);}
-  const focused=groups.filter(group=>group.some(o=>/^\s*[❯>›]/.test(body[o.row])));
-  if(focused.length!==1)return null;
-  options=focused[0];selected=options.findIndex(o=>/^\s*[❯>›]/.test(body[o.row]));
-  const groupIndex=groups.indexOf(options);contextStart=groupIndex?groups[groupIndex-1].at(-1).row+1:0;
-  if(groups[groupIndex+1]){
-   // Stop descriptions at the paragraph introducing the next block.
-   optionsEnd=groups[groupIndex+1][0].row;
-   while(optionsEnd>options.at(-1).row+1&&body[optionsEnd-1].trim())optionsEnd--;
-  }
-  if(selected<0 || options.some((o,i)=>i&&o.number!==options[i-1].number+1))return null;
-  options.forEach((o,i)=>{o.description=body.slice(o.row+1,options[i+1]?.row??optionsEnd).filter(l=>!/^\s*[─━]+\s*$/.test(l)).join(' ').trim().slice(0,800);});
- }else if(body.some(l=>/^\s*[❯>›]?\s*(?:\[[ x]\]|[☐☑☒])\s+\S/i.test(l))){
-  for(let row=0;row<body.length;row++){
-   const match=body[row].match(/^\s*([❯>›])?\s*(\[[ x]\]|[☐☑☒])\s+(.+\S|\S)\s*$/i);
-   if(!match)continue;if(match[1])selected=options.length;
-   options.push({label:match[3],row,checked:/x|☑|☒/i.test(match[2]),description:''});
-  }
-  if(selected<0)return null;
- }else if(/enter.*submit/i.test(lines.slice(Math.max(0,footer-2),footer+1).join(' '))&&body.some(l=>/[?？]|(?:type|enter).*answer/i.test(l))&&body.some(l=>/^\s*[❯>›]\s*$/.test(l))){
-  const row=body.findIndex(l=>/^\s*[❯>›]\s*$/.test(l));
-  selected=0;options=[{label:'Type something.',row,checked:false,description:''}];
- }else if(body.some(l=>/Accessing workspace:|Quick safety check:/i.test(l))){
-  // Claude 2.1.306 uses unnumbered trust options, with "No, exit" first.
-  // Preserve the actual order and focus instead of assuming Yes is the default.
-  for(let row=0;row<body.length;row++){
-   const match=body[row].match(/^\s*([❯>›])?\s*(Yes, I trust this folder|No, exit)\s*$/i);
-   if(!match)continue;if(match[1])selected=options.length;
-   options.push({label:match[2],row,checked:false,description:''});
-  }
-  if(options.length!==2 || selected<0)return null;
- }else if(resume){
-  // Claude 2.1.x renders each session title followed by an age/size metadata row.
-  // Project labels and metadata have the same indentation as titles: never count
-  // them as selectable entries or remote arrow navigation would choose the wrong session.
-  const metadata=l=>/(?:\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago|just now|yesterday|today).*·|·.*(?:bytes|[KMGT]B|messages?)/i.test(l);
-  const focused=body.findIndex((l,i)=>/^\s*[❯>›]\s+\S/.test(l)&&metadata(body[i+1]||''));
-  for(let row=0;row<body.length-1;row++){
-    if(!body[row].trim()||metadata(body[row])||!metadata(body[row+1]))continue;
-    if(row===focused)selected=options.length;
-    options.push({label:body[row].replace(/^\s*[❯>›]\s*/, '').trim(),description:body[row+1].trim(),row,checked:false});
-  }
-  if(selected<0&&options.length)return null;
-  if(!options.length&&!body.some(l=>/No (?:conversations|sessions).*found/i.test(l)))return null;
- }else return null;
- if((!options.length&&!resume)||options.length>100)return null;
- const first=options[0]?.row ?? body.length;
- const context=body.slice(Math.max(contextStart,first-12),first).filter(l=>l.trim()&&!/^\s*[─━╭╮╰╯│]+\s*$/.test(l)).map(l=>l.replace(/((?:API[_ ]?KEY|TOKEN|SECRET|PASSWORD)\s*[:=]).*/ig,'$1 [已隐藏]')).join('\n').trim().slice(-3000);
- if(!context)return null;
- const help=lines.slice(Math.max(0,footer-2),footer+1).join(' '),multi=options.some(o=>/^\s*[❯>›]?\s*(?:\d+[.)]\s*)?(?:\[[ x]\]|[☐☑☒])\s+\S/i.test(body[o.row]))||/space.*(?:select|toggle)|select.*space/i.test(help);
- const menu={kind:resume?'resume':multi?'multi':options.length===1&&customOption(options[selected]?.label||'')&&/enter.*submit/i.test(help)?'input':'choice',question:context,options,selected,footer:help,multi};
- menu.fingerprint=hash(menu);return menu;
-}
+function parseMenu(lines){return require('../public/terminal-question').parseMenu(lines,hash);}
 class NativeInteraction {
  constructor({target,ask,name='claude',notify=()=>{},onMenu=()=>{},onDismiss=()=>{},onIdle=()=>{},settle=400,keyDelay=100,ackTimeout=3000,confirmDelay=200}){
   Object.assign(this,{target,ask,name,notify,onMenu,onDismiss,onIdle,settle,keyDelay,ackTimeout,confirmDelay});this.revision=0;this.closed=false;this.lastFingerprint=null;
@@ -86,13 +15,28 @@ class NativeInteraction {
  lines(){const b=this.screen.buffer.active;return Array.from({length:this.screen.rows},(_,i)=>b.getLine(b.baseY+i)?.translateToString(true)||'');}
  output(text){if(this.closed)return;if(!this.maxTimer)this.maxTimer=setTimeout(()=>{this.maxTimer=null;this.refresh();},1000);clearTimeout(this.timer);this.screen.write(text,()=>{if(this.closed)return;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);});}
  resize(cols,rows){if(this.closed)return;this.invalidate();this.lastFingerprint=null;this.revision++;this.screen.resize(cols,rows);clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}
- input(text){if(reply(text||''))return;const menu=parseMenu(this.lines());if(text==='\r'&&menu&&customOption(menu.options[menu.selected]?.label||''))this.customContext=menu.question;this.revision++;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;clearTimeout(this.timer);}
+ input(text){if(reply(text||''))return;const menu=this.menu();if(text==='\r'&&menu&&customOption(menu.options[menu.selected]?.label||''))this.customContext=menu.question;this.revision++;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;clearTimeout(this.timer);}
  invalidate(){if(this.current){const entry=this.current;this.current=null;this.lastFingerprint=null;entry.controller.abort();}}
- retry(){if(this.closed||this.current?.processing)return false;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;this.refresh();return !!this.current;}
- menu(){const lines=this.lines();let menu=parseMenu(lines);
+ retry(){if(this.closed||this.current?.processing)return false;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;if(this.target.readQuestion)return (async()=>{if(this.refreshing)await this.refreshing;await this.refresh();return !this.readError&&!!this.current;})();this.refresh();return !!this.current;}
+ menu(){if(this.target.readQuestion)return this.observedMenu||null;const lines=this.lines();let menu=parseMenu(lines);
   if(!menu&&this.customContext&&lines.some(l=>/enter.*submit/i.test(l))){menu={kind:'input',question:this.customContext,options:[],selected:0,multi:false,footer:lines.at(-1)};menu.fingerprint=hash(menu);}return menu;
  }
+ async readQuestion(){
+  const data=await this.target.readQuestion(this.customContext);
+  if(this.closed)return;
+  if(!data||typeof data.idle!=='boolean'||!Object.hasOwn(data,'menu'))throw Error('Question reader unavailable');
+  const menu=require('./terminal-question').cleanQuestion(data?.menu);
+  this.observedMenu=menu?{...menu,fingerprint:hash(menu)}:null;this.observedIdle=data?.idle===true;this.readError=false;
+ }
  refresh(){
+  if(!this.target.readQuestion)return this.refreshCurrent();
+  if(this.closed||this.current?.processing)return;
+  if(this.refreshing){this.refreshAgain=true;return this.refreshing;}
+  const revision=this.revision;
+  this.refreshing=this.readQuestion().then(()=>{if(this.closed)return;if(revision===this.revision)this.refreshCurrent();else this.refreshAgain=true;}).catch(()=>{if(!this.closed){this.readError=true;this.invalidate();this.lastFingerprint=null;}}).finally(()=>{this.refreshing=null;if(this.refreshAgain&&!this.closed){this.refreshAgain=false;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}});
+  return this.refreshing;
+ }
+ refreshCurrent(){
   clearTimeout(this.maxTimer);this.maxTimer=null;
   if(this.closed||this.current?.processing)return;const lines=this.lines(),menu=this.menu();
   // TUIs often clear first and repaint the same menu in the next output chunk.
@@ -100,7 +44,7 @@ class NativeInteraction {
   // screen before sending keys while this grace period is active.
   if(!menu&&this.current){this.missingSince ||= Date.now();const remaining=Math.max(100,this.settle)-(Date.now()-this.missingSince);if(remaining>0){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),remaining);return;}}
   this.missingSince=null;
-  if(!menu){this.submittedKey=null;if(lines.some(l=>/^\s*[❯>]\s*$/.test(l)))this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(/^\s*[❯>](?:\s|$)/.test(lines[this.screen.buffer.active.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l)))this.onIdle();return;}
+  if(!menu){this.submittedKey=null;const idle=this.target.readQuestion?this.observedIdle:/^\s*[❯>](?:\s|$)/.test(lines[this.screen.buffer.active.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l));if(idle)this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(idle)this.onIdle();return;}
   this.onMenu(menu);
   // Repainting or moving the visible rows does not introduce the next question.
   // Keep one live card; apply() still validates the latest screen before typing.
@@ -122,7 +66,7 @@ class NativeInteraction {
   entry.processing=true;
   const revision=this.revision,menu=entry.menu,key=menuKey(menu),steps=[];
   const live=()=>!this.closed&&!entry.controller.signal.aborted&&this.current===entry&&revision===this.revision;
-  const flush=()=>new Promise(resolve=>this.screen.write('',resolve));
+  const flush=()=>this.target.readQuestion?this.readQuestion():new Promise(resolve=>this.screen.write('',resolve));
   const waitFor=async test=>{const end=Date.now()+this.ackTimeout;do{if(!live())return false;await flush();if(test(this.menu()))return true;await delay(this.keyDelay);}while(Date.now()<end);return false;};
   let navigation=false;
   if(answer.cancel){steps.push({key:'\x1b'});this.customContext=null;}

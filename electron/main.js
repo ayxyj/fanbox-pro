@@ -52,8 +52,11 @@ catch (e) { console.error('[fanbox] node-pty 未就绪（跑 npm run rebuild）�
 
 const terminals = new Map();
 const terminalCwds = new Map(); // id -> cwd（Windows 无 /proc/pid/cwd / lsof，直接缓存）
+const terminalQuestions = require('./terminal-question').createTerminalQuestions({getWindow:()=>win,hasTerminal:id=>terminals.has(id)});
+ipcMain.handle('pty:question',(event,{id,customContext})=>{assertWindowSender(event);return terminalQuestions.request(id,customContext);});
+ipcMain.on('pty:question-response',(event,data)=>terminalQuestions.receive(event.sender,data));
 let desktopPet = null;
-const remoteWorkspace = require('./remote-workspace').installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow: () => win, terminals, terminalCwds, port: PORT, onIMState: state => desktopPet?.publish(state) });
+const remoteWorkspace = require('./remote-workspace').installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow: () => win, terminals, terminalCwds, readQuestion:(id,context)=>terminalQuestions.request(id,context), port: PORT, onIMState: state => desktopPet?.publish(state) });
 
 // ---------- 窗口尺寸/位置记忆 ----------
 const stateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -131,7 +134,7 @@ function createWindow() {
   });
 
   win.webContents.once('did-finish-load', () => { if(!desktopPet) desktopPet=require('./desktop-pet').createDesktopPet({port:PORT,getMain:()=>win,getState:()=>remoteWorkspace.petState()}); });
-  win.on('closed', () => { desktopPet?.destroy(); desktopPet=null; win = null; });
+  win.on('closed', () => { terminalQuestions.close();desktopPet?.destroy(); desktopPet=null; win = null; });
 }
 
 app.whenReady().then(() => {

@@ -3,6 +3,8 @@
   // Batch incoming chunks, allowing only one parser write at a time.
   function createTerminalOutput(write, acknowledge = () => {}) {
     let queue = [], writing = false, timer = null, disposed = false;
+    const waiters=[];
+    const finishFlush=value=>{for(const resolve of waiters.splice(0))resolve(value);};
     function drain() {
       timer = null;
       if (disposed || writing || !queue.length) return;
@@ -16,6 +18,7 @@
         acknowledge(length, generation);
         writing = false;
         if (!disposed && queue.length) timer = setTimeout(drain, 0);
+        else finishFlush(!disposed);
       });
     }
     return {
@@ -24,7 +27,8 @@
         queue.push({data, generation});
         if (!writing && timer === null) timer = setTimeout(drain, 0);
       },
-      dispose() { disposed = true; clearTimeout(timer); queue = []; },
+      flush() { if(disposed)return Promise.resolve(false);if(!writing&&!queue.length)return Promise.resolve(true);return new Promise(resolve=>waiters.push(resolve)); },
+      dispose() { disposed = true; clearTimeout(timer); queue = []; finishFlush(false); },
     };
   }
   if (typeof module !== 'undefined') module.exports = { createTerminalOutput };

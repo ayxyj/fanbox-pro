@@ -43,8 +43,8 @@ class CLISessions {
         target: { ...t, validate: async () => this.sessions.get(id) === s && this.target(id).identity === s.identity && (await this.inspect(t)).name === s.name },
         ask: (question, signal) => this.askNative(id, question, signal),
         notify: text => this.deliver(id,s,text),
-        onMenu: () => { s.nativeMenu = true; if(s.progress)s.progress.paused=true; },
-        onDismiss: () => { s.nativeMenu=false; if(s.progress)s.progress.paused=false; },
+        onMenu: () => { s.awaitingInput=false;s.nativeMenu = true; if(s.progress)s.progress.paused=true; },
+        onDismiss: () => { s.nativeMenu=false; if(s.progress)s.progress.paused=!!s.awaitingInput||s.permissions.size>0||s.errorNotified; },
         onIdle: () => { if(s.nativeMenu || s.slashCommand){ const resume=s.slashCommand?.startsWith('/resume'); s.nativeMenu=false;s.slashCommand=null;s.pending=false;this.finishProgress(s);if(resume)this.deliver(id,s,s.name+' 会话选择已结束，终端已返回输入状态。'); } }
       });
       // PTY bytes are only inspected for a bounded error notice, never forwarded.
@@ -134,6 +134,7 @@ class CLISessions {
     if (s.name === 'codex' && /[\r\n]/.test(text || '')) s.localSubmittedAt = Date.now();
     if (!text || /[\x03\x04]/.test(text)) s.localSubmittedAt = null;
     s.native?.input(text);
+    s.awaitingInput=false;
     s.localInput = true; s.interactionsCancelledAt = Date.now(); s.startup = false; s.trustPending = false; s.trustController?.abort(); this.cancelPermissions(s);
   }
   deliver(id, s, text, metadata) {
@@ -157,11 +158,14 @@ class CLISessions {
     if (event.kind === 'awaiting-input') {
       if (this.sessions.get(id) !== s || event.createdAt <= (s.interactionsCancelledAt || 0)) return;
       if (s.native?.current) return;
-      if (s.native?.retry()) return;
-      if (Date.now() - (s.lastInputNotice || 0) < 10000) return;
-      s.lastInputNotice = Date.now();
-      this.deliver(id, s, s.name+' 正在等待选择或文字回答，当前界面未能自动识别。请发送 /retry 重新获取问题，或在本机处理。');
-      return;
+      s.awaitingInput=true;if(s.progress)s.progress.paused=true;
+      const notice=()=>{
+        if(this.sessions.get(id)!==s||event.createdAt<=(s.interactionsCancelledAt||0)||s.native?.current||Date.now()-(s.lastInputNotice||0)<10000)return;
+        s.lastInputNotice=Date.now();this.deliver(id,s,s.name+' 已通知等待选择或文字回答，但当前问题未识别。可发送 /retry 重新读取本机当前问题，或在本机处理。');
+      };
+      const retried=s.native?.retry();
+      if(retried&&typeof retried.then==='function')return retried.then(ok=>{if(!ok)notice();},notice);
+      if(!retried)notice();return;
     }
     if (event.kind === 'progress') { if (this.sessions.get(id) === s && s.pending && event.createdAt >= s.started) s.progress?.event(event); return; }
     if (event.kind === 'permission' || event.kind === 'question') {
@@ -174,7 +178,7 @@ class CLISessions {
     if (this.sessions.get(id) !== s || !s.pending || event.createdAt < s.started || !event.key || s.seen.has(event.key)) return;
     s.seen.add(event.key); if (s.seen.size > 200) s.seen.delete(s.seen.values().next().value);
     if (!['result', 'error', 'missing'].includes(event.kind)) return;
-    s.localSubmittedAt=null; s.nativeMenu=false; s.pending = false; this.finishProgress(s);
+    s.awaitingInput=false;s.localSubmittedAt=null; s.nativeMenu=false; s.pending = false; this.finishProgress(s);
     if (event.kind === 'result' && typeof event.text === 'string' && event.text.trim()) this.deliver(id, s, event.text);
     else if (event.kind === 'missing') this.deliver(id, s, 'CLI 已结束本轮，但当前版本未提供最终回复。请查看本机 CLI 并检查版本；未转发终端界面内容。');
     else if (!s.errorNotified) this.deliver(id, s, s.name + ' 本轮未完成：' + String(event.text || 'CLI 返回错误').slice(0, 2000));
@@ -232,15 +236,15 @@ class CLISessions {
   }
   finishProgress(s) { clearInterval(s.progressTimer); s.progress?.close(); }
   beginTask(id,s,started=Date.now()) {
-    this.finishProgress(s); s.startup=false;s.pending=true;s.started=started;s.errorNotified=false;s.tail='';s.seen.clear();s.taskId=randomUUID();
+    this.finishProgress(s); s.awaitingInput=false;s.startup=false;s.pending=true;s.started=started;s.errorNotified=false;s.tail='';s.seen.clear();s.taskId=randomUUID();
     const taskId=s.taskId;
     s.progress=new CLIProgress({send:text=>this.deliver(id,s,text,{taskId,progress:true})});
     s.progress.paused=!!s.nativeMenu || s.permissions.size>0;
     s.progressTimer=setInterval(()=>s.progress?.tick(),1000);s.progressTimer.unref?.();
   }
-  retryInteraction(id) { const s=this.sessions.get(id);if(!s?.native?.retry())throw Error('当前未识别到待确认的终端问题，请查看本机终端');return '已重新转发当前终端问题，请查看新卡片。'; }
-  status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: s.nativeMenu || s.permissions.size || s.trustPending ? '等待您确认或回答' : !s.pending ? '本轮已结束或已请求中断' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
-  stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.localSubmittedAt=null; s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
+  retryInteraction(id) { const s=this.sessions.get(id),done=ok=>{if(!ok)throw Error(s?.native?.readError?'无法读取本机当前问题，请确认终端窗口正常运行后重试':'当前未识别到待确认的终端问题，请查看本机终端');return '已重新读取并转发本机当前问题，请查看新卡片。';};const result=s?.native?.retry();return result&&typeof result.then==='function'?result.then(done):done(result); }
+  status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: s.nativeMenu || s.permissions.size || s.trustPending ? '等待您确认或回答' : s.awaitingInput?'正在等待回答，当前问题尚未识别，可发送 /retry 重试':!s.pending ? '本轮已结束或已请求中断' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
+  stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.awaitingInput=false;s.localSubmittedAt=null; s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
   async leave(id) {
     this.userInput(id);
     return this.exclusive(id, async () => {

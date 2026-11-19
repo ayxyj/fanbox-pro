@@ -9,7 +9,7 @@ const os = require('os');
 const crypto = require('crypto');
 const { noteInput } = require('./shell-context');
 
-function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, terminals, terminalCwds, port, onIMState = () => {} }) {
+function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, terminals, terminalCwds, port, readQuestion, onIMState = () => {} }) {
   const directory = process.env.GITSYNC_HOME || path.join(os.homedir(), '.fanbox-pro-win');
   const store = new RemoteStore(directory, safeStorage);
   const mcp = new (require('./mcp-manager').MCPManager)(store);
@@ -97,11 +97,11 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
   const local = new Map();
   const target = id => {
     if (ssh.sessions.has(id)) {
-      const s = ssh.get(id); return { detectEnvironment: signal => ssh.detectEnvironment(id,signal), pendingInput: s.zmodem?.job ? '文件传输中' : s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown, autoDetectAfterLogin: !!s.autoDetectAfterLogin }, input: text => ssh.input(id, text), output: () => s.output };
+      const s = ssh.get(id); return { detectEnvironment: signal => ssh.detectEnvironment(id,signal), pendingInput: s.zmodem?.job ? '文件传输中' : s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), ...(readQuestion?{readQuestion:context=>readQuestion(id,context)}:{}), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: s, profileId: s.profileId, environment: { ...s.environment, interactiveTargetUnknown: !!s.interactiveTargetUnknown, autoDetectAfterLogin: !!s.autoDetectAfterLogin }, input: text => ssh.input(id, text), output: () => s.output };
     }
     const p = terminals.get(id), s = local.get(id);
     if (!p || !s) throw Error('终端已关闭，请重新选择');
-    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: p, size: () => ({cols:p.cols,rows:p.rows}), environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown, autoDetectAfterLogin: !!s.autoDetectAfterLogin }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
+    return { pendingInput: s.inputLine || '', subscribeOutput: fn => subscribeOutput(id, fn), policy: policies.get(id) || { mode: 'confirm', interactive: true, upload: true }, identity: p, size: () => ({cols:p.cols,rows:p.rows}), ...(readQuestion?{readQuestion:context=>readQuestion(id,context)}:{}), environment: { ...s.environment, cwd: terminalCwds.get(id) || s.environment.cwd, interactiveTargetUnknown: !!s.interactiveTargetUnknown, autoDetectAfterLogin: !!s.autoDetectAfterLogin }, input: text => { noteInput(s, text); p.write(text); }, output: () => s.output };
   };
   const sendFile = async (id, file, options = {}) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);

@@ -54,7 +54,7 @@ module.exports = {
     const cliName = text.replace(/^\//, '');
     if(command === '/retry') {
       if(!route || !this.valid(route) || !['claude','codex','codebuddy'].includes(route.mode))throw Error('请先选择已授权的 CLI 会话');
-      await this.say(route,this.retryCLIInteraction(route.sessionId));return true;
+      await this.say(route,await this.retryCLIInteraction(route.sessionId));return true;
     }
     if (['claude','codex','codebuddy'].includes(cliName)) {
       if (!route) route = await this.newRoute(userid);
