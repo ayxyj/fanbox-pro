@@ -7,8 +7,7 @@
   async function read() {
     return window.fanboxClipboard ? window.fanboxClipboard.read() : navigator.clipboard.readText();
   }
-  async function copy(xterm) {
-    const text=xterm.getSelection();
+  async function copy(xterm, text=xterm.getSelection()) {
     if(!text)return false;
     try { await write(text); return true; } catch(err) { window.fanboxClipboardError?.('复制失败：'+err.message); return false; }
   }
@@ -63,6 +62,19 @@
   }
   function attach(xterm, host) {
     attachMouseSelection(xterm,host);
+    // The context menu belongs to FanBox. A TUI mouse report would otherwise
+    // clear the selection before contextmenu fires; xterm's native handler also
+    // relocates its textarea under the pointer and interferes with later drags.
+    host.addEventListener('mousedown',event=>{
+      if(event.button!==2)return;
+      event.preventDefault();event.stopImmediatePropagation();xterm.focus();
+    },true);
+    host.addEventListener('mouseup',event=>{
+      if(event.button===2){event.preventDefault();event.stopImmediatePropagation();}
+    },true);
+    host.addEventListener('mousemove',event=>{
+      if(!event.buttons && !event.altKey && xterm.hasSelection() && xterm.modes.mouseTrackingMode!=='none')event.stopImmediatePropagation();
+    },true);
     let composing = false;
     host.addEventListener('compositionstart', () => { composing = true; host.dataset.imeComposing = 'true'; }, true);
     host.addEventListener('compositionend', () => { composing = false; delete host.dataset.imeComposing; }, true);
@@ -85,10 +97,11 @@
       return true;
     });
     host.addEventListener('contextmenu',event=>{
-      event.preventDefault(); event.stopPropagation();
+      event.preventDefault(); event.stopImmediatePropagation();
+      const selectedText=xterm.getSelection();
       const session = typeof term !== 'undefined' ? term.sessions.find(s=>s.xterm===xterm) : null;
-      showMenu(event,[{label:'复制选中内容',fn:()=>copy(xterm),disabled:!xterm.hasSelection()},{label:'粘贴',fn:()=>paste(xterm)},{label:'全选',fn:()=>xterm.selectAll()},...(session ? window.remoteUI?.shortcutMenu?.(session.id) || [] : [])]);
-    });
+      showMenu(event,[{label:'复制选中内容',fn:async()=>{await copy(xterm,selectedText);xterm.focus();},disabled:!selectedText},{label:'粘贴',fn:async()=>{await paste(xterm);xterm.focus();}},{label:'全选',fn:()=>{xterm.selectAll();xterm.focus();}},...(session ? window.remoteUI?.shortcutMenu?.(session.id) || [] : [])]);
+    },true);
   }
   function showMenu(event, items) {
       closeMenu?.();
