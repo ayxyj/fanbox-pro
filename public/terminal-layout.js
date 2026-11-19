@@ -1,19 +1,25 @@
 'use strict';
 (function(root) {
-  function refreshTerminalLayout(session, recoverDisplay = false) {
+  function refreshTerminalLayout(session, recoverDisplay = false, recoverRenderer = false) {
     const { xterm, fit, host } = session;
     if (!fit || !host.isConnected || !host.clientWidth || !host.clientHeight) return false;
     const atBottom = xterm.buffer.active.viewportY >= xterm.buffer.active.baseY;
     const core = xterm._core;
-    if (recoverDisplay) {
+    if (recoverDisplay || recoverRenderer) {
       // xterm 5.5 can retain stale glyph dimensions/viewport state after a DPI change.
       core?._charSizeService?.measure();
-      xterm.clearTextureAtlas?.();
     }
     // Skip fitting unchanged cell dimensions. Repeated observer notifications
     // still refresh the viewport, without invoking the resize path again.
     const proposed = fit.proposeDimensions?.();
     if (recoverDisplay || !proposed || proposed.cols !== xterm.cols || proposed.rows !== xterm.rows) fit.fit();
+    if (recoverDisplay || recoverRenderer) {
+      // A hidden WebGL canvas can retain stale glyph vertices even when the
+      // terminal's cells have not changed. Rebuild this renderer and its canvas,
+      // without clearing the shared atlas used by other terminal instances.
+      core?._renderService?.clear();
+      core?._renderService?.handleResize(xterm.cols, xterm.rows);
+    }
     host.scrollLeft = 0;
     if (host.parentElement?.id === 'xterm-host') host.parentElement.scrollLeft = 0;
     const panel = host.closest('#terminal-panel');

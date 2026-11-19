@@ -66,6 +66,8 @@ jobs:
         run: node tests/appearance-clipboard-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify real terminal selection and right-click copy
         run: node tests/terminal-selection-smoke.js dist/win-unpacked/fanbox-pro.exe
+      - name: Verify terminal switch rendering
+        run: node tests/terminal-switch-render-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify file scrolling
         run: node tests/file-scroll-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify interactive HTML preview

@@ -2343,6 +2343,10 @@ const term = {
     hidden ? this.open() : this.close();
   },
   open() {
+    if ($('#terminal-panel').classList.contains('hidden')) {
+      const current = this.sessions.find(s => s.id === this.active);
+      if (current) current.needsRendererRecovery = true;
+    }
     $('#terminal-panel').classList.remove('hidden');
     $('#terminal-resizer').classList.remove('hidden');
     this.applyDock();
@@ -2782,6 +2786,7 @@ const term = {
     else sess.cwd = r.cwd || sess.startDir;
   },
   activate(id) {
+    const changed = this.active !== id;
     this.active = id;
     this.locateCwd();
     window.dispatchEvent(new CustomEvent('terminal-active', { detail: id }));
@@ -2791,11 +2796,15 @@ const term = {
     this.renderTabs();
     const s = this.sessions.find((x) => x.id === id);
     if (s) {
+      if (changed) s.needsRendererRecovery = true;
       this.fitActive();
       // xterm 5.5.0 旧 Viewport 在 display:none 期间会把滚动区高度算矮一屏（上游 #5339，6.0 重写才修）；
       // 重新可见后强制同步一次，否则滚轮到不了底部。升级 xterm 6.0 后删掉这行
-      requestAnimationFrame(() => { try { s.xterm._core.viewport?.syncScrollArea?.(true); } catch { /* */ } });
-      setTimeout(() => s.xterm.focus(), 0);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        if (this.active !== id || !s.host.isConnected) return;
+        try { s.xterm._core.viewport?.syncScrollArea?.(true); s.xterm.refresh(0, s.xterm.rows - 1); } catch { /* disposed */ }
+      }));
+      setTimeout(() => { if (this.active === id && s.host.isConnected) s.xterm.focus(); }, 0);
       // 延迟刷新标题（避开双击窗口：双击的第二下若撞上 renderTabs 重建会丢 dblclick 事件）
       setTimeout(() => this.refreshCwd(s), 600);
     }
@@ -2829,8 +2838,9 @@ const term = {
       const current = this.sessions.find(x => x.id === this.active);
       if (!current || !current.host.isConnected || !current.host.clientWidth || !current.host.clientHeight) return;
       try {
-        if (refreshTerminalLayout(current, !!current.needsDisplayRecovery)) {
+        if (refreshTerminalLayout(current, !!current.needsDisplayRecovery, !!current.needsRendererRecovery)) {
           current.needsDisplayRecovery = false;
+          current.needsRendererRecovery = false;
         }
       } catch { /* disposed */ }
     });
