@@ -28,6 +28,7 @@
       "output": "dist"
     },
     "asar": true,
+    "compression": "normal",
     "npmRebuild": false,
     "asarUnpack": [
       "**/node_modules/node-pty/**"
