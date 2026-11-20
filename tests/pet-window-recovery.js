@@ -17,5 +17,16 @@ handlers.get('pet:interactive')(petEvent,false);assert.equal(pet.ignore,true,'tr
 handlers.get('pet:reset')(mainEvent);assert.equal(pet.bounds.width,121,'repeated recovery cannot accumulate size changes');tick();assert.equal(pet.bounds.width,120);
 handlers.get('pet:reset')(mainEvent);handlers.get('pet:sync')(petEvent,{size:112,hidden:false});tick();assert.equal(pet.bounds.width,320,'recovery cannot overwrite a newer size preference');
 handlers.get('pet:restore')(petEvent);assert(main.raised&&main.focused);
-handlers.get('pet:reset')(mainEvent);handlers.get('pet:visible')(mainEvent,true);assert(pet.topmost&&pet.raised,'show restores topmost state');assert.equal(pet.skipTaskbar,true,'show restores taskbar exclusion after native state changes');handlers.get('pet:visible')(mainEvent,false);handlers.get('pet:visible')(mainEvent,true);assert.equal(pet.skipTaskbar,true,'repeated hide/show stays out of taskbar');handlers.get('pet:drag')(petEvent,'start');screen.getCursorScreenPoint=()=>({x:50,y:60});const dragTick=[...timers.values()].find(t=>t.ms===16);assert(dragTick);dragTick.fn();assert.equal(pet.bounds.x,1200-pet.bounds.width);handlers.get('pet:drag')(petEvent,'end');assert(![...timers.values()].some(t=>t.ms===16));controller.destroy();assert(![...timers.values()].some(t=>t.ms===50));
-console.log('PASS native hit-area refresh, preserved size, repeated reset, size-change race, foreground activation and timer cleanup');
+handlers.get('pet:reset')(mainEvent);handlers.get('pet:visible')(mainEvent,true);assert(pet.topmost&&pet.raised,'show restores topmost state');assert.equal(pet.skipTaskbar,true,'show restores taskbar exclusion after native state changes');handlers.get('pet:visible')(mainEvent,false);handlers.get('pet:visible')(mainEvent,true);assert.equal(pet.skipTaskbar,true,'repeated hide/show stays out of taskbar');handlers.get('pet:drag')(petEvent,'start');screen.getCursorScreenPoint=()=>({x:50,y:60});const dragTick=[...timers.values()].find(t=>t.ms===16);assert(dragTick);dragTick.fn();assert.equal(pet.bounds.x,1200-pet.bounds.width);handlers.get('pet:drag')(petEvent,'end');assert(![...timers.values()].some(t=>t.ms===16));
+// A smaller pet must reach the current bottom edge, even after a resize mid-drag.
+tick();handlers.get('pet:sync')(petEvent,{size:112,hidden:false});
+let cursor={x:500,y:500};screen.getCursorScreenPoint=()=>cursor;
+handlers.get('pet:drag')(petEvent,'start');handlers.get('pet:sync')(petEvent,{size:64,hidden:false});
+const move=[...timers.values()].find(t=>t.ms===16).fn;
+cursor={x:500,y:2000};move();assert.equal(pet.bounds.y,900-pet.bounds.height,'current window height determines bottom edge');
+cursor={x:500,y:1990};move();assert.equal(pet.bounds.y,900-pet.bounds.height-10,'drag responds immediately after overshooting an edge');
+// Different work areas on adjacent monitors use the display under the cursor.
+screen.getDisplayNearestPoint=()=>({workArea:{x:1200,y:100,width:1600,height:1000}});
+cursor={x:2500,y:2200};move();assert.equal(pet.bounds.y,1100-pet.bounds.height,'destination display bottom edge');assert(pet.bounds.x>=1200);
+handlers.get('pet:drag')(petEvent,'end');controller.destroy();assert(![...timers.values()].some(t=>t.ms===50));
+console.log('PASS native hit-area recovery, current-size drag bounds, immediate edge reversal, destination display work area, repeated reset and timer cleanup');

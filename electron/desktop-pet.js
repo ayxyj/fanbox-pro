@@ -12,7 +12,7 @@ function createDesktopPet({ port, getMain, getState }) {
   const mainWindow=getMain(),raiseVisible=()=>{if(!pet.isDestroyed()&&pet.isVisible())raise();};
   pet.on('show',raise);
   mainWindow?.on?.('focus',raiseVisible);
-  const clamp=b=>{const r=screen.getDisplayMatching(b).workArea;return {...b,x:Math.round(Math.max(r.x,Math.min(b.x,r.x+r.width-b.width))),y:Math.round(Math.max(r.y,Math.min(b.y,r.y+r.height-b.height)))};};
+  const clamp=(b,display=screen.getDisplayMatching(b))=>{const r=display.workArea;return {...b,x:Math.round(Math.max(r.x,Math.min(b.x,r.x+r.width-b.width))),y:Math.round(Math.max(r.y,Math.min(b.y,r.y+r.height-b.height)))};};
   if(Number.isFinite(saved?.x)&&Number.isFinite(saved?.y))pet.setBounds(clamp({...pet.getBounds(),x:saved.x,y:saved.y}));
   const persist=()=>{clearTimeout(timer);timer=setTimeout(()=>{if(!pet.isDestroyed())try{fs.writeFileSync(file,JSON.stringify(pet.getBounds()));}catch{}},250);};
   const petGuard=e=>{if(pet.isDestroyed()||e.sender!==pet.webContents||e.senderFrame!==pet.webContents.mainFrame||e.senderFrame.url!==`http://127.0.0.1:${port}/desktop-pet.html`)throw Error('不允许访问桌面宠物');};
@@ -37,8 +37,12 @@ function createDesktopPet({ port, getMain, getState }) {
     dragging.lastX=cursor.x;dragging.lastY=cursor.y;
     if(!dragging.moved&&Math.abs(cursor.x-dragging.cursor.x)+Math.abs(cursor.y-dragging.cursor.y)<=5)return;
     dragging.moved=true;
-    const b=clamp({...dragging.bounds,x:dragging.bounds.x+cursor.x-dragging.cursor.x,y:dragging.bounds.y+cursor.y-dragging.cursor.y});
-    if(b.x!==dragging.x||b.y!==dragging.y){pet.setPosition(b.x,b.y,false);dragging.x=b.x;dragging.y=b.y;}
+    // Use current native dimensions after size/DPI changes. Rebase each move so
+    // overshooting an edge does not leave a dead zone when dragging back.
+    const current=pet.getBounds(),display=screen.getDisplayNearestPoint?.(cursor);
+    const b=clamp({...current,x:current.x+cursor.x-dragging.cursor.x,y:current.y+cursor.y-dragging.cursor.y},display);
+    dragging.cursor=cursor;
+    if(b.x!==current.x||b.y!==current.y)pet.setPosition(b.x,b.y,false);
   };
   const stopDrag=()=>{clearInterval(dragTimer);dragTimer=null;dragging=null;};
   const resetInput=()=>{stopDrag();if(inputRestoreSize){pet.setBounds(clamp({...pet.getBounds(),...inputRestoreSize}));inputRestoreSize=null;}pet.setIgnoreMouseEvents(false);pet.setFocusable(true);pet.setSkipTaskbar(true);pet.webContents.send('pet:reset-input');};
@@ -60,7 +64,7 @@ function createDesktopPet({ port, getMain, getState }) {
     'pet:settings':e=>{petGuard(e);restore();getMain()?.webContents.send('pet:settings');},
     'pet:reset':e=>{mainGuard(e);clearTimeout(inputRefreshTimer);resetInput();const r=screen.getPrimaryDisplay().workArea,b=pet.getBounds();pet.setBounds(clamp({...b,x:r.x+r.width-b.width-20,y:r.y+r.height-b.height-20}));refreshInputSurface();persist();},
     'pet:visible':(e,visible)=>{mainGuard(e);if(typeof visible!=='boolean')return;pet.webContents.send('pet:visibility',visible);if(visible){pet.setBounds(clamp(pet.getBounds()));showPet();}else pet.hide();},
-    'pet:sync':(e,{size,hidden}={})=>{petGuard(e);if(![64,88,112].includes(size)||typeof hidden!=='boolean')return;clearTimeout(inputRefreshTimer);inputRestoreSize=null;pet.setBounds(clamp({...pet.getBounds(),width:320,height:size+54}));hidden?pet.hide():showPet();persist();},
+    'pet:sync':(e,{size,hidden}={})=>{petGuard(e);if(![64,88,112].includes(size)||typeof hidden!=='boolean')return;clearTimeout(inputRefreshTimer);inputRestoreSize=null;const b=pet.getBounds(),next=clamp({...b,width:320,height:size+54});if(['x','y','width','height'].some(k=>b[k]!==next[k]))pet.setBounds(next);if(hidden)pet.hide();else if(!pet.isVisible())showPet();persist();},
     'pet:drag':(e,phase)=>{petGuard(e);if(phase==='start'){stopDrag();pet.setIgnoreMouseEvents(false);dragging={cursor:screen.getCursorScreenPoint(),bounds:pet.getBounds()};dragTimer=setInterval(updateDrag,16);}else if(phase==='end'){updateDrag();stopDrag();pet.setIgnoreMouseEvents(!interactive,{forward:true});persist();}}
   };
   const hitTest=(e,value)=>handlers['pet:interactive'](e,value);

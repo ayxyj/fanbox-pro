@@ -45,8 +45,8 @@
       const rows=[];const percent=v=>Number.isFinite(v)?Math.round(Math.max(0,Math.min(100,v)))+'%':'暂无配额';
       if(d.claude && (d.claude.official?.fiveHour?.usedPercent > 0 || (!d.claude.official?.fiveHour && d.claude.last5h?.total > 0))){const c=d.claude;const q=c.official?.fiveHour;rows.push('Claude '+(q?percent(q.usedPercent):c.last5h?compact(c.last5h.total):'暂无用量'));}
       if(d.codex?.primary?.usedPercent > 0 && !d.codex.primary.stale){const c=d.codex;rows.push('Codex '+(c.primary?.stale?'待更新':percent(c.primary?.usedPercent)));}
-      usageBadge.textContent=rows.join(' · ');usageBadge.hidden=rows.length===0;usageBadge.title='AGENT 用量：配额为已使用比例；tokens 为本地统计。点击查看设置及详情';
-    }catch{usageBadge.textContent='';usageBadge.hidden=true;usageBadge.title='读取失败，将自动重试；可在宠物面板查看详情';}
+      usageBadge.textContent=rows.join(' · ');usageBadge.hidden=rows.length===0;
+    }catch{usageBadge.textContent='';usageBadge.hidden=true;}
     finally{usageLoading=false;position();}
   }
   function compact(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n||0);}
@@ -145,7 +145,7 @@
     }
     root.dataset.mode=mode;
     root.querySelector('.im-pet-badge').textContent=mode==='offline'?'z':mode==='attention'?'!':mode==='busy'?'…':'';
-    character.title=label+(desktop?' · 单击显示软件，右键打开宠物设置':' · 点击查看详情');character.setAttribute('aria-label',character.title);
+    character.setAttribute('aria-label',label+(desktop?' · 单击显示软件，右键打开宠物设置':' · 点击查看详情'));if(!desktop)character.title=character.getAttribute('aria-label');
     set('[data-status]',label);set('[data-error]',state?.error||'');
     const health=panel.querySelector('[data-health]');health.replaceChildren();
     for(const [name,value] of [['最近收到消息',time(state?.lastReceivedAt)],['最近成功回复',time(state?.lastSentAt)],['已绑定账号',state?.users?.length||0],['待审批',state?.pendingApprovals||0]]){
