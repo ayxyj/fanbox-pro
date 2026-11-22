@@ -3718,7 +3718,7 @@ if (window.fanboxPty) {
       let menu=window.parseTerminalMenu(lines);
       if(!menu&&customContext&&lines.some(l=>/enter.*submit/i.test(l))&&lines.some(l=>/^\s*[❯>›]\s*(?:\d+[.)]\s*)?$/.test(l)))menu={kind:'input',question:customContext,options:[],selected:0,multi:false,footer:'Enter to submit'};
       // Only recognized question data crosses IPC; the full screen stays here.
-      window.fanboxPty.sendQuestion({id,requestId,menu,idle:!menu&&/^\s*[❯>](?:\s|$)/.test(lines[buffer.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l))});
+      window.fanboxPty.sendQuestion({id,requestId,menu,idle:!menu&&window.terminalIdle(lines,buffer.cursorY)});
     }catch{window.fanboxPty.sendQuestion({id,requestId,error:true});}
   });
   window.fanboxPty.onData(({ id, data, generation }) => {

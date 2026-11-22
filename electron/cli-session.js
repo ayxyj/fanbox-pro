@@ -6,6 +6,7 @@ const { CLIProgress } = require('./cli-progress');
 const { watchPermissionStatus } = require('./cli-permission-status');
 const { NativeInteraction } = require('./cli-native-interaction');
 const { isTerminalReply } = require('./terminal-protocol');
+const { uiCommand } = require('./cli-result-hook');
 const { randomUUID } = require('crypto');
 const NAMES = ['claude', 'codex', 'codebuddy'];
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -45,7 +46,7 @@ class CLISessions {
         notify: text => this.deliver(id,s,text),
         onMenu: () => { s.awaitingInput=false;s.nativeMenu = true; if(s.progress)s.progress.paused=true; },
         onDismiss: () => { s.nativeMenu=false; if(s.progress)s.progress.paused=!!s.awaitingInput||s.permissions.size>0||s.errorNotified; },
-        onIdle: () => { if(s.nativeMenu || s.slashCommand){ const resume=s.slashCommand?.startsWith('/resume'); s.nativeMenu=false;s.slashCommand=null;s.pending=false;this.finishProgress(s);if(resume)this.deliver(id,s,s.name+' 会话选择已结束，终端已返回输入状态。'); } }
+        onIdle: () => { if(s.slashCommand&&s.commandSubmitted){const command=s.slashCommand;s.nativeMenu=false;s.awaitingInput=false;s.slashCommand=null;s.commandSubmitted=false;s.pending=false;this.finishProgress(s);this.deliver(id,s,command==='/resume'?s.name+' 会话选择已结束，终端已返回输入状态。':s.name+' 的 '+command+' 操作已结束，终端已返回输入状态。',{final:true});} }
       });
       // PTY bytes are only inspected for a bounded error notice, never forwarded.
       s.unsubscribe = t.subscribeOutput(text => {
@@ -130,11 +131,14 @@ class CLISessions {
     // Match only complete protocol responses; ordinary keys/pastes still cancel.
     if (isTerminalReply(text)) return;
     const s = this.sessions.get(id); if (!s) return;
+    if(/[\r\n]$/.test(text||'')&&!text.startsWith('\x1b[200~')&&!s.nativeMenu&&!s.permissions.size&&!s.trustPending){
+      try{const command=uiCommand((this.target(id).pendingInput||'')+text);if(!s.pending||s.slashCommand){s.slashCommand=command;s.commandSubmitted=!!command;}}catch{}
+    }
     s.inputRevision = (s.inputRevision || 0) + 1;
     if (s.name === 'codex' && /[\r\n]/.test(text || '')) s.localSubmittedAt = Date.now();
     if (!text || /[\x03\x04]/.test(text)) s.localSubmittedAt = null;
     s.native?.input(text);
-    if(/[\x03\x04]/.test(text||'')||(text==='\x1b'&&!s.nativeMenu&&!s.trustPending&&!s.permissions.size)){s.localSubmittedAt=null;s.pending=false;this.finishProgress(s);}
+    if(/[\x03\x04]/.test(text||'')||(text==='\x1b'&&!s.nativeMenu&&!s.trustPending&&!s.permissions.size)){s.slashCommand=null;s.commandSubmitted=false;s.localSubmittedAt=null;s.pending=false;this.finishProgress(s);}
     s.awaitingInput=false;
     s.localInput = true; s.interactionsCancelledAt = Date.now(); s.startup = false; s.trustPending = false; s.trustController?.abort(); this.cancelPermissions(s);
   }
@@ -153,10 +157,10 @@ class CLISessions {
     }
     if(event.kind === 'prompt') {
       if(this.sessions.get(id)!==s || event.createdAt < (s.interactionsCancelledAt || 0))return;
-      if(!s.pending || s.localInput){this.beginTask(id,s,event.createdAt);s.localInput=false;}
+      if(!s.pending || s.localInput){const command=Object.hasOwn(event,'command')?uiCommand(event.command):s.slashCommand;this.beginTask(id,s,event.createdAt);s.slashCommand=command;s.commandSubmitted=!!command;s.localInput=false;}
       return;
     }
-    if(event.kind === 'session') { if(this.sessions.get(id)===s && event.source==='resume'){s.native?.invalidate();s.nativeMenu=false;s.pending=false;s.slashCommand=null;this.finishProgress(s);this.deliver(id,s,'Claude 已恢复历史会话：'+event.sessionId);} return; }
+    if(event.kind === 'session') { if(this.sessions.get(id)===s && event.source==='resume'){s.native?.invalidate();s.nativeMenu=false;s.pending=false;s.slashCommand=null;s.commandSubmitted=false;this.finishProgress(s);this.deliver(id,s,'Claude 已恢复历史会话：'+event.sessionId);} return; }
     if (event.kind === 'attachment') {
       const taskId = s.taskId;
       const authorized = () => this.sessions.get(id) === s && s.pending && s.taskId === taskId && event.createdAt >= s.started && s.channel.hasRequest(event.key);
@@ -187,7 +191,7 @@ class CLISessions {
     if (this.sessions.get(id) !== s || !s.pending || event.createdAt < s.started || !event.key || s.seen.has(event.key)) return;
     s.seen.add(event.key); if (s.seen.size > 200) s.seen.delete(s.seen.values().next().value);
     if (!['result', 'error', 'missing'].includes(event.kind)) return;
-    s.awaitingInput=false;s.localSubmittedAt=null; s.nativeMenu=false; s.pending = false; this.finishProgress(s);
+    s.slashCommand=null;s.commandSubmitted=false;s.awaitingInput=false;s.localSubmittedAt=null; s.nativeMenu=false; s.pending = false; this.finishProgress(s);
     if (event.kind === 'result' && typeof event.text === 'string' && event.text.trim()) this.deliver(id, s, event.text,{final:true});
     else if (event.kind === 'missing') this.deliver(id, s, 'CLI 已结束本轮，但当前版本未提供最终回复。请查看本机 CLI 并检查版本；未转发终端界面内容。',{final:true});
     else if (!s.errorNotified) this.deliver(id, s, s.name + ' 本轮未完成：' + String(event.text || 'CLI 返回错误').slice(0, 2000),{final:true});
@@ -219,6 +223,7 @@ class CLISessions {
       const t = this.target(id), state = await this.inspect(t);
       if (this.sessions.get(id) !== s || t.identity !== s.identity || state.name !== s.name) throw Error('CLI 未运行或已退出，消息未发送。请 /aiquit 返回 AI，或重新进入 CLI');
       if(s.pending&&s.channel.poll)await s.channel.poll();
+      if(s.pending&&s.slashCommand&&s.commandSubmitted)await s.native?.refresh();
       if(this.sessions.get(id)!==s||this.target(id).identity!==s.identity)throw Error('终端已变化，消息未发送');
       if (s.nativeMenu) throw Error('终端正在等待选择，请处理当前问题或在本机操作');
       if (s.permissions.size) throw Error('Claude 正在等待操作审批，请先点击企微卡片中的按钮');
@@ -226,18 +231,18 @@ class CLISessions {
       if (t.pendingInput) throw Error('终端有未提交的本地输入，请先清空');
       if (s.pending) throw Error('CLI 正在处理上一条消息，请等待结果，或先 /stop 中断');
       if (typeof prompt !== 'string' || !prompt.trim() || prompt.length > 16000 || /[\x00-\x08\x0b-\x1f\x7f]/.test(prompt)) throw Error('消息为空、过长或包含终端控制字符');
-      s.slashCommand = prompt.trim().startsWith('/') ? prompt.trim().split(/\s/)[0] : null;
+      s.slashCommand = uiCommand(prompt);
       this.beginTask(id,s); s.localInput=false;
       const taskId = s.taskId;
       const inputRevision = s.inputRevision;
       try {
         // Bracketed paste protects multiline text from being submitted one line at a time.
-        t.input('\x1b[200~' + prompt + '\x1b[201~');
+        const paste='\x1b[200~' + prompt + '\x1b[201~';s.native?.input(paste);t.input(paste);
         await this.wait(100);
         if (this.sessions.get(id) !== s) throw Error('CLI 接入已关闭');
         const current = await this.inspect(this.target(id));
         if (this.target(id).identity !== s.identity || this.sessions.get(id) !== s || current.name !== s.name || s.inputRevision !== inputRevision || s.localInput || !s.pending || s.taskId !== taskId) throw Error('终端已变化或已由本机接管，未发送回车；请检查终端中的输入');
-        t.input('\r');
+        s.native?.input('\r');t.input('\r');s.commandSubmitted=!!s.slashCommand;
       } catch (error) {
         if (this.sessions.get(id) === s && s.taskId === taskId) { s.pending=false; this.finishProgress(s); }
         throw error;
@@ -247,7 +252,7 @@ class CLISessions {
   }
   finishProgress(s) { clearInterval(s.progressTimer); s.progress?.close(); }
   beginTask(id,s,started=Date.now()) {
-    this.finishProgress(s); s.finalDelivery=null;s.awaitingInput=false;s.startup=false;s.pending=true;s.started=started;s.errorNotified=false;s.tail='';s.seen.clear();s.taskId=randomUUID();
+    this.finishProgress(s); s.commandSubmitted=false;s.finalDelivery=null;s.awaitingInput=false;s.startup=false;s.pending=true;s.started=started;s.errorNotified=false;s.tail='';s.seen.clear();s.taskId=randomUUID();
     const taskId=s.taskId;
     s.progress=new CLIProgress({send:text=>this.deliver(id,s,text,{taskId,progress:true})});
     s.progress.paused=!!s.nativeMenu || s.permissions.size>0;
@@ -255,7 +260,7 @@ class CLISessions {
   }
   retryInteraction(id) { const s=this.sessions.get(id);if(s&&!s.pending&&!s.native?.current&&s.finalDelivery){const text=s.finalDelivery.text;return this.deliver(id,s,text,{final:true}).then(()=>{if(s.finalDelivery?.status==='failed')throw Error('最终回复重发失败，请检查企业微信连接后再 /retry');return '已重新发送上一轮最终回复。';});}const done=ok=>{if(!ok)throw Error(s?.native?.readError?'无法读取本机当前问题，请确认终端窗口正常运行后重试':'当前未识别到待确认的终端问题，请查看本机终端');return '已重新读取并转发本机当前问题，请查看新卡片。';};const result=s?.native?.retry();return result&&typeof result.then==='function'?result.then(done):done(result); }
   status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: s.nativeMenu || s.permissions.size || s.trustPending ? '等待您确认或回答' : s.awaitingInput?'正在等待回答，当前问题尚未识别，可发送 /retry 重试':!s.pending ? s.finalDelivery?.status==='failed'?'任务已结束，但最终回复发送失败；可发送 /retry 重发':'本轮已结束或已请求中断' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
-  stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.awaitingInput=false;s.localSubmittedAt=null; s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
+  stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.slashCommand=null;s.commandSubmitted=false;s.awaitingInput=false;s.localSubmittedAt=null; s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
   async leave(id) {
     this.userInput(id);
     return this.exclusive(id, async () => {

@@ -1,6 +1,15 @@
 'use strict';
 (function(root){
 const customOption = label => /^(?:Type something|Other|Custom answer|Chat about this|输入|自定义)/i.test(label.replace(/^(?:\[[ x]\]|[☐☑☒✓✔])\s*/i,''));
+function terminalIdle(lines,cursorY) {
+ if(lines.some(l=>/esc(?:ape)?\s+(?:to\s+)?(?:interrupt|stop)/i.test(l)))return false;
+ const prompt=l=>/^\s*[❯>›]\s*$/.test(l||'');
+ if(prompt(lines[cursorY]))return true;
+ const row=lines.findLastIndex(prompt);if(row<0)return false;
+ // Ink can leave its physical cursor on the footer rather than the input row.
+ // Only known footer lines may follow an empty prompt; arbitrary output cannot.
+ return lines.slice(row+1).every(l=>!l.trim()||/^\s*[─━]+\s*$/.test(l)||/(?:\?\s+for shortcuts|shift\+tab|(?:auto|plan|default|manual) mode|accept edits|bypass permissions)/i.test(l));
+}
 function parseMenu(lines, fingerprint = JSON.stringify) {
  lines=lines.map(line=>line.replace(/^\s*│ ?/,'').replace(/\s*│\s*$/,''));
  let footer = lines.findLastIndex(l => /(?:enter.*(?:select|confirm|submit)|space.*(?:select|toggle)|esc.*(?:cancel|back|exit))/i.test(l));
@@ -74,5 +83,5 @@ function parseMenu(lines, fingerprint = JSON.stringify) {
  menu.fingerprint=fingerprint(menu);return menu;
 }
 
-if(typeof module!=='undefined')module.exports={parseMenu,customOption};else Object.assign(root,{parseTerminalMenu:parseMenu,terminalCustomOption:customOption});
+if(typeof module!=='undefined')module.exports={parseMenu,customOption,terminalIdle};else Object.assign(root,{parseTerminalMenu:parseMenu,terminalCustomOption:customOption,terminalIdle});
 })(typeof window==='undefined'?globalThis:window);

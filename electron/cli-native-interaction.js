@@ -44,7 +44,7 @@ class NativeInteraction {
   // screen before sending keys while this grace period is active.
   if(!menu&&this.current){this.missingSince ||= Date.now();const remaining=Math.max(100,this.settle)-(Date.now()-this.missingSince);if(remaining>0){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),remaining);return;}}
   this.missingSince=null;
-  if(!menu){this.submittedKey=null;const idle=this.target.readQuestion?this.observedIdle:/^\s*[❯>](?:\s|$)/.test(lines[this.screen.buffer.active.cursorY]||'')&&!lines.some(l=>/esc to interrupt/i.test(l));if(idle)this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(idle)this.onIdle();return;}
+  if(!menu){this.submittedKey=null;const idle=this.target.readQuestion?this.observedIdle:require('../public/terminal-question').terminalIdle(lines,this.screen.buffer.active.cursorY);if(idle)this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(idle)this.onIdle();return;}
   this.onMenu(menu);
   // Repainting or moving the visible rows does not introduce the next question.
   // Keep one live card; apply() still validates the latest screen before typing.
