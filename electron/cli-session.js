@@ -134,14 +134,23 @@ class CLISessions {
     if (s.name === 'codex' && /[\r\n]/.test(text || '')) s.localSubmittedAt = Date.now();
     if (!text || /[\x03\x04]/.test(text)) s.localSubmittedAt = null;
     s.native?.input(text);
+    if(/[\x03\x04]/.test(text||'')||(text==='\x1b'&&!s.nativeMenu&&!s.trustPending&&!s.permissions.size)){s.localSubmittedAt=null;s.pending=false;this.finishProgress(s);}
     s.awaitingInput=false;
     s.localInput = true; s.interactionsCancelledAt = Date.now(); s.startup = false; s.trustPending = false; s.trustController?.abort(); this.cancelPermissions(s);
   }
   deliver(id, s, text, metadata) {
     if (!text?.trim()) return;
-    s.sending = s.sending.catch(() => {}).then(() => this.sessions.get(id) === s ? this.notify(id, text, metadata) : undefined).catch(() => {});
+    const final=metadata?.final?{text,status:'sending'}:null;if(final)s.finalDelivery=final;
+    s.sending = s.sending.catch(() => {}).then(async()=>{if(this.sessions.get(id)!==s)return;await this.notify(id,text,metadata);if(final)final.status='sent';}).catch(()=>{if(final)final.status='failed';});
+    return s.sending;
   }
   result(id, s, event) {
+    // A CLI-issued idle notification is a fallback for a missed Stop. Require a
+    // timestamped final response from this turn's exact transcript, never silence.
+    if(event.kind==='idle'){
+      if(this.sessions.get(id)!==s||!s.pending||!event.turnAt||event.turnAt<s.started-2000||event.finishedAt<s.started||!event.text?.trim())return;
+      event={...event,kind:'result'};
+    }
     if(event.kind === 'prompt') {
       if(this.sessions.get(id)!==s || event.createdAt < (s.interactionsCancelledAt || 0))return;
       if(!s.pending || s.localInput){this.beginTask(id,s,event.createdAt);s.localInput=false;}
@@ -179,9 +188,9 @@ class CLISessions {
     s.seen.add(event.key); if (s.seen.size > 200) s.seen.delete(s.seen.values().next().value);
     if (!['result', 'error', 'missing'].includes(event.kind)) return;
     s.awaitingInput=false;s.localSubmittedAt=null; s.nativeMenu=false; s.pending = false; this.finishProgress(s);
-    if (event.kind === 'result' && typeof event.text === 'string' && event.text.trim()) this.deliver(id, s, event.text);
-    else if (event.kind === 'missing') this.deliver(id, s, 'CLI 已结束本轮，但当前版本未提供最终回复。请查看本机 CLI 并检查版本；未转发终端界面内容。');
-    else if (!s.errorNotified) this.deliver(id, s, s.name + ' 本轮未完成：' + String(event.text || 'CLI 返回错误').slice(0, 2000));
+    if (event.kind === 'result' && typeof event.text === 'string' && event.text.trim()) this.deliver(id, s, event.text,{final:true});
+    else if (event.kind === 'missing') this.deliver(id, s, 'CLI 已结束本轮，但当前版本未提供最终回复。请查看本机 CLI 并检查版本；未转发终端界面内容。',{final:true});
+    else if (!s.errorNotified) this.deliver(id, s, s.name + ' 本轮未完成：' + String(event.text || 'CLI 返回错误').slice(0, 2000),{final:true});
   }
   async cyclePermission(id) {
     return this.exclusive(id, async () => {
@@ -209,6 +218,8 @@ class CLISessions {
       const s = this.sessions.get(id); if (!s) throw Error('CLI 会话已退出');
       const t = this.target(id), state = await this.inspect(t);
       if (this.sessions.get(id) !== s || t.identity !== s.identity || state.name !== s.name) throw Error('CLI 未运行或已退出，消息未发送。请 /aiquit 返回 AI，或重新进入 CLI');
+      if(s.pending&&s.channel.poll)await s.channel.poll();
+      if(this.sessions.get(id)!==s||this.target(id).identity!==s.identity)throw Error('终端已变化，消息未发送');
       if (s.nativeMenu) throw Error('终端正在等待选择，请处理当前问题或在本机操作');
       if (s.permissions.size) throw Error('Claude 正在等待操作审批，请先点击企微卡片中的按钮');
       if (s.trustPending) throw Error('请先在企微信任卡片中选择“信任目录”或“不信任，退出”');
@@ -236,14 +247,14 @@ class CLISessions {
   }
   finishProgress(s) { clearInterval(s.progressTimer); s.progress?.close(); }
   beginTask(id,s,started=Date.now()) {
-    this.finishProgress(s); s.awaitingInput=false;s.startup=false;s.pending=true;s.started=started;s.errorNotified=false;s.tail='';s.seen.clear();s.taskId=randomUUID();
+    this.finishProgress(s); s.finalDelivery=null;s.awaitingInput=false;s.startup=false;s.pending=true;s.started=started;s.errorNotified=false;s.tail='';s.seen.clear();s.taskId=randomUUID();
     const taskId=s.taskId;
     s.progress=new CLIProgress({send:text=>this.deliver(id,s,text,{taskId,progress:true})});
     s.progress.paused=!!s.nativeMenu || s.permissions.size>0;
     s.progressTimer=setInterval(()=>s.progress?.tick(),1000);s.progressTimer.unref?.();
   }
-  retryInteraction(id) { const s=this.sessions.get(id),done=ok=>{if(!ok)throw Error(s?.native?.readError?'无法读取本机当前问题，请确认终端窗口正常运行后重试':'当前未识别到待确认的终端问题，请查看本机终端');return '已重新读取并转发本机当前问题，请查看新卡片。';};const result=s?.native?.retry();return result&&typeof result.then==='function'?result.then(done):done(result); }
-  status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: s.nativeMenu || s.permissions.size || s.trustPending ? '等待您确认或回答' : s.awaitingInput?'正在等待回答，当前问题尚未识别，可发送 /retry 重试':!s.pending ? '本轮已结束或已请求中断' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
+  retryInteraction(id) { const s=this.sessions.get(id);if(s&&!s.pending&&!s.native?.current&&s.finalDelivery){const text=s.finalDelivery.text;return this.deliver(id,s,text,{final:true}).then(()=>{if(s.finalDelivery?.status==='failed')throw Error('最终回复重发失败，请检查企业微信连接后再 /retry');return '已重新发送上一轮最终回复。';});}const done=ok=>{if(!ok)throw Error(s?.native?.readError?'无法读取本机当前问题，请确认终端窗口正常运行后重试':'当前未识别到待确认的终端问题，请查看本机终端');return '已重新读取并转发本机当前问题，请查看新卡片。';};const result=s?.native?.retry();return result&&typeof result.then==='function'?result.then(done):done(result); }
+  status(id) { const s = this.sessions.get(id); return s ? { taskId: s.taskId, pending: s.pending, text: s.nativeMenu || s.permissions.size || s.trustPending ? '等待您确认或回答' : s.awaitingInput?'正在等待回答，当前问题尚未识别，可发送 /retry 重试':!s.pending ? s.finalDelivery?.status==='failed'?'任务已结束，但最终回复发送失败；可发送 /retry 重发':'本轮已结束或已请求中断' : s.errorNotified ? '服务异常，CLI 可能仍在重试' : s.progress?.current || '仍在处理，尚未收到最终结果' } : null; }
   stop(id) { this.userInput(id); const s = this.sessions.get(id); if (s) { s.awaitingInput=false;s.localSubmittedAt=null; s.pending = false; this.finishProgress(s); this.target(id).input('\x03'); } }
   async leave(id) {
     this.userInput(id);

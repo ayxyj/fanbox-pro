@@ -22,9 +22,14 @@ function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval
     fs.writeFileSync(mcpConfig, JSON.stringify({ mcpServers: { ...(name === 'claude' ? require('./mcp-manager').validateServers(mcpServers) : {}), fanbox_delivery: { command: runtime, args: [mcpScript, directory] } } }), { mode: 0o600 });
     if (name === 'codex') args = ' -c "notify=[' + paths.map(p => "'" + p + "'").join(',') + ']"';
     else {
-      const command = paths.map(p => '"' + p + '"').join(' ');
-      const hook = [{ hooks: [{ type: 'command', command, timeout: 10 }] }];
-      fs.writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook, UserPromptSubmit: hook, ...(name === 'claude' ? { StopFailure: hook, SessionStart: hook, PreToolUse: [ { matcher: 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash|PowerShell|WebFetch|WebSearch|Agent|Task', hooks: [{ type: 'command', command, timeout: 10 }] }], PostToolUse: hook, PostToolUseFailure: hook } : {}), Notification: [{ matcher: 'elicitation_dialog|permission_prompt', hooks: [{ type: 'command', command, timeout: 10 }] }] } }));
+      // Legacy shell hooks must also work in PowerShell, where a quoted
+      // executable alone is an expression. Node was already verified on PATH.
+      const command = (process.platform==='win32'?'node.exe':'"'+paths[0]+'"')+' '+paths.slice(1).map(p=>'"'+p+'"').join(' ');
+      // Claude's exec form never sends quoted Windows executable paths through
+      // PowerShell/Git Bash. CodeBuddy retains its legacy shell-form contract.
+      const handler = name === 'claude' ? {type:'command',command:paths[0],args:paths.slice(1),timeout:10} : {type:'command',command,timeout:10};
+      const hook = [{ hooks: [handler] }];
+      fs.writeFileSync(settings, JSON.stringify({ hooks: { Stop: hook, UserPromptSubmit: hook, ...(name === 'claude' ? { StopFailure: hook, SessionStart: hook, PreToolUse: [ { matcher: 'Read|Glob|Grep|Write|Edit|NotebookEdit|Bash|PowerShell|WebFetch|WebSearch|Agent|Task', hooks: [handler] }], PostToolUse: hook, PostToolUseFailure: hook } : {}), Notification: [{ matcher: 'elicitation_dialog|permission_prompt|idle_prompt', hooks: [handler] }] } }));
       args = ' --settings "' + safe(settings) + '"';
     }
     if (name === 'codex') args += ` -c "mcp_servers.fanbox_delivery.command='${safe(runtime)}'" -c "mcp_servers.fanbox_delivery.args=['${safe(mcpScript)}','${safe(directory)}']" -c "mcp_servers.fanbox_delivery.tool_timeout_sec=200"`;
@@ -38,13 +43,13 @@ function createResultChannel(name, onResult, { runtime = nodeRuntime(), interval
       for (const file of await fs.promises.readdir(directory)) {
         if (!/^[a-f0-9-]+\.event$/.test(file)) continue;
         const full = path.join(directory, file);
-        let event; try { if ((await fs.promises.stat(full)).size <= 700000) event = JSON.parse(await fs.promises.readFile(full, 'utf8')); } catch {} finally { await fs.promises.unlink(full).catch(() => {}); }
-        if (event) events.push(event);
+        let event; try { if ((await fs.promises.stat(full)).size <= 700000) event = JSON.parse(await fs.promises.readFile(full, 'utf8')); } catch {}
+        if (event) events.push({event,full});else await fs.promises.unlink(full).catch(() => {});
       }
       // UUID filenames do not preserve hook order. A quick local turn may submit
       // and finish between polls, so establish its task before delivering Stop.
-      events.sort((a,b)=>(a.createdAt-b.createdAt) || (a.kind==='prompt'?-1:b.kind==='prompt'?1:0));
-      for(const event of events)if(!closed)await onResult(event);
+      events.sort(({event:a},{event:b})=>(a.createdAt-b.createdAt) || (a.kind==='prompt'?-1:b.kind==='prompt'?1:0));
+      for(const {event,full} of events)if(!closed){try{await onResult(event);await fs.promises.unlink(full).catch(()=>{});}catch{/* Keep this event for retry; do not lose other completions in the batch. */}}
     } finally { reading = false; }
   };
   const timer = setInterval(() => poll().catch(() => {}), interval); timer.unref?.();

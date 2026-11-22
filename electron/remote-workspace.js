@@ -137,7 +137,8 @@ function installRemoteWorkspace({ app, ipcMain, dialog, safeStorage, getWindow, 
     return im.askCLIQuestions(route, request.input.questions, signal);
   }, notify: async (id, text, metadata) => {
     const route = [...(im?.routes.values() || [])].find(r => r.sessionId === id);
-    if (route && im.valid(route)) { if (metadata?.progress) await im.cliProgress(route, text, metadata.taskId); else await im.say(route, text); }
+    if (!route || !im.valid(route) || !im.client || !im.config().enabled || !im.config().users.includes(route.userid)) throw Error('企业微信连接或会话不可用');
+    if (metadata?.progress) await im.cliProgress(route, text, metadata.taskId); else await im.say(route, text);
   } });
   const ai = new ShellAI({ store, ssh, target, confirm: confirmAI, emit, auditFile: path.join(directory, 'shell-ai-audit.jsonl') });
   const historyTarget = id => {
