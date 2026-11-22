@@ -41,7 +41,7 @@ class CLISessions {
       this.sessions.set(id, s);
       if (this.askNative) s.native = new NativeInteraction({
         name,
-        target: { ...t, validate: async () => this.sessions.get(id) === s && this.target(id).identity === s.identity && (await this.inspect(t)).name === s.name },
+        target: { ...t, validateIdentity: () => this.sessions.get(id) === s && this.target(id).identity === s.identity, validate: async () => this.sessions.get(id) === s && this.target(id).identity === s.identity && (await this.inspect(t)).name === s.name },
         ask: (question, signal) => this.askNative(id, question, signal),
         notify: text => this.deliver(id,s,text),
         onMenu: () => { s.awaitingInput=false;s.nativeMenu = true; if(s.progress)s.progress.paused=true; },

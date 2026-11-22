@@ -65,13 +65,22 @@ function parseMenu(lines, fingerprint = JSON.stringify) {
   // Project labels and metadata have the same indentation as titles: never count
   // them as selectable entries or remote arrow navigation would choose the wrong session.
   const metadata=l=>/(?:\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago|just now|yesterday|today).*·|·.*(?:bytes|[KMGT]B|messages?)/i.test(l);
-  const focused=body.findIndex((l,i)=>/^\s*[❯>›]\s+\S/.test(l)&&metadata(body[i+1]||''));
-  for(let row=0;row<body.length-1;row++){
-    if(!body[row].trim()||metadata(body[row])||!metadata(body[row+1]))continue;
-    if(row===focused)selected=options.length;
-    options.push({label:body[row].replace(/^\s*[❯>›]\s*/, '').trim(),description:body[row+1].trim(),row,checked:false});
+  const heading=body.findIndex(l=>/^\s*(?:Resume|Continue|Search).*session|^\s*Select a conversation/i.test(l));
+  let previous=heading,focused=0;
+  for(let row=1;row<body.length;row++){
+    if(!metadata(body[row]))continue;
+    let start=row-1;
+    while(start>previous+1&&body[start-1].trim())start--;
+    const marks=body.slice(start,row).flatMap((l,i)=>/^\s*[❯>›]\s+\S/.test(l)?[i]:[]);if(marks.length>1)return null;const mark=marks[0]??-1;
+    if(mark>=0){start+=mark;selected=options.length;focused++;}
+    else if(!options.length&&body.slice(start,row).some(l=>/(?:Resume|Continue|Search).*session|Select a conversation/i.test(l)))start=row-1;
+    const label=body.slice(start,row).map(l=>l.replace(/^\s*[❯>›]\s*/, '').trim()).join(' ').trim();
+    let end=row;
+    if(!/bytes|[KMGT]B|messages?/i.test(body[row])&&/^\s*(?:[·•]\s*)?\d+(?:[.,]\d+)?\s*(?:bytes?|[KMGT]B|messages?)(?:\s*·.*)?\s*$/i.test(body[row+1]||''))end++;
+    if(label)options.push({label,description:body.slice(row,end+1).map(l=>l.trim()).join(' '),row:start,checked:false});
+    previous=end;row=end;
   }
-  if(selected<0&&options.length)return null;
+  if(options.length&&focused!==1)return null;
   if(!options.length&&!body.some(l=>/No (?:conversations|sessions).*found/i.test(l)))return null;
  }else return null;
  if((!options.length&&!resume)||options.length>100)return null;

@@ -3109,16 +3109,40 @@ const usagePanel = {
 
 // ---------- Skills 透视（主区全屏视图）----------
 const skillsView = {
-  data: null, filter: 'all', sort: 'hits', open: new Set(),
+  data: null, filter: 'all', sort: 'hits', open: new Set(), request: 0, returnView: null,
+  header() {
+    return '<header class="sk-header"><h2>Skills 透视</h2><button type="button" class="sk-close" data-sk-close aria-label="关闭 Skills 透视">×</button></header>';
+  },
+  bindClose(area) {
+    area.querySelector('[data-sk-close]').onclick = () => this.close();
+  },
+  message(text, className) {
+    const area = $('#file-area');
+    area.innerHTML = '<div class="sk-wrap">' + this.header() + '<div class="' + className + '">' + escapeHtml(text) + '</div></div>';
+    this.bindClose(area);
+  },
+  close() {
+    if (!state.skillsMode) return;
+    this.request++;
+    state.skillsMode = false;
+    const previous = this.returnView; this.returnView = null;
+    if (previous?.cwd === state.cwd) state.cursor = previous.cursor;
+    render(); renderRootsActive();
+    if (previous?.cwd === state.cwd) { $('#content').scrollTop = previous.top; $('#content').scrollLeft = previous.left; }
+    refresh().catch(() => {});
+  },
   async show() {
+    if (!state.skillsMode) this.returnView = { cwd: state.cwd, cursor: state.cursor, top: $('#content').scrollTop, left: $('#content').scrollLeft };
+    const request = ++this.request;
     state.gsMode = false; state.skillsMode = true; state.cursor = -1;
     renderBreadcrumb();
-    $('#file-area').innerHTML = '<div class="cmdk-loading">扫描本机 skills…</div>';
-    try { this.data = await api('/api/skills'); } catch { $('#file-area').innerHTML = '<div class="nav-empty">扫描失败</div>'; return; }
-    this.render();
+    this.message('扫描本机 skills…', 'cmdk-loading');
+    try { const data = await api('/api/skills'); if (request === this.request && state.skillsMode) { this.data = data; this.render(); } }
+    catch { if (request === this.request && state.skillsMode) this.message('扫描失败', 'nav-empty'); }
   },
   async reload() {
-    try { this.data = await api('/api/skills'); if (state.skillsMode) this.render(); } catch { /* */ }
+    const request = ++this.request;
+    try { const data = await api('/api/skills'); if (request === this.request && state.skillsMode) { this.data = data; this.render(); } } catch { /* */ }
   },
   srcTag(it) {
     const cls = { claude: '', codex: ' codex', agents: ' codex', plugin: ' plugin', project: ' proj' }[it.source] || '';
@@ -3147,12 +3171,13 @@ const skillsView = {
     return arr;
   },
   render() {
+    if (!state.skillsMode || !this.data) return;
     const o = this.data.overview;
     const items = this.data.items || [];
     const cnt = (fn) => items.filter(fn).length;
     const over = o.budgetChars > o.budgetLimit;
     const ratio = (o.budgetChars / o.budgetLimit).toFixed(1);
-    let h = `<div class="sk-wrap">
+    let h = `<div class="sk-wrap">${this.header()}
       <div class="sk-stats">
         <div class="sk-stat"><div class="sk-num">${o.unique}<small>/${o.total}</small></div><div class="sk-lbl">全部 skills</div><div class="sk-note">唯一 / 含跨端副本</div></div>
         <div class="sk-stat"><div class="sk-num good">${o.active}</div><div class="sk-lbl">45 天内活跃</div><div class="sk-note">共 ${o.totalHits} 次触发</div></div>
@@ -3233,6 +3258,7 @@ const skillsView = {
     this.bind(area);
   },
   bind(area) {
+    this.bindClose(area);
     area.querySelector('.sk-chips').onclick = (e) => {
       const c = e.target.closest('.sk-chip'); if (!c) return;
       this.filter = c.dataset.f; this.render();

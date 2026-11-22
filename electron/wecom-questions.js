@@ -74,10 +74,10 @@ module.exports = {
     const entry = this.questions?.get(match[1]);
     if (!entry || entry.userid !== userid || !this.valid(entry.route)) { await this.send(userid,'该问题已处理、已过期或不属于当前账号。'); return; }
     const callbackId = frame.body?.msgid || frame.headers?.req_id;
-    if (callbackId) { entry.callbacks ||= new Set(); if(entry.callbacks.has(callbackId))return; entry.callbacks.add(callbackId); }
+    if (callbackId) { const actionId=JSON.stringify([callbackId,event.task_id,event.event_key]);entry.callbacks ||= new Set(); if(entry.callbacks.has(actionId))return; entry.callbacks.add(actionId); }
     while (entry.busy) await new Promise(resolve => (entry.waiters ||= []).push(resolve));
     if (this.questions.get(entry.token) !== entry || !this.valid(entry.route)) { await this.send(userid,'该问题已处理或已过期。'); return; }
-    entry.busy = true;
+    entry.busy = true;let update;
     try {
       const action = match[2];
       if(entry.q.nativeMenu && (action==='prev'||action==='next')) { entry.page=Math.max(0,Math.min(Math.ceil(entry.q.options.length/2)-1,entry.page+(action==='next'?1:-1))); }
@@ -90,9 +90,14 @@ module.exports = {
         if (!entry.selected.size) { await this.send(userid,'请先选择至少一项。'); return; }
         entry.finish(entry.q.nativeMenu ? {indices:[...entry.selected].sort((a,b)=>a-b)} : [...entry.selected].sort().map(i=>entry.q.options[i].label).join(', '));
       } else if (action === 'custom' && (!entry.q.fixedOptions || entry.q.nativeText)) { await this.say(entry.route,`请直接回复文字内容；当前会话有多个待回答问题或需要指定本题时，请发送：/回答 ${entry.token} 自定义内容`); return; }
-      try { await this.client.updateTemplateCard(frame,this.questionCard(entry,!this.questions.has(entry.token)),[userid]); }
-      catch { await this.send(userid,this.questions.has(entry.token)?'选择已记录，卡片显示暂未更新。':'回答已记录，卡片显示暂未更新。'); }
+      // Serialize cosmetic updates, but never hold the answer lock while the
+      // network is waiting. A page repaint must not block the next selection.
+      update=(entry.cardUpdates||Promise.resolve()).catch(()=>{}).then(async()=>{
+        try { await this.client.updateTemplateCard(frame,this.questionCard(entry,!this.questions.has(entry.token)),[userid]); }
+        catch { await this.send(userid,this.questions.has(entry.token)?'选择已记录，卡片显示暂未更新。':'回答已记录，卡片显示暂未更新。'); }
+      });entry.cardUpdates=update;
     } finally { entry.busy = false; for (const resolve of entry.waiters?.splice(0) || []) resolve(); }
+    if(update)await update;
   },
   async answerQuestionText(userid, route, text) {
     const explicit = /^\s*\/回答\s+([a-f0-9]{12})[ \t]+([\s\S]+)$/.exec(text);

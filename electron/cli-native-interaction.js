@@ -5,7 +5,15 @@ const customOption = label => /^(?:Type something|Other|Custom answer|Chat about
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const { isTerminalReply: reply } = require('./terminal-protocol');
 const delay = ms => new Promise(resolve=>setTimeout(resolve,ms));
-const menuKey = menu => menu && hash({kind:menu.kind,question:menu.question,options:menu.options.map(o=>o.label.replace(/^(?:\[[ x]\]|[☐☑☒✓✔])\s*/i,''))});
+// Relative ages repaint continuously; title and non-clock metadata identify a
+// visible resume entry. Ambiguous entries are rejected before sending keys.
+const sessionKey = option => hash({label:option.label,description:(option.description||'').replace(/\b(?:\d+\s+(?:seconds?|minutes?|hours?|days?|weeks?|months?|years?)\s+ago|just now|yesterday|today)\b/ig,'').replace(/\s+/g,' ').trim()});
+const compatibleResume = (oldMenu,newMenu) => {
+ if(oldMenu.kind!=='resume'||newMenu.kind!=='resume'||!oldMenu.options.length)return false;
+ const oldKeys=oldMenu.options.map(sessionKey),newKeys=newMenu.options.map(sessionKey);
+ return new Set(oldKeys).size===oldKeys.length&&oldKeys.some(k=>newKeys.filter(next=>next===k).length===1);
+};
+const menuKey = menu => menu && hash({kind:menu.kind,question:menu.question,options:menu.options.map(o=>menu.kind==='resume'?sessionKey(o):o.label.replace(/^(?:\[[ x]\]|[☐☑☒✓✔])\s*/i,''))});
 function parseMenu(lines){return require('../public/terminal-question').parseMenu(lines,hash);}
 class NativeInteraction {
  constructor({target,ask,name='claude',notify=()=>{},onMenu=()=>{},onDismiss=()=>{},onIdle=()=>{},settle=400,keyDelay=100,ackTimeout=3000,confirmDelay=200}){
@@ -14,7 +22,7 @@ class NativeInteraction {
  }
  lines(){const b=this.screen.buffer.active;return Array.from({length:this.screen.rows},(_,i)=>b.getLine(b.baseY+i)?.translateToString(true)||'');}
  output(text){if(this.closed)return;if(!this.maxTimer)this.maxTimer=setTimeout(()=>{this.maxTimer=null;this.refresh();},1000);clearTimeout(this.timer);this.screen.write(text,()=>{if(this.closed)return;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);});}
- resize(cols,rows){if(this.closed)return;this.invalidate();this.lastFingerprint=null;this.revision++;this.screen.resize(cols,rows);clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}
+ resize(cols,rows){if(this.closed)return;if(this.current?.menu.kind!=='resume'||this.current.processing)this.invalidate();this.lastFingerprint=null;this.revision++;this.screen.resize(cols,rows);clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}
  input(text){if(reply(text||''))return;const menu=this.menu();if(text==='\r'&&menu&&customOption(menu.options[menu.selected]?.label||''))this.customContext=menu.question;this.revision++;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;clearTimeout(this.timer);}
  invalidate(){if(this.current){const entry=this.current;this.current=null;this.lastFingerprint=null;entry.controller.abort();}}
  retry(){if(this.closed||this.current?.processing)return false;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;if(this.target.readQuestion)return (async()=>{if(this.refreshing)await this.refreshing;await this.refresh();return !this.readError&&!!this.current;})();this.refresh();return !!this.current;}
@@ -42,13 +50,13 @@ class NativeInteraction {
   // TUIs often clear first and repaint the same menu in the next output chunk.
   // Dismiss only after a sustained disappearance; apply() still checks the live
   // screen before sending keys while this grace period is active.
-  if(!menu&&this.current){this.missingSince ||= Date.now();const remaining=Math.max(100,this.settle)-(Date.now()-this.missingSince);if(remaining>0){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),remaining);return;}}
+  if(!menu&&this.current){this.missingSince ||= Date.now();const grace=this.current.menu.kind==='resume'?1500:100,remaining=Math.max(grace,this.settle)-(Date.now()-this.missingSince);if(remaining>0){clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),remaining);return;}}
   this.missingSince=null;
   if(!menu){this.submittedKey=null;const idle=this.target.readQuestion?this.observedIdle:require('../public/terminal-question').terminalIdle(lines,this.screen.buffer.active.cursorY);if(idle)this.customContext=null;this.onDismiss();this.invalidate();this.lastFingerprint=null;if(idle)this.onIdle();return;}
   this.onMenu(menu);
   // Repainting or moving the visible rows does not introduce the next question.
   // Keep one live card; apply() still validates the latest screen before typing.
-  if(this.current){if(menuKey(this.current.menu)===menuKey(menu)){this.current.menu=menu;return;}this.invalidate();}
+  if(this.current){if(compatibleResume(this.current.menu,menu))return;if(menuKey(this.current.menu)===menuKey(menu)){this.current.menu=menu;return;}this.invalidate();}
   if(menuKey(menu)===this.submittedKey)return;
   this.submittedKey=null;
   if(this.current||menu.fingerprint===this.lastFingerprint)return;
@@ -63,6 +71,7 @@ class NativeInteraction {
  }
  async apply(entry,answer){
   if(!answer||this.closed||entry.controller.signal.aborted||this.current!==entry)return;
+  if(entry.menu.kind==='resume')return this.applyResume(entry,answer);
   entry.processing=true;
   const revision=this.revision,menu=entry.menu,key=menuKey(menu),steps=[];
   const live=()=>!this.closed&&!entry.controller.signal.aborted&&this.current===entry&&revision===this.revision;
@@ -106,6 +115,58 @@ class NativeInteraction {
    this.notify(changed?(navigation?'终端列表已更新，请查看新选项。':answer.cancel?'终端已离开原问题，取消已生效。':'已确认终端离开原问题，选择已生效。'):'已发送按键，但终端仍停留在原问题，尚未确认生效。请发送 /retry 重试，或在本机处理。');
   }catch{if(live())this.notify('终端尚未确认选择生效，已停止继续输入。请发送 /retry 重试，或在本机处理。');}
   finally{if(this.current===entry){this.submittedKey=key;this.invalidate();this.lastFingerprint=menu.fingerprint;this.refresh();}}
+ }
+ async applyResume(entry,answer){
+  entry.processing=true;
+  const revision=this.revision,original=entry.menu,key=menuKey(original);
+  const live=()=>!this.closed&&!entry.controller.signal.aborted&&this.current===entry&&this.revision===revision;
+  const flush=()=>this.target.readQuestion?this.readQuestion():new Promise(resolve=>this.screen.write('',resolve));
+  const waitFor=async test=>{const until=Date.now()+this.ackTimeout;do{if(!live())return false;await flush();if(test(this.menu()))return true;await delay(this.keyDelay);}while(Date.now()<until);return false;};
+  const validate=async(full=false)=>{if(!live())throw Error('会话已失效');if(this.target.validateIdentity&&!this.target.validateIdentity())throw Error('终端已变化');if(this.target.validate&&(full||!this.target.validateIdentity)&&!await this.target.validate())throw Error('终端已变化');if(!live())throw Error('会话已失效');};
+  const keys=m=>m?.kind==='resume'?m.options.map(sessionKey):[];
+  let navigation=false,changed=false;
+  try{
+   if(Array.isArray(answer.indices)&&answer.indices.length===1&&Number.isInteger(answer.indices[0])&&original.options[answer.indices[0]])this.notify('已收到会话选择，正在核对终端焦点；恢复结果会另行通知。');
+   await validate(true);await flush();if(!live())return;
+   if(this.menu()?.kind!=='resume')throw Error('当前会话列表已关闭');
+   if(answer.cancel){this.target.input('\x1b');}
+   else if(answer.search!==undefined){
+    const value=String(answer.search);if(!value||value.length>200||/[\x00-\x1f\x7f]/.test(value))throw Error('搜索内容无效');
+    this.target.input('\x15');await delay(this.keyDelay);await validate();await flush();if(this.menu()?.kind!=='resume')throw Error('会话列表已变化');this.target.input(value);navigation=true;
+   }else{
+    const ids=answer.indices;if(!Array.isArray(ids)||ids.length!==1||!Number.isInteger(ids[0])||ids[0]<0||ids[0]>=original.options.length+2)throw Error('会话选项无效');
+    if(ids[0]>=original.options.length){
+     navigation=true;const direction=ids[0]===original.options.length?'\x1b[B':'\x1b[A';
+     for(let i=0;i<Math.max(1,original.options.length);i++){await validate();await flush();if(this.menu()?.kind!=='resume')throw Error('会话列表已关闭');this.target.input(direction);await delay(this.keyDelay);}
+    }else{
+     const target=sessionKey(original.options[ids[0]]);
+     if(keys(original).filter(k=>k===target).length!==1)throw Error('重名会话信息相同，无法确定目标；请搜索缩小范围或在本机选择');
+     let confirmed=false;
+     for(let step=0;step<200;step++){
+      await validate();await flush();if(!live())return;
+      const current=this.menu(),list=keys(current),matches=list.flatMap((k,i)=>k===target?[i]:[]);
+      if(current?.kind!=='resume'||matches.length!==1)throw Error('当前列表无法定位所选会话，请查看新卡片或 /retry');
+      const index=matches[0],focus=current.selected;if(focus<0||!current.options[focus])throw Error('会话焦点无效');
+      if(index===focus){
+       // Process validation may take time. Re-read the actual focused session
+       // immediately before the one Enter; never trust an old row number.
+       await validate(true);await flush();if(!live())return;
+       const check=this.menu(),checkKeys=keys(check);
+       if(check?.kind!=='resume'||checkKeys.filter(k=>k===target).length!==1)throw Error('会话列表已变化');
+       if(checkKeys[check.selected]!==target)continue;
+       this.target.input('\r');confirmed=true;break;
+      }
+      const before=list[focus],direction=index>focus?'\x1b[B':'\x1b[A';this.target.input(direction);await delay(this.keyDelay);
+      if(!await waitFor(m=>m?.kind==='resume'&&keys(m).filter(k=>k===target).length===1&&sessionKey(m.options[m.selected]||{label:''})!==before))throw Error('终端未确认焦点移动');
+     }
+     if(!confirmed)throw Error('会话焦点定位次数过多');
+    }
+   }
+   let since=0;
+   changed=await waitFor(m=>{const different=navigation?menuKey(m)!==key||m?.selected!==original.selected:m?.kind!=='resume';if(!different){since=0;return false;}since ||= Date.now();return Date.now()-since>=this.confirmDelay;});
+   if(live())this.notify(navigation?'已向终端发送列表导航，请查看当前选项。':changed?(answer.cancel?'终端已离开会话列表，取消已生效。':'终端已离开会话列表，正在等待 CLI 的恢复确认。'):'已发送确认，但终端仍停留在会话列表，请 /retry 重新读取；未重复发送回车。');
+  }catch(error){if(live())this.notify('会话选择未完成，已停止继续输入：'+error.message+'。');}
+  finally{if(this.current===entry){this.submittedKey=navigation?null:key;this.invalidate();this.lastFingerprint=navigation?null:original.fingerprint;this.refresh();}else if(!this.closed&&this.revision!==revision)this.notify('本机已操作或终端尺寸已变化，已停止继续输入；请核对终端会话或 /retry 重新读取。');}
  }
  close(){this.closed=true;clearTimeout(this.maxTimer);clearTimeout(this.timer);this.invalidate();this.screen.dispose();}
 }
