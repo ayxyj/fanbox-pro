@@ -11,6 +11,7 @@ const cronPanel = {
   async renderPage(area) {
     this.ov=area;this.editing=null;
     area.innerHTML='<div class="gs-wrap gs-scheduled-wrap"><div class="gs-head"><h2 class="gs-h2">定时任务 <span class="gs-tag" id="cron-scheduler-status"></span></h2><div class="gs-head-actions"><button class="gs-btn" id="cron-scheduler-toggle">暂停全部</button><button class="gs-btn" id="cron-refresh">刷新</button><button class="gs-btn primary" id="cron-new-head">+ 新建</button></div></div><p class="gs-scheduler-note" id="cron-scheduler-note"></p><div class="cron-body"></div></div>';
+    gsEnsureClose(area);
     area.querySelector('#cron-scheduler-toggle').onclick=async event=>{
       const button=event.currentTarget;button.disabled=true;
       try{const result=await apiPost('/api/cron/scheduler-toggle',{paused:!this.data?.paused});if(!result.ok)throw Error(result.error);toast(result.paused?'定时任务已暂停':'定时任务已启动');await this.reload();}
@@ -21,7 +22,10 @@ const cronPanel = {
     await this.reload();
   },
   async reload() {
-    try { this.data = await api('/api/cron'); } catch { this.data = { tasks: [] }; }
+    const request=gs.request,area=this.ov;let data;
+    try { data = await api('/api/cron'); } catch { data = { tasks: [] }; }
+    if (!gsCanRender(area,'scheduled',request) || area!==this.ov) return;
+    this.data=data;
     if (this.ov && gsActive() && gs.view==='scheduled') this.render();
     this.syncBadgeLocal();
   },

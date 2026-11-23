@@ -6,7 +6,37 @@ const gs = {
   data: { workspaces: [], repos: [], tasks: [], settings: {} },
   busy: false,
   _selectedRepos: [],
+  request: 0, returnView: null,
 };
+
+function gsCanRender(area, view, request) {
+  return area?.isConnected && gsActive() && gs.view === view && gs.request === request;
+}
+function gsEnsureClose(area) {
+  if (area.querySelector('[data-gs-close]')) return;
+  let head = area.querySelector('.gs-head');
+  if (!head) {
+    head = document.createElement('div'); head.className = 'gs-head gs-close-head';
+    const title = document.createElement('h2'); title.className = 'gs-h2';
+    title.textContent = gs.view === 'scheduled' ? '定时任务' : gs.view === 'tasks' ? '自动同步' : 'Git 管理';
+    head.append(title); area.prepend(head);
+  }
+  const button = document.createElement('button'); button.type = 'button'; button.className = 'gs-btn gs-view-close';
+  button.dataset.gsClose = ''; button.setAttribute('aria-label', '关闭页面'); button.textContent = '×'; button.onclick = gsClose;
+  (head.querySelector('.gs-head-actions') || head).append(button);
+}
+function gsClose() {
+  if (!gsActive()) return;
+  const previous = gs.returnView; gs.returnView = null;
+  if (previous?.cwd === state.cwd) state.cursor = previous.cursor;
+  setGsMode(false);
+  document.querySelectorAll('#gs-nav-list li.active').forEach(li => li.classList.remove('active'));
+  $('#cron-entry')?.classList.remove('active');
+  if (typeof cronPanel !== 'undefined') { cronPanel.ov = null; cronPanel.editing = null; }
+  renderRootsActive();
+  if (previous?.cwd === state.cwd) { $('#content').scrollTop = previous.top; $('#content').scrollLeft = previous.left; }
+  refresh().catch(() => {});
+}
 
 // 本地弹窗封装：fanbox 的 inputDialog(title, value, placeholder) / confirmDialog(msg)
 // 都返回 Promise（null=false），这里包成回调风格，避免改动大量调用点。
@@ -21,12 +51,14 @@ function gsConfirm(msg, cb) {
 function setGsMode(on) {
   gsBranchTooltipCleanup?.();
   if (on) {
+    if (!state.gsMode) gs.returnView = { cwd: state.cwd, cursor: state.cursor, top: $('#content').scrollTop, left: $('#content').scrollLeft };
     state.gsMode = true;
     state.skillsMode = false;
     state.cursor = -1;
     // 关掉面包屑/状态栏的常规渲染
     if (typeof renderBreadcrumb === 'function') renderBreadcrumb();
   } else {
+    gs.request++;
     state.gsMode = false;
   }
   if (typeof render === 'function') render();
@@ -34,8 +66,13 @@ function setGsMode(on) {
 }
 
 function gsActive() { return state.gsMode === true; }
+function gsRefreshView(view, from = view) {
+  if (gsActive() && gs.view === from) return gsShow(view);
+}
 
 async function gsShow(view) {
+  const previousView = gsActive() ? gs.view : null;
+  const request = ++gs.request;
   setGsMode(true);
   gs.view = view;
   $('#cron-entry')?.classList.toggle('active', view === 'scheduled');
@@ -44,7 +81,8 @@ async function gsShow(view) {
     li.classList.toggle('active', li.dataset.gsView === view);
   });
   const area = $('#file-area');
-  if (view !== 'repos' || !area.querySelector('.gs-table')) area.innerHTML = '<div class="cmdk-loading">加载中…</div>';
+  if (view !== 'repos' || previousView !== 'repos' || !area.querySelector('.gs-table')) area.innerHTML = '<div class="cmdk-loading">加载中…</div>';
+  gsEnsureClose(area);
   try {
     if (view === 'overview') await gsRenderOverview(area);
     else if (view === 'workspaces') await gsRenderWorkspaces(area);
@@ -53,19 +91,24 @@ async function gsShow(view) {
     else if (view === 'logs') await gsRenderLogs(area);
     else if (view === 'scheduled') await cronPanel.renderPage(area);
   } catch (e) {
+    if (!gsCanRender(area, view, request)) return;
     area.innerHTML = `<div class="empty-state"><div class="big">⚠</div>加载失败：${escapeHtml(String(e && e.message || e))}</div>`;
   }
+  if (!gsCanRender(area, view, request)) return;
+  gsEnsureClose(area);
   gsRefreshBadges();
 }
 
 // ============== 总览 ==============
 async function gsRenderOverview(area) {
+  const request = gs.request;
   const [ov, wss, repos, tasks] = await Promise.all([
     api('/api/gs/overview'),
     api('/api/gs/workspace/list'),
     api('/api/gs/repo/list'),
     api('/api/gs/tasks'),
   ]);
+  if (!gsCanRender(area, 'overview', request)) return;
   if (ov.error) { area.innerHTML = `<div class="empty-state">${escapeHtml(ov.error)}</div>`; return; }
   const nr = ov.nextRun;
   const cards = `
@@ -101,6 +144,7 @@ async function gsRenderOverview(area) {
     </div>
   `;
   area.innerHTML = cards;
+  gsEnsureClose(area);
   area.querySelectorAll('[data-gs-jump]').forEach((b) => {
     b.onclick = () => gsShow(b.dataset.gsJump);
   });
@@ -110,7 +154,9 @@ async function gsRenderOverview(area) {
 
 // ============== 工作区 ==============
 async function gsRenderWorkspaces(area) {
+  const request = gs.request;
   const r = await api('/api/gs/workspace/list');
+  if (!gsCanRender(area, 'workspaces', request)) return;
   const wss = r.workspaces || [];
   area.innerHTML = `
     <div class="gs-wrap">
@@ -139,6 +185,7 @@ async function gsRenderWorkspaces(area) {
           </table>`}
     </div>
   `;
+  gsEnsureClose(area);
   const $add = $('#gs-ws-add');
   if ($add) $add.onclick = () => gsWsAdd();
   area.querySelectorAll('button[data-act]').forEach((b) => {
@@ -158,7 +205,7 @@ function gsWsAdd() {
     const r = await apiPost('/api/gs/workspace/save', { path: val, name: val.split(/[\\\\/]/).pop() || val, excludes: ['node_modules', '.venv'] });
     if (r.error) { toast('保存失败：' + r.error, true); return; }
     toast('已保存');
-    gsShow('workspaces');
+    gsRefreshView('workspaces');
   });
 }
 
@@ -171,7 +218,7 @@ function gsWsEdit(id) {
       if (!name) return;
       const r = await apiPost('/api/gs/workspace/save', { id, path: w.path, name, excludes: w.excludes });
       if (r.error) { toast('保存失败：' + r.error, true); return; }
-      gsShow('workspaces');
+      gsRefreshView('workspaces');
     });
   });
 }
@@ -181,7 +228,7 @@ function gsWsDel(id) {
     if (!ok) return;
     const r = await apiPost('/api/gs/workspace/delete', { id });
     if (r.error) { toast('删除失败：' + r.error, true); return; }
-    gsShow('workspaces');
+    gsRefreshView('workspaces');
   });
 }
 
@@ -190,7 +237,7 @@ async function gsWsScan(id) {
   const r = await apiPost('/api/gs/workspace/scan', { id });
   if (r.error) { toast('扫描失败：' + r.error, true); return; }
   toast(`发现 ${r.found} 个仓库；新增 ${r.added}；失联 ${r.lost}`);
-  gsShow('repos');
+  gsRefreshView('repos', 'workspaces');
 }
 
 // ============== 仓库 ==============
@@ -229,8 +276,9 @@ function gsBindBranchTooltips(area) {
 }
 
 async function gsRenderRepos(area, snapshot) {
+  const request = gs.request;
   const [r, wsr] = snapshot || await Promise.all([api('/api/gs/repo/list'), api('/api/gs/workspace/list')]);
-  if (!gsActive() || gs.view !== 'repos') return;
+  if (!gsCanRender(area, 'repos', request)) return;
   gs.repoSnapshot = [r, wsr];
   gs.repoSignature = JSON.stringify(r.repos || []);
   const repos = r.repos || [];
@@ -274,6 +322,7 @@ async function gsRenderRepos(area, snapshot) {
           </table></div>`}
     </div>
   `;
+  gsEnsureClose(area);
   gsBindBranchTooltips(area);
   function updateSelection() {
     area.querySelectorAll('tr[data-repoid]').forEach(tr => {
@@ -353,9 +402,9 @@ async function gsRenderRepos(area, snapshot) {
       if (b.dataset.act === 'switch') return gsRepoSyncOne(id, true);
       if (b.dataset.act === 'stash') return gsStashShow(id);
       if (b.dataset.act === 'dirty') return gsDirtyGuide(id);
-      if (b.dataset.act === 'refresh') { await apiPost('/api/gs/repo/refresh', { id }); return gsShow('repos'); }
+      if (b.dataset.act === 'refresh') { await apiPost('/api/gs/repo/refresh', { id }); return gsRefreshView('repos'); }
       if (b.dataset.act === 'del') {
-        gsConfirm('删除此仓库记录？', async (ok) => { if (!ok) return; await apiPost('/api/gs/repo/delete', { id }); gsShow('repos'); });
+        gsConfirm('删除此仓库记录？', async (ok) => { if (!ok) return; await apiPost('/api/gs/repo/delete', { id }); gsRefreshView('repos'); });
       }
     };
   });
@@ -366,8 +415,8 @@ async function gsRepoSyncOne(id, switchOnly = false) {
   const r = await apiPost('/api/gs/repo/sync', { id, switchOnly });
   if (r.error) { toast('同步失败：' + r.error, true); return; }
   toast(r.result.message || '同步完成', r.result.status !== 'ok');
-  if (r.result.status === 'dirty_blocked') gsDirtyGuide(id);
-  gsShow('repos');
+  if (r.result.status === 'dirty_blocked' && gsActive() && gs.view === 'repos') gsDirtyGuide(id);
+  gsRefreshView('repos');
 }
 
 function gsResultLabel(status) {
@@ -407,7 +456,7 @@ function gsRepoContextMenu(id, x, y) {
     const items = [
       { label: '立即同步', fn: () => gsRepoSyncOne(id) },
       { label: '切换到关注分支', fn: () => gsRepoSyncOne(id, true) },
-      { label: '刷新状态', fn: async () => { await apiPost('/api/gs/repo/refresh', { id }); gsShow('repos'); } },
+      { label: '刷新状态', fn: async () => { await apiPost('/api/gs/repo/refresh', { id }); gsRefreshView('repos'); } },
       { label: '查看 stash', fn: () => gsStashShow(id) },
       { label: '同步记录与原因', fn: () => gsRepoResultShow(id) },
       { sep: true },
@@ -415,12 +464,12 @@ function gsRepoContextMenu(id, x, y) {
       { label: '处理脏 · Stash', fn: () => gsDirtyStash(id) },
       { label: '处理脏 · 放弃改动', fn: () => gsDirtyDiscard(id), danger: true },
       { sep: true },
-      { label: repo.enabled ? '停用' : '启用', fn: async () => { await apiPost('/api/gs/repo/toggle', { id, enabled: !repo.enabled }); gsShow('repos'); } },
+      { label: repo.enabled ? '停用' : '启用', fn: async () => { await apiPost('/api/gs/repo/toggle', { id, enabled: !repo.enabled }); gsRefreshView('repos'); } },
       { label: '选择关注分支', fn: () => document.querySelector('tr[data-repoid="' + id + '"] .gs-branch-select')?.focus() },
       { sep: true },
       { label: '在终端打开', fn: async () => { try { await term.openInDir(repo.path); } catch (error) { toast('打开终端失败：' + error.message, true); } } },
       { label: '复制路径', fn: () => { navigator.clipboard.writeText(repo.path); toast('已复制'); } },
-      { label: '删除', fn: () => gsConfirm('删除此仓库记录？', async (ok) => { if (!ok) return; await apiPost('/api/gs/repo/delete', { id }); gsShow('repos'); }), danger: true },
+      { label: '删除', fn: () => gsConfirm('删除此仓库记录？', async (ok) => { if (!ok) return; await apiPost('/api/gs/repo/delete', { id }); gsRefreshView('repos'); }), danger: true },
     ];
     gsPopup(x, y, items);
   };
@@ -467,7 +516,7 @@ async function gsRepoBatchSync(ids) {
     } catch { failed++; }
   }
   toast(`批量完成：${ok} 成功 / ${blocked} 待处理 / ${failed} 失败`, blocked + failed > 0);
-  gsShow('repos');
+  gsRefreshView('repos');
 }
 
 async function gsRepoBatchToggle(ids) {
@@ -480,7 +529,7 @@ async function gsRepoBatchToggle(ids) {
     await apiPost('/api/gs/repo/toggle', { id, enabled: !cur.enabled });
   }
   toast('批量启停完成');
-  gsShow('repos');
+  gsRefreshView('repos');
 }
 
 // ============== Stash 弹层 ==============
@@ -595,11 +644,12 @@ function gsBranchSelect(repo) {
 async function gsReloadRepoSnapshot(cachedOnly = false) {
   if (document.hidden || gs.snapshotLoading || !gsActive() || gs.view !== 'repos' || gs.branchChanging) return;
   gs.snapshotLoading = true;
+  const request = gs.request;
   try {
     const refresh = !cachedOnly && Date.now() >= (gs.nextBackgroundRefresh || 0);
     if (refresh) gs.nextBackgroundRefresh = Date.now() + 60000;
     const r = await api('/api/gs/repo/list' + (refresh ? '' : '?cached=1'));
-    if (!gsActive() || gs.view !== 'repos' || gs.branchChanging || document.activeElement?.matches('.gs-branch-select')) return;
+    if (gs.request !== request || !gsActive() || gs.view !== 'repos' || gs.branchChanging || document.activeElement?.matches('.gs-branch-select')) return;
     if (gs.repoSignature !== JSON.stringify(r.repos || [])) await gsRenderRepos($('#file-area'), [r, gs.repoSnapshot[1]]);
   } finally { gs.snapshotLoading = false; }
 }
@@ -693,7 +743,7 @@ async function gsShowSettings() {
             toast('已导入：' + JSON.stringify(r2));
             document.getElementById('gs-modal').remove();
             gsRefreshBadges();
-            gsShow(gs.view);
+            gsRefreshView(gs.view);
           });
         };
         r.readAsText(f);
@@ -712,7 +762,7 @@ function gsRepoAdd() {
     if (!ws) { toast('请先在工作区中添加一个目录', true); return; }
     const r = await apiPost('/api/gs/repo/add', { path: val, workspaceId: ws.id });
     if (r.error) { toast('添加失败：' + r.error, true); return; }
-    gsShow('repos');
+    gsRefreshView('repos');
   });
 }
 
@@ -723,8 +773,9 @@ function gsRunHistoryHtml(history) {
 
 // ============== 任务（P5：编辑器 + 倒计时）==============
 async function gsRenderTasks(area) {
+  const request = gs.request;
   const r = await api('/api/gs/tasks');
-  if(!gsActive()||gs.view!=='tasks')return;
+  if(!gsCanRender(area,'tasks',request))return;
   const tasks = r.tasks || [];
   area.innerHTML = `
     <div class="gs-wrap">
@@ -764,7 +815,8 @@ async function gsRenderTasks(area) {
       ${gsRunHistoryHtml(tasks.flatMap(t => (t.history || []).map(h => ({...h, name:t.name}))).sort((a,b) => b.start.localeCompare(a.start)).slice(0,10))}
     </div>
   `;
-  $('#gs-task-refresh').onclick = () => gsShow('tasks');
+  gsEnsureClose(area);
+  $('#gs-task-refresh').onclick = () => gsRefreshView('tasks');
   $('#gs-scheduler-toggle').onclick=async event=>{
     const button=event.currentTarget;button.disabled=true;
     try{const result=await apiPost('/api/gs/scheduler/toggle',{paused:!r.paused});if(result.error)throw Error(result.error);toast(result.paused?'自动同步已暂停':'自动同步已启动');if(gsActive()&&gs.view==='tasks')await gsRenderTasks(area);}
@@ -785,14 +837,14 @@ async function gsRenderTasks(area) {
           const r = await apiPost('/api/gs/task/run', { id });
           if (r.error) { toast(r.error, true); return; }
           toast('完成: ' + (r.result.message || r.result.status));
-          gsShow('tasks');
+          gsRefreshView('tasks');
         } else if (b.dataset.act === 'edit') {
           gsTaskEdit(id);
         } else if (b.dataset.act === 'del') {
           gsConfirm('删除此任务？', async (ok) => {
             if (!ok) return;
             await apiPost('/api/gs/task/delete', { id });
-            gsShow('tasks');
+            gsRefreshView('tasks');
           });
         }
       };
@@ -911,7 +963,7 @@ function gsTaskEdit(id) {
         if (r2.error) { toast(r2.error, true); return; }
         toast('已保存');
         document.getElementById('gs-modal').remove();
-        gsShow('tasks');
+        gsRefreshView('tasks');
       };
     });
   });
@@ -919,10 +971,12 @@ function gsTaskEdit(id) {
 
 // ============== 日志 ==============
 async function gsRenderLogs(area) {
+  const request = gs.request;
   const r = await api('/api/gs/logs?limit=200');
   const logs = r.logs || [];
   // 关联任务/仓库名（一次性拉）
   const [tr, rr] = await Promise.all([api('/api/gs/tasks'), api('/api/gs/repo/list')]);
+  if (!gsCanRender(area, 'logs', request)) return;
   const tMap = new Map((tr.tasks || []).map((t) => [t.id, t.name]));
   const rMap = new Map((rr.repos || []).map((x) => [x.id, x.name]));
   area.innerHTML = `
@@ -954,8 +1008,9 @@ async function gsRenderLogs(area) {
           </table>`}
     </div>
   `;
+  gsEnsureClose(area);
   const $r = $('#gs-log-refresh');
-  if ($r) $r.onclick = () => gsShow('logs');
+  if ($r) $r.onclick = () => gsRefreshView('logs');
   area.querySelectorAll('button[data-act="detail"]').forEach((b) => {
     const tr = b.closest('tr');
     const idx = +tr.dataset.logidx;
