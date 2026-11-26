@@ -37,16 +37,20 @@
   statsActions.querySelector('[data-pet-skills]').onclick=()=>{panel.hidden=true;window.fanboxStatisticsUI?.open('skills');};
   statsActions.querySelector('[data-pet-usage]').onclick=()=>{panel.hidden=true;window.fanboxStatisticsUI?.open('usage');};
   usageBadge.onclick=()=>{if(desktop)native(desktopBridge.settings());else{panel.hidden=false;position();}};
-  let usageLoading=false;
+  let usageLoading=false,lastUsageText='';
   async function refreshUsage(){
     if(usageLoading)return;usageLoading=true;
     try{
       const response=await fetch('/api/agent-usage');if(!response.ok)throw Error();const d=await response.json();if(!d.ok)throw Error();
-      const rows=[];const percent=v=>Number.isFinite(v)?Math.round(Math.max(0,Math.min(100,v)))+'%':'暂无配额';
-      if(d.claude && (d.claude.official?.fiveHour?.usedPercent > 0 || (!d.claude.official?.fiveHour && d.claude.last5h?.total > 0))){const c=d.claude;const q=c.official?.fiveHour;rows.push('Claude '+(q?percent(q.usedPercent):c.last5h?compact(c.last5h.total):'暂无用量'));}
-      if(d.codex?.primary?.usedPercent > 0 && !d.codex.primary.stale){const c=d.codex;rows.push('Codex '+(c.primary?.stale?'待更新':percent(c.primary?.usedPercent)));}
-      usageBadge.textContent=rows.join(' · ');usageBadge.hidden=rows.length===0;
-    }catch{usageBadge.textContent='';usageBadge.hidden=true;}
+      const rows=[];const percent=v=>Math.round(Math.max(0,Math.min(100,v)))+'%';
+      const claude=d.claude,quota=claude?.official?.fiveHour,codex=d.codex?.primary;
+      if(Number.isFinite(quota?.usedPercent))rows.push('Claude '+percent(quota.usedPercent));
+      else if(Number.isFinite(claude?.last5h?.total)&&claude.last5h.total>=0)rows.push('Claude '+compact(claude.last5h.total)+' tokens');
+      if(codex?.stale)rows.push('Codex 待更新');
+      else if(Number.isFinite(codex?.usedPercent))rows.push('Codex '+percent(codex.usedPercent));
+      lastUsageText=rows.join(' · ');
+      usageBadge.textContent=lastUsageText||'暂无用量数据';usageBadge.hidden=false;
+    }catch{usageBadge.textContent=lastUsageText?lastUsageText+' · 待更新':'用量暂不可用';usageBadge.hidden=false;}
     finally{usageLoading=false;position();}
   }
   function compact(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n||0);}
