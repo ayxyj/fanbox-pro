@@ -47,6 +47,20 @@ ConvertTo-Json -InputObject @($items.ToArray()) -Compress`;
  await delay(800);assert(await evaluate("window.fanboxDesktopPet && !window.fanboxDesktopPet.isDesktop && document.querySelector('.im-pet').hidden"),'Main view must not duplicate pet');
  await connect(pet.webSocketDebuggerUrl);
  assert(await evaluate("!document.querySelector('.im-pet [title]') && document.querySelector('.im-pet-character').getAttribute('aria-label').includes('单击显示软件')"),'Desktop pet has no native hover tooltips; accessible state remains');
+ console.log(await evaluate(`(async()=>{
+  const pause=ms=>new Promise(r=>setTimeout(r,ms)),root=document.querySelector('.im-pet');
+  const prefs=JSON.parse(localStorage.getItem('fanbox-im-pet-v1')||'{}');
+  for(const size of [64,88,112]){
+   const select=document.querySelector('[data-size]');select.value=String(size);select.dispatchEvent(new Event('change'));
+   const usage=document.querySelector('[data-show-usage]');usage.checked=false;usage.dispatchEvent(new Event('change'));
+   for(let attempt=0;attempt<80;attempt++){await pause(50);if(Math.abs(innerWidth-(size+16))<=1&&Math.abs(innerHeight-(root.offsetHeight+32))<=1)break;}
+   if(Math.abs(innerWidth-(size+16))>1||Math.abs(innerHeight-(root.offsetHeight+32))>1)throw Error('transparent window does not fit pet '+size+' '+JSON.stringify({width:innerWidth,height:innerHeight,group:root.offsetHeight,outerWidth,outerHeight,scale:devicePixelRatio}));
+   const rect=root.getBoundingClientRect();if(rect.left<7||rect.right>innerWidth-7||rect.bottom>innerHeight)throw Error('pet clipped');
+  }
+  const select=document.querySelector('[data-size]');select.value=String(prefs.size||88);select.dispatchEvent(new Event('change'));
+  const usage=document.querySelector('[data-show-usage]');usage.checked=prefs.showUsage!==false;usage.dispatchEvent(new Event('change'));await pause(180);
+  return 'PASS compact native pet window: all three sizes, usage toggle, visible group and animation margins';
+ })()`));
  await evaluate("document.querySelector('[data-hide]').click();true");await delay(300);
  assert(nativeWindows().some(w=>w.title==='FanBox 桌面宠物'&&!w.visible),'Hide must hide native pet window');
  await connect(target.webSocketDebuggerUrl);await evaluate("window.remoteUI.imSettings()");

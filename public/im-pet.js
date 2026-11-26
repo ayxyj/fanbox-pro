@@ -80,7 +80,7 @@
 
     if(skin?.image){const body=svg.querySelector('.pet-body');body.replaceChildren();const image=document.createElementNS('http://www.w3.org/2000/svg','image');image.setAttribute('href',skin.image);image.setAttribute('width','90');image.setAttribute('height','85');image.setAttribute('x','5');image.setAttribute('y','5');body.append(image);}
     else if(skin){for(const el of svg.querySelectorAll('[stroke="#725948"],[stroke="#8c624a"],[fill="#725948"]')){if(el.hasAttribute('stroke'))el.setAttribute('stroke',skin.outline);if(el.getAttribute('fill')==='#725948')el.setAttribute('fill',skin.outline);}svg.querySelectorAll('[fill="#fff4df"]').forEach(el=>el.setAttribute('fill',skin.muzzle));}
-    root.classList.toggle('pet-hide-usage',prefs.showUsage===false);root.style.setProperty('--pet-size',prefs.size+'px');root.classList.toggle('pet-still',!prefs.motion);if(desktop)native(desktopBridge.sync({size:prefs.size,hidden:!!prefs.hidden}));position();
+    root.classList.toggle('pet-hide-usage',prefs.showUsage===false);root.style.setProperty('--pet-size',prefs.size+'px');root.classList.toggle('pet-still',!prefs.motion);position();
   }
   let panelPosition=null,panelDrag=null;
   const panelHeader=panel.querySelector('header');
@@ -106,8 +106,19 @@
   panelHeader.addEventListener('lostpointercapture',stopPanelDrag);
   addEventListener('blur',stopPanelDrag);
   new ResizeObserver(()=>{if(!panel.hidden)clampPanel();}).observe(panel);
+  let lastDesktopLayout='';
+  function syncDesktopLayout(){
+    // Size to the visible group, keeping only the small margin needed by animations.
+    const width=Math.min(320,Math.max(prefs.size+16,Math.ceil(root.offsetWidth+16)));
+    const height=Math.min(320,Math.max(prefs.size+32,Math.ceil(root.offsetHeight+32)));
+    const layout={size:prefs.size,hidden:!!prefs.hidden,width,height},key=JSON.stringify(layout);
+    if(key===lastDesktopLayout)return;
+    lastDesktopLayout=key;
+    desktopBridge.sync(layout).catch(()=>{if(lastDesktopLayout===key)lastDesktopLayout='';});
+  }
+  if(desktop)new ResizeObserver(()=>syncDesktopLayout()).observe(root);
   function position(){
-    if(desktop)return;
+    if(desktop){syncDesktopLayout();return;}
     const x=Number.isFinite(prefs.x)?prefs.x:1,y=Number.isFinite(prefs.y)?prefs.y:1;
     root.style.left=(8+Math.max(0,Math.min(1,x))*Math.max(0,innerWidth-root.offsetWidth-16))+'px';
     root.style.top=(8+Math.max(0,Math.min(1,y))*Math.max(0,innerHeight-root.offsetHeight-16))+'px';
@@ -166,7 +177,7 @@
   panel.querySelector('[data-size]').value=prefs.size;panel.querySelector('[data-size]').onchange=e=>{prefs.size=Number(e.target.value);save();art();};
   panel.querySelector('[data-show-usage]').checked=prefs.showUsage!==false;panel.querySelector('[data-show-usage]').onchange=e=>{prefs.showUsage=e.target.checked;save();art();};
   panel.querySelector('[data-motion]').checked=prefs.motion;panel.querySelector('[data-motion]').onchange=e=>{prefs.motion=e.target.checked;save();art();};
-  panel.querySelector('[data-hide]').onclick=()=>{prefs.hidden=true;root.hidden=true;panel.hidden=true;save();if(desktop)native(desktopBridge.sync({size:prefs.size,hidden:true}));else if(desktopHost)native(desktopBridge.visible(false));};
+  panel.querySelector('[data-hide]').onclick=()=>{prefs.hidden=true;root.hidden=true;panel.hidden=true;save();if(desktop)syncDesktopLayout();else if(desktopHost)native(desktopBridge.visible(false));};
   panel.querySelector('[data-reset]').onclick=()=>{prefs.x=1;prefs.y=1;panelPosition=null;save();position();if(desktopHost)native(desktopBridge.reset());};
   const builtinActions=[extensions.action({version:1,name:'打招呼',duration:900,iterations:1,keyframes:[{offset:0},{offset:.25,rotate:-12},{offset:.75,rotate:12},{offset:1}]}),extensions.action({version:1,name:'街舞摇摆',duration:2000,iterations:2,keyframes:[{offset:0},{offset:.2,x:-10,y:-4,rotate:-18},{offset:.4,x:10,y:-4,rotate:18},{offset:.6,y:-18,scale:1.1},{offset:.8,x:-8,rotate:-12},{offset:1}]})];
   const note=text=>panel.querySelector('[data-extension-note]').textContent=text;
