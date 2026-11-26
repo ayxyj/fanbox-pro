@@ -2787,6 +2787,7 @@ const term = {
   },
   activate(id) {
     const changed = this.active !== id;
+    this.activationRevision = (this.activationRevision || 0) + 1;
     this.active = id;
     this.locateCwd();
     window.dispatchEvent(new CustomEvent('terminal-active', { detail: id }));
@@ -2796,7 +2797,7 @@ const term = {
     this.renderTabs();
     const s = this.sessions.find((x) => x.id === id);
     if (s) {
-      if (changed) s.needsRendererRecovery = true;
+      if (changed) { s.needsRendererRecovery = true; s.needsLatestOutput = true; }
       this.fitActive();
       // xterm 5.5.0 旧 Viewport 在 display:none 期间会把滚动区高度算矮一屏（上游 #5339，6.0 重写才修）；
       // 重新可见后强制同步一次，否则滚轮到不了底部。升级 xterm 6.0 后删掉这行
@@ -2841,6 +2842,19 @@ const term = {
         if (refreshTerminalLayout(current, !!current.needsDisplayRecovery, !!current.needsRendererRecovery)) {
           current.needsDisplayRecovery = false;
           current.needsRendererRecovery = false;
+          if (current.needsLatestOutput) {
+            current.needsLatestOutput = false;
+            const revision = this.activationRevision;
+            const latest = () => {
+              if (this.activationRevision !== revision || this.active !== current.id || !current.host.isConnected) return;
+              current.xterm.scrollToBottom();
+              current.xterm._core.viewport?.syncScrollArea?.(true);
+              current.xterm.refresh(0, current.xterm.rows - 1);
+            };
+            latest();
+            // Background PTY chunks may still be waiting for the renderer parser.
+            current.output?.flush().then(ok => { if (ok) requestAnimationFrame(latest); });
+          }
         }
       } catch { /* disposed */ }
     });

@@ -26,6 +26,14 @@ const lines=focus=>['我的建议','方案一落地保底，方案二做一次 1
  let focus=0,shown=true,failRead=false,reply;const cards=[],writes=[],notices=[];
  const native=new NativeInteraction({settle:5,keyDelay:1,ackTimeout:100,confirmDelay:5,target:{size:()=>({cols:80,rows:24}),readQuestion:async()=>{if(failRead)throw Error('offline');return {menu:shown?parseMenu(lines(focus)):null,idle:!shown};},validate:async()=>true,input:key=>{writes.push(key);if(key==='\x1b[B')focus++;else if(key==='\r')shown=false;else assert.fail('unexpected key');}},ask:(q,signal)=>new Promise(resolve=>{reply=resolve;cards.push({q,signal});}),notify:t=>notices.push(t)});
  try{
+  assert.equal(native.screen,undefined,'renderer-backed bridges must not create a second headless parser');
+  for(let i=0;i<100;i++){
+   native.output('\x1b[H'+('long wrapped line '.repeat(30)+'\r\n').repeat(5));
+   native.resize(i%2?160:30,i%2?50:8);
+  }
+  await native.refresh();await until(()=>cards.length===1);
+  native.resize(120,35);await native.retry();await until(()=>native.current);
+  cards.length=0;native.invalidate();native.lastFingerprint=null;
   // Deliberately wrong independent mirror: the actual visible question is authoritative.
   native.output('stale shell and unrelated cursor state');await until(()=>cards.length===1);assert.equal(cards[0].q.options.length,5);assert.match(cards[0].q.question,/Unified/);
   native.input('local prompt\r');shown=false;await native.refresh();assert(cards[0].signal.aborted);

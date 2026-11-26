@@ -28,7 +28,7 @@ async function activate(index){await evaluate('term.activate(switchSessions['+in
    s.xterm.onData(data=>switchInputs.push(data));s.xterm.onResize(size=>switchResizes.push(size));
    const clear=s.xterm.clearTextureAtlas.bind(s.xterm);s.xterm.clearTextureAtlas=()=>{atlasClears++;clear();};
   }
-  term.activate(switchSessions[0].id);await new Promise(r=>setTimeout(r,250));switchSessions[0].xterm.scrollLines(-40);switchSessions[0].xterm.select(0,switchSessions[0].xterm.buffer.active.viewportY,4);
+  term.activate(switchSessions[0].id);await new Promise(r=>setTimeout(r,250));switchSessions[0].xterm.scrollToBottom();switchSessions[0].xterm.select(0,switchSessions[0].xterm.buffer.active.viewportY,4);
   window.switchSnapshot=s=>({lines:Array.from({length:s.xterm.buffer.active.length},(_,i)=>s.xterm.buffer.active.getLine(i).translateToString(true)),y:s.xterm.buffer.active.viewportY,selection:s.xterm.getSelection()});
   window.originalSwitchState=switchSnapshot(switchSessions[0]);switchInputs.length=0;switchResizes.length=0;atlasClears=0;
   return {webgl:!!switchSessions[0].xterm._core._renderService._renderer.value._glyphRenderer};
@@ -44,6 +44,7 @@ async function activate(index){await evaluate('term.activate(switchSessions['+in
  await evaluate('term.close();true');await delay(100);await evaluate('term.open();true');await delay(300);assert(reference.equals(await pixels()),'panel reopen redraws the current history position');
  const state=await evaluate('({original:originalSwitchState,current:switchSnapshot(switchSessions[0]),inputs:switchInputs,resizes:switchResizes,atlasClears})');
  assert.deepEqual(state.current,state.original,'history, scroll position and selection stay intact');assert.equal(state.inputs.length,0,'redraw must not send terminal input');assert.equal(state.resizes.length,0,'same-size switching must not resize the PTY');assert.equal(state.atlasClears,0,'switching must not invalidate another terminal shared atlas');
- console.log('PASS pixel-verified tab switching and reopen, stale GPU geometry recovery='+corrupted+', WebGL='+setup.webgl+', preserved history/selection/scroll, no PTY keys/resizes or shared-atlas clearing');
+ await evaluate(`(async()=>{const a=switchSessions[0];a.xterm.scrollLines(-80);term.activate(switchSessions[1].id);a.output.receive('LATEST-BACKGROUND-OUTPUT\\r\\n'.repeat(100));term.activate(a.id);await a.output.flush();await new Promise(r=>setTimeout(r,250));if(a.xterm.buffer.active.viewportY!==a.xterm.buffer.active.baseY)throw Error('switch must follow latest queued background output');if(!term.tailText(a,10).includes('LATEST-BACKGROUND-OUTPUT'))throw Error('background output missing');})()`);
+ console.log('PASS latest background output after switch; pixel-verified tab switching and reopen, stale GPU geometry recovery='+corrupted+', WebGL='+setup.webgl+', preserved history/selection/scroll, no PTY keys/resizes or shared-atlas clearing');
  }finally{socket?.close();try{execFileSync('taskkill',['/pid',String(child.pid),'/t','/f'],{stdio:'ignore'});}catch{}}
 })().catch(error=>{console.error(error);if(process.env.GITHUB_ACTIONS)console.log('::error::'+String(error.stack||error).replaceAll('%','%25').replaceAll('\r','%0D').replaceAll('\n','%0A'));process.exitCode=1;});

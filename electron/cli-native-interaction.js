@@ -18,11 +18,13 @@ function parseMenu(lines){return require('../public/terminal-question').parseMen
 class NativeInteraction {
  constructor({target,ask,name='claude',notify=()=>{},onMenu=()=>{},onDismiss=()=>{},onIdle=()=>{},settle=400,keyDelay=100,ackTimeout=3000,confirmDelay=200}){
   Object.assign(this,{target,ask,name,notify,onMenu,onDismiss,onIdle,settle,keyDelay,ackTimeout,confirmDelay});this.revision=0;this.closed=false;this.lastFingerprint=null;
-  const size=target.size?.()||{};this.screen=new Terminal({cols:size.cols||80,rows:size.rows||24,scrollback:0,allowProposedApi:true});
+  // The renderer is the authoritative question reader. Do not maintain a second
+  // headless buffer: xterm 5.5 reflow can corrupt it on resolution changes.
+  if(!target.readQuestion){const size=target.size?.()||{};this.screen=new Terminal({cols:size.cols||80,rows:size.rows||24,scrollback:0,allowProposedApi:true});}
  }
- lines(){const b=this.screen.buffer.active;return Array.from({length:this.screen.rows},(_,i)=>b.getLine(b.baseY+i)?.translateToString(true)||'');}
- output(text){if(this.closed)return;if(!this.maxTimer)this.maxTimer=setTimeout(()=>{this.maxTimer=null;this.refresh();},1000);clearTimeout(this.timer);this.screen.write(text,()=>{if(this.closed)return;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);});}
- resize(cols,rows){if(this.closed)return;if(this.current?.menu.kind!=='resume'||this.current.processing)this.invalidate();this.lastFingerprint=null;this.revision++;this.screen.resize(cols,rows);clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}
+ lines(){if(!this.screen)return [];const b=this.screen.buffer.active;return Array.from({length:this.screen.rows},(_,i)=>b.getLine(b.baseY+i)?.translateToString(true)||'');}
+ output(text){if(this.closed)return;if(!this.maxTimer)this.maxTimer=setTimeout(()=>{this.maxTimer=null;this.refresh();},1000);clearTimeout(this.timer);const settled=()=>{if(this.closed)return;clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);};if(this.screen)this.screen.write(text,settled);else settled();}
+ resize(cols,rows){if(this.closed)return;if(this.current?.menu.kind!=='resume'||this.current.processing)this.invalidate();this.lastFingerprint=null;this.revision++;this.screen?.resize(cols,rows);clearTimeout(this.timer);this.timer=setTimeout(()=>this.refresh(),this.settle);}
  input(text){if(reply(text||''))return;const menu=this.menu();if(text==='\r'&&menu&&customOption(menu.options[menu.selected]?.label||''))this.customContext=menu.question;this.revision++;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;clearTimeout(this.timer);}
  invalidate(){if(this.current){const entry=this.current;this.current=null;this.lastFingerprint=null;entry.controller.abort();}}
  retry(){if(this.closed||this.current?.processing)return false;this.invalidate();this.submittedKey=null;this.lastFingerprint=null;if(this.target.readQuestion)return (async()=>{if(this.refreshing)await this.refreshing;await this.refresh();return !this.readError&&!!this.current;})();this.refresh();return !!this.current;}
@@ -168,6 +170,6 @@ class NativeInteraction {
   }catch(error){if(live())this.notify('会话选择未完成，已停止继续输入：'+error.message+'。');}
   finally{if(this.current===entry){this.submittedKey=navigation?null:key;this.invalidate();this.lastFingerprint=navigation?null:original.fingerprint;this.refresh();}else if(!this.closed&&this.revision!==revision)this.notify('本机已操作或终端尺寸已变化，已停止继续输入；请核对终端会话或 /retry 重新读取。');}
  }
- close(){this.closed=true;clearTimeout(this.maxTimer);clearTimeout(this.timer);this.invalidate();this.screen.dispose();}
+ close(){this.closed=true;clearTimeout(this.maxTimer);clearTimeout(this.timer);this.invalidate();this.screen?.dispose();}
 }
 module.exports={NativeInteraction,parseMenu,isTerminalReply:reply};
