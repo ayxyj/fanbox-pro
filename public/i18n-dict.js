@@ -1,6 +1,9 @@
 'use strict';
 // FanBox 界面词典：中文原文 → 英文。由 i18n.js 消费；缺词条时英文界面回退显示中文。
 window.FANBOX_DICT = {
+  '展开侧栏': 'Open sidebar',
+  '收起侧栏': 'Close sidebar',
+  '导航侧栏': 'Navigation sidebar',
   '关闭页面': 'Close page',
   'Git 管理': 'Git management',
   '关闭 Skills 透视': 'Close Skills overview',

@@ -73,6 +73,10 @@ jobs:
         run: node tests/terminal-visible-question-ui.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify Skills close and scan lifecycle
         run: node tests/skills-close-smoke.js dist/win-unpacked/fanbox-pro.exe
+      - name: Verify desktop pet usage captions
+        run: node tests/desktop-pet-ui.js dist/win-unpacked/fanbox-pro.exe
+      - name: Verify sidebar drawer and stable terminal layout
+        run: node tests/sidebar-drawer-ui.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify management pages close
         run: node tests/management-close-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify file scrolling

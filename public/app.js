@@ -189,7 +189,7 @@ const state = {
   favorites: [], recentOpened: [], skillsMode: false, gsMode: false,
   previewW: Number(localStorage.getItem('fb_preview_w')) || 480,
   previewH: Number(localStorage.getItem('fb_preview_h')) || 340,
-  sidebarCollapsed: localStorage.getItem('fb_sidebar_collapsed') === '1',
+  sidebarCollapsed: true, // Temporary drawer starts closed; keep the old preference for rollback.
   sidebarW: Math.min(420, Math.max(190, Number(localStorage.getItem('fb_sidebar_w')) || 248)),
   muted: localStorage.getItem('fb_muted') === '1', // WOW4 提示音静音开关
 };
@@ -254,7 +254,6 @@ let navigationRevision = 0;
 async function navigate(p, pushHistory = true) {
   const revision = ++navigationRevision;
   if (!await guardDirty() || revision !== navigationRevision) return;
-  ensureFileAreaSize();
   try {
     const data = await api('/api/list?path=' + encodeURIComponent(p));
     if (revision !== navigationRevision) return;
@@ -808,9 +807,9 @@ function lightbox(path, nativeImg, mtime) {
   ov.onwheel = (ev) => { ev.preventDefault(); scale = Math.min(8, Math.max(0.2, scale - ev.deltaY * 0.002)); img.style.transform = `scale(${scale})`; };
   document.body.appendChild(ov);
 }
-// 布局：侧栏(可折叠) + 主区；折叠时侧栏 display:none 退出栅格，故改单列 1fr 让主区铺满
+// The sidebar is an overlay drawer; opening or resizing it never changes the workspace.
 function applyLayout() {
-  $('#app').style.gridTemplateColumns = state.sidebarCollapsed ? '1fr' : `${state.sidebarW}px 1fr`;
+  $('#app').style.gridTemplateColumns = '1fr';
   document.documentElement.style.setProperty('--sidebar-w', state.sidebarW + 'px'); // 供拖拽条 fixed 定位
 }
 // WOW3：把选中的文字做成一个残影「甩」进终端，落地时终端闪一下——交互本身就是惊喜
@@ -875,7 +874,7 @@ function bindSidebarResizer() {
   const handle = $('#sidebar-resizer');
   if (!handle) return;
   let dragging = false, raf = null, target = null;
-  const apply = () => { raf = null; if (target == null) return; state.sidebarW = target; target = null; applyLayout(); if (typeof term !== 'undefined') term.fitActive(); };
+  const apply = () => { raf = null; if (target == null) return; state.sidebarW = target; target = null; applyLayout(); };
   handle.addEventListener('mousedown', (e) => {
     if (state.sidebarCollapsed) return;
     dragging = true; e.preventDefault();
@@ -916,61 +915,6 @@ function animateLayout() {
   clearTimeout(animateLayout._t);
   animateLayout._t = setTimeout(() => mb.classList.remove('lay-anim'), 280);
 }
-// 从终端路径/侧边栏等外部触发导航时，若文件区被压得过小或完全隐藏，自动恢复到一个能看内容的合理尺寸。
-// 只在当前尺寸不足时才调整，避免打扰用户已有的合理布局。
-function ensureFileAreaSize() {
-  // 只在用户主动导航时生效：启动首屏要尊重上次保存的布局，
-  // 文件跟随的自动 navigate 更不能把刻意压低的文件区弹开（否则又是一种「跟随失控」）
-  if (!ensureFileAreaSize.armed || follow.navving) return;
-  const mb = $('#main-body');
-  const panel = $('#terminal-panel');
-  if (!mb || !panel || panel.classList.contains('hidden')) return;
-  // 终端铺满时先退出铺满
-  if (term.maximized) term.toggleMax(false);
-  const rect = mb.getBoundingClientRect();
-  const isBottom = term.dock === 'bottom';
-  const FILE_AREA_MIN_H = 320; // 底部 dock 时文件区最小可视高度
-  const FILE_AREA_MIN_W = 480; // 右侧 dock 时文件区最小可视宽度
-  const TERM_MIN_H = 200;      // 终端最小高度
-  const TERM_MIN_W = 280;      // 终端最小宽度
-  const RESIZER = 6;
-  const available = isBottom ? rect.height : rect.width;
-  const desiredFile = isBottom ? FILE_AREA_MIN_H : FILE_AREA_MIN_W;
-  const minTerm = isBottom ? TERM_MIN_H : TERM_MIN_W;
-
-  // 文件区被完全隐藏：退出 squeezed 并重新分配空间
-  if (mb.classList.contains('fm-squeezed')) {
-    mb.classList.remove('fm-squeezed');
-    localStorage.setItem('fb_term_squeeze', '0');
-    const termSize = Math.max(minTerm, available - desiredFile - RESIZER);
-    if (isBottom) {
-      panel.style.height = termSize + 'px';
-      localStorage.setItem('fb_term_h', termSize);
-    } else {
-      panel.style.width = termSize + 'px';
-      localStorage.setItem('fb_term_w', termSize);
-    }
-    animateLayout();
-    term.fitActive();
-    return;
-  }
-
-  // 文件区可见但尺寸不足：压缩终端给文件区腾空间
-  const fileRect = $('#filemgmt').getBoundingClientRect();
-  const currentFile = isBottom ? fileRect.height : fileRect.width;
-  if (currentFile < desiredFile) {
-    const termSize = Math.max(minTerm, available - desiredFile - RESIZER);
-    if (isBottom) {
-      panel.style.height = termSize + 'px';
-      localStorage.setItem('fb_term_h', termSize);
-    } else {
-      panel.style.width = termSize + 'px';
-      localStorage.setItem('fb_term_w', termSize);
-    }
-    animateLayout();
-    term.fitActive();
-  }
-}
 function showPreviewPanel() {
   if (previewMaximized) togglePreviewMax(false);
   const wasHidden = $('#preview').classList.contains('hidden');
@@ -999,11 +943,21 @@ function togglePreviewMax(force) {
     : $('#term-max').innerHTML;
   requestAnimationFrame(() => { mona.editor?.layout(); term.fitActive(); });
 }
+let sidebarReturnFocus=null;
 function toggleSidebar(force) {
-  state.sidebarCollapsed = force === undefined ? !state.sidebarCollapsed : force;
-  localStorage.setItem('fb_sidebar_collapsed', state.sidebarCollapsed ? '1' : '0');
-  $('#app').classList.toggle('sidebar-collapsed', state.sidebarCollapsed);
-  $('#btn-sidebar')?.classList.toggle('on', state.sidebarCollapsed);
+  const collapsed = force === undefined ? !state.sidebarCollapsed : force;
+  if (!collapsed && state.sidebarCollapsed) sidebarReturnFocus=document.activeElement;
+  state.sidebarCollapsed=collapsed;
+  $('#app').classList.toggle('sidebar-collapsed', collapsed);
+  $('#sidebar-backdrop').hidden=collapsed;
+  $('#main').inert=!collapsed;
+  const button=$('#btn-sidebar'),label=window.t?.(collapsed?'展开侧栏':'收起侧栏')||(collapsed?'展开侧栏':'收起侧栏');
+  button.classList.toggle('on',!collapsed);
+  button.dataset.tip=label;button.setAttribute('aria-label',label);button.setAttribute('aria-expanded',String(!collapsed));
+  if (!collapsed) $('#sidebar-close').focus({preventScroll:true});
+  else if ($('#sidebar').contains(document.activeElement)||document.activeElement===$('#sidebar-backdrop')) {
+    (sidebarReturnFocus?.isConnected?sidebarReturnFocus:button).focus({preventScroll:true});
+  }
   applyLayout();
 }
 
@@ -2126,6 +2080,21 @@ function bindEvents() {
   muteBtn.onclick = () => { state.muted = !state.muted; localStorage.setItem('fb_muted', state.muted ? '1' : '0'); syncMute(); if (!state.muted) playChime('tick'); };
   $('#term-close').onclick = () => term.close();
   $('#btn-sidebar').onclick = () => toggleSidebar();
+  $('#sidebar-close').onclick = () => toggleSidebar(true);
+  $('#sidebar-backdrop').onclick = () => toggleSidebar(true);
+  $('#sidebar').addEventListener('click',event=>{
+    if(event.target.closest('.twirl,.unfav'))return;
+    if(event.target.closest('li[data-path],[data-gs-view],#cron-entry,#skills-entry,#cmdk-trigger,#lang-toggle'))toggleSidebar(true);
+  });
+  document.addEventListener('keydown',event=>{
+    if(state.sidebarCollapsed||event.isComposing||event.defaultPrevented||document.querySelector('dialog[open],.input-overlay,#context-menu')||!$('#cmdk').classList.contains('hidden'))return;
+    if(event.key==='Escape'){event.preventDefault();event.stopImmediatePropagation();toggleSidebar(true);return;}
+    if(event.key==='Tab'){
+      const items=[...$('#sidebar').querySelectorAll('button,a,summary,input,select,[tabindex="0"]')].filter(el=>!el.disabled&&el.getClientRects().length);
+      const current=items.indexOf(document.activeElement),next=event.shiftKey?(current<=0?items.length-1:current-1):(current+1)%items.length;
+      if(items[next]){event.preventDefault();items[next].focus();}
+    }
+  },true);
   $('#file-follow').onclick = () => setFileFollow(!follow.on);
   $('#term-locate').onclick = () => term.locateCwd();
   // 终端随窗口尺寸变化重排，避免 TUI 错位
@@ -3854,8 +3823,7 @@ async function init() {
     if (hint) hint.textContent = hint.textContent.replace(/⌘/g, 'Ctrl');
   }
   applyTheme(state.theme, false);
-  if (state.sidebarCollapsed) { $('#app').classList.add('sidebar-collapsed'); $('#btn-sidebar')?.classList.add('on'); }
-  applyLayout();
+  toggleSidebar(true);
   term.applyDock(); // 初始就给 #main-body 设好 dock 类，决定预览/文件管理方向
   bindEvents();
   bindResizer();
@@ -3886,7 +3854,6 @@ async function init() {
   loadAgentProjects();
   setInterval(loadAgentProjects, 120000); // agent 项目入口保持新鲜（服务端有 60s 缓存，开销很小）
   await navigate(state.home, false);
-  ensureFileAreaSize.armed = true; // 首屏导航之后，用户主动导航才允许自动调整布局
   // 恢复上次终端开合状态（dock 方位已由 applyDock 自带记忆）
   if (localStorage.getItem('fb_term_open') === '1' && term.available()) term.open();
   maybeShowGuide();
