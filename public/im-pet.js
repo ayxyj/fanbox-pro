@@ -30,27 +30,25 @@
   wakeSettings.querySelector('[data-wake-save]').onclick=async()=>{try{await wakeCall('im-wake-save',{enabled:wakeSettings.querySelector('[data-wake-enabled]').checked,scheduled:wakeSettings.querySelector('[data-wake-scheduled]').checked,cron:wakeSettings.querySelector('[data-wake-cron]').value});wakeNote('设置已保存');}catch(e){wakeNote(e.message);}};
   wakeSettings.querySelector('[data-wake-run]').onclick=async()=>{const b=wakeSettings.querySelector('[data-wake-run]');b.disabled=true;wakeNote('正在唤醒，请稍后…');try{wakeNote(await wakeCall('im-wake-run'));}catch(e){wakeNote(e.message);}finally{b.disabled=false;}};
   document.body.append(root,panel);
-  const usageBadge = document.createElement('button'); usageBadge.className='pet-usage-summary'; usageBadge.textContent='用量读取中…'; root.append(usageBadge);
+  const usageBadge = document.createElement('button'); usageBadge.className='pet-usage-summary'; usageBadge.hidden=true; root.append(usageBadge);
   const statsActions=document.createElement('div');statsActions.className='im-pet-actions';
   statsActions.innerHTML='<button data-pet-skills>SKILLS 透视</button><button data-pet-usage>AGENT 用量详情</button>';
   panel.querySelector('header').after(statsActions);
   statsActions.querySelector('[data-pet-skills]').onclick=()=>{panel.hidden=true;window.fanboxStatisticsUI?.open('skills');};
   statsActions.querySelector('[data-pet-usage]').onclick=()=>{panel.hidden=true;window.fanboxStatisticsUI?.open('usage');};
   usageBadge.onclick=()=>{if(desktop)native(desktopBridge.settings());else{panel.hidden=false;position();}};
-  let usageLoading=false,lastUsageText='';
+  let usageLoading=false;
   async function refreshUsage(){
     if(usageLoading)return;usageLoading=true;
     try{
       const response=await fetch('/api/agent-usage');if(!response.ok)throw Error();const d=await response.json();if(!d.ok)throw Error();
-      const rows=[];const percent=v=>Math.round(Math.max(0,Math.min(100,v)))+'%';
+      const rows=[],percent=v=>Math.round(Math.max(0,Math.min(100,v)));
       const claude=d.claude,quota=claude?.official?.fiveHour,codex=d.codex?.primary;
-      if(Number.isFinite(quota?.usedPercent))rows.push('Claude '+percent(quota.usedPercent));
-      else if(Number.isFinite(claude?.last5h?.total)&&claude.last5h.total>=0)rows.push('Claude '+compact(claude.last5h.total)+' tokens');
-      if(codex?.stale)rows.push('Codex 待更新');
-      else if(Number.isFinite(codex?.usedPercent))rows.push('Codex '+percent(codex.usedPercent));
-      lastUsageText=rows.join(' · ');
-      usageBadge.textContent=lastUsageText||'暂无用量数据';usageBadge.hidden=false;
-    }catch{usageBadge.textContent=lastUsageText?lastUsageText+' · 待更新':'用量暂不可用';usageBadge.hidden=false;}
+      if(Number.isFinite(quota?.usedPercent)){if(percent(quota.usedPercent)>0)rows.push('Claude '+percent(quota.usedPercent)+'%');}
+      else if(Number.isFinite(claude?.last5h?.total)&&claude.last5h.total>0)rows.push('Claude '+compact(claude.last5h.total)+' tokens');
+      if(!codex?.stale&&Number.isFinite(codex?.usedPercent)&&percent(codex.usedPercent)>0)rows.push('Codex '+percent(codex.usedPercent)+'%');
+      usageBadge.textContent=rows.join(' · ');usageBadge.hidden=rows.length===0;
+    }catch{usageBadge.textContent='';usageBadge.hidden=true;}
     finally{usageLoading=false;position();}
   }
   function compact(n){return n>=1e6?(n/1e6).toFixed(1)+'M':n>=1e3?(n/1e3).toFixed(1)+'k':String(n||0);}

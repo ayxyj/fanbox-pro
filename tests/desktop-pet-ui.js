@@ -41,6 +41,7 @@ $items=[System.Collections.Generic.List[object]]::new()
 ConvertTo-Json -InputObject @($items.ToArray()) -Compress`;
  return JSON.parse(execFileSync('powershell.exe',['-NoProfile','-EncodedCommand',Buffer.from(script,'utf16le').toString('base64')],{encoding:'utf8'}).trim());
  }
+ for(let i=0;i<80;i++){if(await evaluate("document.readyState==='complete' && document.querySelectorAll('.window-menu button').length===4"))break;await delay(100);}
  assert(await evaluate("document.querySelectorAll('.window-menu button').length===4 && document.querySelector('.window-menu img').getBoundingClientRect().right < document.querySelector('.window-menu button').getBoundingClientRect().left && document.querySelector('#app').getBoundingClientRect().top >= 35"),'Compact menu row: icon, four menus, no overlap');
  async function connect(url){socket?.close();socket=new WebSocket(url);await new Promise(r=>socket.addEventListener('open',r,{once:true}));socket.addEventListener('message',e=>{const m=JSON.parse(e.data);pending.get(m.id)?.(m);pending.delete(m.id);});}
  let pet;for(let i=0;i<100;i++){pet=(await(await fetch('http://127.0.0.1:14874/json')).json()).find(t=>t.url.endsWith('/desktop-pet.html'));if(pet)break;await delay(100);}assert(pet,'Desktop window absent');
@@ -63,17 +64,21 @@ ConvertTo-Json -InputObject @($items.ToArray()) -Compress`;
   usage.checked=true;usage.dispatchEvent(new Event('change'));
   const visible=()=>{const r=badge.getBoundingClientRect();return !badge.hidden&&getComputedStyle(badge).display!=='none'&&r.width>0&&r.height>0&&r.left>=0&&r.top>=0&&r.right<=innerWidth+1&&r.bottom<=innerHeight+1&&badge.scrollWidth<=badge.clientWidth+1;};
   const settled=async()=>{for(let i=0;i<80;i++){await pause(50);if(visible()&&Math.abs(innerWidth-(root.offsetWidth+16))<=1&&Math.abs(innerHeight-(root.offsetHeight+32))<=1)return;}throw Error('usage clipped: '+JSON.stringify({text:badge.textContent,width:innerWidth,height:innerHeight,rect:badge.getBoundingClientRect().toJSON()}));};
+  const hidden=async()=>{for(let i=0;i<80;i++){await pause(50);if(badge.hidden&&getComputedStyle(badge).display==='none'&&!badge.textContent&&Math.abs(innerWidth-(root.offsetWidth+16))<=1&&Math.abs(innerHeight-(root.offsetHeight+32))<=1)return;}throw Error('empty usage must hide and shrink window');};
   await __petUsageTick();await settled();check(badge.textContent==='Claude 23% · Codex 73%','known fixture values visible');
   const longWidth=innerWidth;
   for(const size of [64,88,112]){const select=document.querySelector('[data-size]');select.value=String(size);select.dispatchEvent(new Event('change'));await settled();}
-  window.__petUsageFixture={ok:true,claude:{official:{fiveHour:{usedPercent:0}}},codex:{primary:{usedPercent:0,stale:false}}};await __petUsageTick();await settled();check(badge.textContent==='Claude 0% · Codex 0%','zero quota must stay visible');
-  window.__petUsageFixture={ok:true,claude:null,codex:{primary:{usedPercent:0,stale:true}}};await __petUsageTick();await settled();check(badge.textContent==='Codex 待更新','expired quota has an explicit state');
-  window.__petUsageFixture={ok:true,claude:null,codex:null};await __petUsageTick();await settled();check(badge.textContent==='暂无用量数据','empty usage remains understandable');
+  window.__petUsageFixture={ok:true,claude:{official:{fiveHour:{usedPercent:0}}},codex:{primary:{usedPercent:0,stale:false}}};await __petUsageTick();await hidden();
+  window.__petUsageFixture={ok:true,claude:null,codex:{primary:{usedPercent:73,stale:true}}};await __petUsageTick();await hidden();
+  window.__petUsageFixture={ok:true,claude:{official:{fiveHour:{usedPercent:0}},last5h:{total:9999}},codex:{primary:{usedPercent:73,stale:false}}};await __petUsageTick();await settled();check(badge.textContent==='Codex 73%','zero official quota cannot fall back to tokens; valid peer stays visible');
+  window.__petUsageFixture={ok:true,claude:{official:{fiveHour:{usedPercent:0.1}}},codex:{primary:{usedPercent:0.4,stale:false}}};await __petUsageTick();await hidden();
+  window.__petUsageFixture={ok:true,claude:{last5h:{total:1200}},codex:{primary:{usedPercent:73,stale:true}}};await __petUsageTick();await settled();check(badge.textContent==='Claude 1.2k tokens','positive local usage remains visible when peer is stale');
+  window.__petUsageFixture={ok:true,claude:null,codex:null};await __petUsageTick();await hidden();
   window.__petUsageFixture={ok:true,claude:{official:{fiveHour:{usedPercent:23}}},codex:{primary:{usedPercent:73,stale:false}}};await __petUsageTick();await settled();check(innerWidth>=longWidth-1,'window expands again when caption grows');
-  window.__petUsageFail=true;await __petUsageTick();await settled();check(badge.textContent==='Claude 23% · Codex 73% · 待更新','temporary failure preserves known values and marks them stale');
+  window.__petUsageFail=true;await __petUsageTick();await hidden();
   window.__petUsageFail=false;await __petUsageTick();await settled();check(badge.textContent==='Claude 23% · Codex 73%','successful refresh clears stale state');
   usage.checked=false;usage.dispatchEvent(new Event('change'));await pause(100);check(getComputedStyle(badge).display==='none','explicit hide preference stays effective');usage.checked=true;usage.dispatchEvent(new Event('change'));await settled();
-  return 'PASS native pet usage caption: known values, all sizes, zero/stale/empty/offline/recovery, content resize and hide preference';
+  return 'PASS native pet usage caption: positive values only, zero/rounded-zero/stale/empty/offline hidden, valid peer/local tokens, recovery, window resize and hide preference';
  })()`));
  assert(await evaluate("!document.querySelector('.im-pet [title]') && document.querySelector('.im-pet-character').getAttribute('aria-label').includes('单击显示软件')"),'Desktop pet has no native hover tooltips; accessible state remains');
  console.log(await evaluate(`(async()=>{
