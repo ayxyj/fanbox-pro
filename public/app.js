@@ -1975,7 +1975,13 @@ function bindTerminalResizer() {
     const panel = $('#terminal-panel');
     $('#main-body').classList.toggle('fm-squeezed', squeeze);
     if (term.dock === 'bottom') panel.style.height = target + 'px';
-    else panel.style.width = target + 'px';
+    else {
+      panel.style.width = '';
+      if (!squeeze) {
+        const body=$('#main-body'),divider=parseFloat(getComputedStyle(body).getPropertyValue('--terminal-divider'))||6;
+        term.applyFileWidth(body.clientWidth-divider-target);
+      }
+    }
     target = null;
     fitNow();
   };
@@ -2015,7 +2021,11 @@ function bindTerminalResizer() {
     const panel = $('#terminal-panel');
     localStorage.setItem('fb_term_squeeze', squeeze ? '1' : '0');
     if (term.dock === 'bottom') localStorage.setItem('fb_term_h', parseInt(panel.style.height, 10) || 280);
-    else localStorage.setItem('fb_term_w', parseInt(panel.style.width, 10) || 480);
+    else if (!squeeze) {
+      term.applyFileWidth(term.fileWidth,true);
+      // Retain a legacy terminal width only for older versions/rollback.
+      localStorage.setItem('fb_term_w',Math.round(panel.getBoundingClientRect().width));
+    }
   });
 }
 
@@ -2286,6 +2296,7 @@ const term = {
   },
   sessions: [], seq: 0, active: null, maximized: false,
   dock: localStorage.getItem('fb_term_dock') || 'bottom',
+  fileWidth: null,
   available() { return !!(window.fanboxPty && window.Terminal && !window.__noXterm); },
   // 每套皮肤一整套手调 ANSI 主题——暗皮肤暗终端、亮皮肤亮终端，不再出现「暖纸里嵌黑块」
   themes: {
@@ -2333,6 +2344,12 @@ const term = {
     $('#btn-terminal').classList.remove('active');
     localStorage.setItem('fb_term_open', '0');
   },
+  applyFileWidth(width,persist=false) {
+    const value=Math.round(Number(width));
+    this.fileWidth=Number.isFinite(value)?Math.max(200,value):360;
+    $('#main-body').style.setProperty('--file-pane-width',this.fileWidth+'px');
+    if(persist)localStorage.setItem('fb_file_w',String(this.fileWidth));
+  },
   applyDock() {
     const mb = $('#main-body');
     mb.classList.toggle('dock-bottom', this.dock === 'bottom');
@@ -2342,7 +2359,17 @@ const term = {
     mb.classList.toggle('fm-squeezed', termOpen && localStorage.getItem('fb_term_squeeze') === '1');
     const panel = $('#terminal-panel');
     if (this.dock === 'bottom') { panel.style.height = (Number(localStorage.getItem('fb_term_h')) || 280) + 'px'; panel.style.width = ''; }
-    else { panel.style.width = (Number(localStorage.getItem('fb_term_w')) || 480) + 'px'; panel.style.height = ''; }
+    else {
+      panel.style.width='';panel.style.height='';
+      if(!Number.isFinite(this.fileWidth)||this.fileWidth<200){
+        const saved=Number(localStorage.getItem('fb_file_w')),legacy=Number(localStorage.getItem('fb_term_w'));
+        const divider=parseFloat(getComputedStyle(mb).getPropertyValue('--terminal-divider'))||6;
+        const inferred=legacy>0?mb.clientWidth-divider-legacy:0;
+        // Migrate a usable old split once; an oversized legacy terminal must not hide files.
+        const migrated=inferred>=200&&inferred<=640?inferred:360;
+        this.applyFileWidth(saved>=200&&Number.isFinite(saved)?saved:migrated,true);
+      }else this.applyFileWidth(this.fileWidth);
+    }
     applyPreviewSize(); // 预览随 dock 翻转轴向
     this.fitActive();
   },

@@ -26,7 +26,7 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  const records=[];
  for(const dock of ['bottom','right'])for(const size of [280,420]) {
   const metrics=await evaluate(`(async()=>{
-   term.dock=${JSON.stringify(dock)};term.applyDock();const panel=document.getElementById('terminal-panel');panel.style[term.dock==='bottom'?'height':'width']=${size}+'px';
+   term.dock=${JSON.stringify(dock)};term.applyDock();const panel=document.getElementById('terminal-panel');if(term.dock==='bottom')panel.style.height=${size}+'px';else term.applyFileWidth(document.getElementById('main-body').clientWidth-6-${size});
    await new Promise(r=>setTimeout(r,450));mona.editor.layout();
    const host=document.getElementById('ed-host'),body=document.getElementById('preview-body'),terminal=document.getElementById('terminal-panel');
    const h=host.getBoundingClientRect(),b=body.getBoundingClientRect(),t=terminal.getBoundingClientRect();

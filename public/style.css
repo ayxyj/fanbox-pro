@@ -761,8 +761,17 @@ kbd {
 #main-body.dock-bottom { flex-direction: column; }
 #main-body.dock-right { flex-direction: row; }
 /* 文件管理 = 文件区 + 预览（子集）；方向与终端 dock 垂直，二者互不抢空间 */
-/* 文件区吃掉「终端之外」的全部剩余空间（基准 0 + grow）；预览只在文件区内部切分，绝不波及终端 */
+/* Bottom dock keeps the saved terminal height; right dock keeps the file pane width. */
 #filemgmt { flex: 1 1 0; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
+/* Resolution changes are absorbed by the right terminal, not the directory pane.
+   Keep the preferred file width in CSS while temporarily bounding tiny viewports. */
+#main-body.dock-right:not(.preview-max):has(> #terminal-panel:not(.hidden)) > #filemgmt {
+  flex:0 0 var(--file-pane-width,360px);
+  min-width:min(200px,40%);
+  max-width:max(min(200px,40%),calc(100% - var(--terminal-divider) - 140px));
+}
+#main-body.dock-right > #terminal-panel { flex:1 1 0; }
+
 /* 离散切换（dock/最大化/预览开合）平滑过渡；拖拽时不加 lay-anim，保证跟手 */
 #main-body.lay-anim > #filemgmt, #main-body.lay-anim > #terminal-panel, #main-body.lay-anim #preview {
   transition: flex-basis 0.22s ease, width 0.22s ease, height 0.22s ease, opacity 0.2s ease;
