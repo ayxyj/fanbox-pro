@@ -2287,12 +2287,16 @@ function applyTheme(skin, rerender = true) {
 const TERM_ASK_RE = /(Do you want to (proceed|continue|make this edit|allow|use this)|Would you like to proceed|Ready to code\?|created or one you trust\?|tell (Claude|Codex) what to do differently|Yes, and don't ask again|Allow Codex to (run|apply|create)|Codex wants to|[❯›][ \t]*1\.[ \t]*Yes)/;
 const term = {
   zoomFont(delta) {
-    const active = this.sessions.find(s => s.id === this.active);
-    const current = active?.xterm.options.fontSize || window.fbThemes.terminalOptions().fontSize;
-    const size = Math.max(8, Math.min(32, current + delta));
-    localStorage.setItem('fb_terminal_font_size', String(size));
-    this.sessions.forEach(s => { s.xterm.options.fontSize = size; });
-    this.fitActive();
+    const active=this.sessions.find(s=>s.id===this.active);
+    const current=this.pendingFontSize??active?.xterm.options.fontSize??window.fbThemes.terminalOptions().fontSize;
+    this.pendingFontSize=Math.max(8,Math.min(32,current+delta));
+    clearTimeout(this.fontZoomTimer);
+    // Coalesce wheel bursts before changing either grid, not after xterm.resize.
+    this.fontZoomTimer=setTimeout(()=>{
+      const size=this.pendingFontSize;this.pendingFontSize=null;
+      localStorage.setItem('fb_terminal_font_size',String(size));
+      this.sessions.forEach(s=>{s.xterm.options.fontSize=size;});this.fitActive();
+    },50);
   },
   sessions: [], seq: 0, active: null, maximized: false,
   dock: localStorage.getItem('fb_term_dock') || 'bottom',
@@ -2589,6 +2593,8 @@ const term = {
   },
   async newTab(cwdOverride, autorun, options = {}) {
     const startDir = cwdOverride || state.cwd;
+    let nativeOptions={};
+    if(!options.sshProfile&&window.fanboxPty.options){try{nativeOptions=await window.fanboxPty.options();}catch{}}
     const id = 't' + (++this.seq);
     const host = document.createElement('div');
     host.className = 'xterm-instance';
@@ -2599,6 +2605,7 @@ const term = {
       fontFamily: getComputedStyle(document.documentElement).getPropertyValue('--font-mono').trim() || 'monospace',
       fontSize: 13, lineHeight: 1.2, cursorBlink: true, theme: this.theme(), scrollback: 5000,
       ...window.fbThemes.terminalOptions(),
+      ...nativeOptions,
       allowProposedApi: true, // unicode11 宽度 API 需要
       // agent 常输出按深色终端设计的 256 色/真彩（如淡蓝路径），在浅色皮肤上几乎隐形；
       // 自动把对比度不足的前景色压暗/提亮到 4.5:1（WCAG AA，VS Code 终端同款默认值）
@@ -2638,23 +2645,24 @@ const term = {
       if (sess.dead) { if (d === '\r' || d === '\n') this.respawn(sess); return; } // 进程退出后回车真重开
       this.input(id, d);
     });
-    const r = await window.fanboxPty.spawn({ id, cwd: startDir, cols: xterm.cols, rows: xterm.rows, autorun, shell: options.shell, sshProfile: options.sshProfile });
+    const spawnedSize={cols:xterm.cols,rows:xterm.rows};
+    const r = await window.fanboxPty.spawn({ id, cwd: startDir, ...spawnedSize, autorun, shell: options.shell, sshProfile: options.sshProfile });
     if (r.environment) sess.environment = r.environment;
     if (r.title) sess.title = r.title;
     if (!r.ok) { sess.dead = true; xterm.write('\r\n  \x1b[31m终端启动失败：' + (r.error || '') + '\x1b[0m\r\n'); }
     else sess.cwd = r.cwd || startDir; // 末尾 renderTabs 统一带上 cwd 重画
     xterm.onResize(({ cols, rows }) => {
       sess.lastInput = Date.now();
-      clearTimeout(sess.resizeTimer);
-      sess.resizeTimer = setTimeout(() => {
-        if (sess.dead || !sess.host.isConnected) return;
-        if (sess.ptySize?.cols === cols && sess.ptySize?.rows === rows) return;
-        window.fanboxPty.resize(id, cols, rows);
-        sess.ptySize = { cols, rows };
-      }, 80);
+      if(sess.dead||!sess.host.isConnected)return;
+      if(sess.ptySize?.cols===cols&&sess.ptySize?.rows===rows)return;
+      // Follow xterm in the same event turn; do not parse old-size PTY output
+      // against a new grid for an extra 80ms.
+      window.fanboxPty.resize(id,cols,rows);sess.ptySize={cols,rows};
     }); // resize 引发的 TUI 重绘不算 agent 干活
-    sess.ptySize = { cols: xterm.cols, rows: xterm.rows };
-    window.fanboxPty.resize(id, xterm.cols, xterm.rows); // spawn 等待期间 fit 过的 resize 事件无人监听会丢：补发一次对齐 PTY
+    sess.ptySize=spawnedSize;
+    if(r.ok&&(xterm.cols!==spawnedSize.cols||xterm.rows!==spawnedSize.rows)){
+      window.fanboxPty.resize(id,xterm.cols,xterm.rows);sess.ptySize={cols:xterm.cols,rows:xterm.rows};
+    }
     if (sess.sshProfile) { this.renderTabs(); return sess; }
     // 识别终端输出里的文件路径 → hover 高亮 + 点击在翻箱打开
     // 三层匹配：引号串（边界最可靠，文件名可含空格）> 斜杠路径 > 带已知扩展名的裸文件名；
@@ -2817,7 +2825,7 @@ const term = {
     const s = this.sessions[i];
     try { window.fanboxPty.kill(id); } catch { /* */ }
     s.output?.dispose();
-    clearTimeout(s.resizeTimer); clearTimeout(s._cwdT);
+    clearTimeout(s._cwdT);
     try { s.xterm.dispose(); } catch { /* */ }
     s.host.remove();
     this.sessions.splice(i, 1);

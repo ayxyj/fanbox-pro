@@ -39,7 +39,7 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  const tabPreserved=bar.querySelector('[data-session-id="'+s.id+'"]')===tab;
  const records=[];
  for(const dock of ['bottom','right']) {
-   term.dock=dock;term.applyDock();if(dock==='right')panel.style.width='400px';
+   term.dock=dock;term.applyDock();if(dock==='right')term.applyFileWidth(document.getElementById('main-body').clientWidth-6-400);
    await new Promise(r=>setTimeout(r,500));term.fitActive();await new Promise(r=>setTimeout(r,150));
    const changes=[];const subscription=s.xterm.onResize(e=>changes.push(e));
    const initial=[panel.getBoundingClientRect(),panel.querySelector('.term-head').getBoundingClientRect(),s.host.getBoundingClientRect()].map(r=>[r.x,r.y,r.width,r.height]);
@@ -51,7 +51,7 @@ async function evaluate(expression){const r=await request('Runtime.evaluate',{ex
  // Repeated observer requests should skip unchanged dimensions; actual drag resizing must still work.
  const originalFit=s.fit.fit.bind(s.fit);let fitCalls=0;s.fit.fit=()=>{fitCalls++;return originalFit();};
  for(let i=0;i<100;i++)term.fitActive();await new Promise(r=>setTimeout(r,150));
- const unchangedFits=fitCalls,previousCols=s.xterm.cols;panel.style.width='480px';term.fitActive();await new Promise(r=>setTimeout(r,250));
+ const unchangedFits=fitCalls,previousCols=s.xterm.cols;term.applyFileWidth(document.getElementById('main-body').clientWidth-6-480);term.fitActive();await new Promise(r=>setTimeout(r,250));
  for(let i=0;i<30 && (s.xterm.cols<=previousCols || s.ptySize.cols!==s.xterm.cols);i++){term.fitActive();await new Promise(r=>setTimeout(r,100));}
  s.fit.fit=originalFit;
  if(unchangedFits!==0 || s.xterm.cols<=previousCols || s.ptySize.cols!==s.xterm.cols)throw Error('Resize regression '+JSON.stringify({unchangedFits,previousCols,cols:s.xterm.cols,ptySize:s.ptySize}));

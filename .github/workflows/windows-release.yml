@@ -39,6 +39,7 @@ jobs:
           node --check public/app.js
           node --check public/terminal-scroll.js
           node tests/terminal-output.js
+          node tests/terminal-platform.js
           node tests/theme-menu-state.js
           node tests/startup-single-instance.js
           node tests/ssh-zmodem.js
@@ -87,6 +88,8 @@ jobs:
         run: node tests/file-scroll-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify interactive HTML preview
         run: node tests/html-preview-smoke.js dist/win-unpacked/fanbox-pro.exe
+      - name: Verify native ConPTY resize redraw
+        run: node tests/conpty-redraw.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify terminal history and colours
         run: node tests/terminal-scroll-color-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Upload build artifact

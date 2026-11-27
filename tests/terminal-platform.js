@@ -1,0 +1,21 @@
+'use strict';
+const assert=require('assert/strict'),fs=require('fs'),path=require('path');
+const {getLocalTerminalOptions,resizePty}=require('../electron/terminal-platform');
+(async()=>{
+ const windows=getLocalTerminalOptions('win32','10.0.26100');
+ assert.equal(windows.windowsPty.backend,'conpty');assert.equal(windows.windowsMode,true);
+ assert(!Object.hasOwn(windows.windowsPty,'buildNumber'),'compatibility does not misreport an OS build');
+ assert.equal(getLocalTerminalOptions('win32','10.0.17763').windowsPty.backend,'winpty');
+ for(const platform of ['linux','darwin'])assert.deepEqual(getLocalTerminalOptions(platform,'6.0.0'),{});
+ let calls=0;const native={cols:80,rows:24,resize(cols,rows){calls++;this.cols=cols;this.rows=rows;}};
+ assert.equal(resizePty(native,80,24),false);assert.equal(resizePty(native,120,40),true);assert.equal(resizePty(native,120,40),false);
+ for(const [cols,rows]of [[0,24],[1,24],[80,0],[80.5,24],[Infinity,24],[80,NaN]])assert.equal(resizePty(native,cols,rows),false);
+ assert.equal(calls,1);assert.equal(resizePty(native,80,24),true);assert.equal(calls,2);
+ let remoteCalls=0;const remote={resize(){remoteCalls++;}};resizePty(remote,100,30);resizePty(remote,100,30);assert.equal(remoteCalls,1);
+ let attempts=0;const failing={resize(){if(++attempts===1)throw Error('retry');}};assert.throws(()=>resizePty(failing,100,30));assert.equal(resizePty(failing,100,30),true);
+ const source=fs.readFileSync(path.join(__dirname,'../public/app.js'),'utf8'),start=source.indexOf('    const startDir = cwdOverride || state.cwd;',source.indexOf('  async newTab(')),end=source.indexOf("    const id = 't'",start);
+ assert(start>=0&&end>start);const factory=new Function('window','state','return async function(cwdOverride,autorun,options={}){'+source.slice(start,end)+'return nativeOptions;}');
+ let reads=0;const probe=factory({fanboxPty:{options:async()=>{reads++;return windows;}}},{cwd:'/fixture'});
+ assert.deepEqual(await probe(),windows);assert.deepEqual(await probe(undefined,undefined,{sshProfile:'remote-fixture'}),{});assert.equal(reads,1,'SSH never inherits local Windows terminal policy');
+ console.log('PASS local PTY platform options, SSH isolation, native/remote resize dedupe, invalid sizes and failed-resize retry');
+})().catch(error=>{console.error(error);process.exitCode=1;});

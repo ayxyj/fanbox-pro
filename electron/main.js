@@ -10,6 +10,8 @@ const path = require('path');
 const os = require('os');
 const fs = require('fs');
 const { isHomeAppDataChange } = require('./watch-filter');
+const {getLocalTerminalOptions,resizePty}=require('./terminal-platform');
+const localTerminalOptions=getLocalTerminalOptions();
 // Single-instance events can arrive while startup dependencies are loading.
 let win = null;
 
@@ -405,6 +407,7 @@ app.on('window-all-closed', () => {
 });
 
 // ---------- 终端 IPC（node-pty）----------
+ipcMain.handle('pty:options',e=>{remoteWorkspace.guard(e);return localTerminalOptions;});
 ipcMain.handle('pty:spawn', async (e, { id, cwd, cols, rows, autorun, shell: requestedShell, sshProfile }) => {
   remoteWorkspace.guard(e);
   if (terminals.has(id) || remoteWorkspace.ssh.sessions.has(id)) return { ok: false, error: '会话 ID 已存在' };
@@ -451,6 +454,7 @@ ipcMain.handle('pty:spawn', async (e, { id, cwd, cols, rows, autorun, shell: req
         : autorun ? ['-c', String(autorun)] : [];
     p = pty.spawn(shellPath, args, {
       name: 'xterm-256color',
+      ...(localTerminalOptions.windowsPty?{useConpty:localTerminalOptions.windowsPty.backend==='conpty'}:{}),
       cols: cols || 80,
       rows: rows || 24,
       cwd: startCwd,
@@ -511,7 +515,7 @@ ipcMain.handle('drop:save', (e, { name, buf }) => {
 });
 
 ipcMain.on('pty:input', (e, { id, data }) => { try { remoteWorkspace.guard(e); if (remoteWorkspace.authInput(id, data)) return; const p = terminals.get(id); if (p) { if (!p.remote) remoteWorkspace.noteInput(id, data); p.write(data); } } catch {} });
-ipcMain.on('pty:resize', (e, { id, cols, rows }) => { try { remoteWorkspace.guard(e); } catch { return; } const p = terminals.get(id); if (p) { try { p.resize(cols, rows); remoteWorkspace.resized(id, cols, rows); } catch { /* */ } } });
+ipcMain.on('pty:resize', (e, { id, cols, rows }) => { try { remoteWorkspace.guard(e); } catch { return; } const p = terminals.get(id); if (p) { try { if(resizePty(p,cols,rows))remoteWorkspace.resized(id,cols,rows); } catch { /* */ } } });
 ipcMain.on('pty:kill', (e, { id }) => { try { remoteWorkspace.guard(e); } catch { return; } remoteWorkspace.localClosed(id); if (remoteWorkspace.ssh.sessions.has(id)) remoteWorkspace.ssh.disconnect(id); const p = terminals.get(id); if (p) { try { p.kill(); } catch { /* */ } terminals.delete(id); terminalCwds.delete(id); } });
 
 // lsof 在非 UTF-8 locale 下会把中文路径按字节转义成 \xe8 字面量（GUI 启动的 app 不继承 shell 的 locale，

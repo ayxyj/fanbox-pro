@@ -6,6 +6,7 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('fanboxPty', {
+  options: () => ipcRenderer.invoke('pty:options'),
   spawn: (opts) => ipcRenderer.invoke('pty:spawn', opts),
   input: (id, data) => ipcRenderer.send('pty:input', { id, data }),
   resize: (id, cols, rows) => ipcRenderer.send('pty:resize', { id, cols, rows }),
