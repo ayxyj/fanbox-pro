@@ -25,7 +25,8 @@
       receive(data, generation) {
         if (disposed) return;
         queue.push({data, generation});
-        if (!writing && timer === null) timer = setTimeout(drain, 0);
+        // Give xterm the first chunk immediately so it can parse key echoes promptly.
+        if (!writing && timer === null) drain();
       },
       flush() { if(disposed)return Promise.resolve(false);if(!writing&&!queue.length)return Promise.resolve(true);return new Promise(resolve=>waiters.push(resolve)); },
       dispose() { disposed = true; clearTimeout(timer); queue = []; finishFlush(false); },

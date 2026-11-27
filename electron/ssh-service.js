@@ -22,7 +22,7 @@ class SSHService {
     if (!p.proxy?.host) return undefined;
     const proxy = p.proxy, port = Number(proxy.port);
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw Error('代理端口无效');
-    if (proxy.type === 'socks5') return (await SocksClient.createConnection({ proxy: { host: proxy.host, port, type: 5, userId: proxy.username, password: p.proxyPassword }, command: 'connect', destination: { host: p.host, port: p.port }, timeout: 20000 })).socket;
+    if (proxy.type === 'socks5') return (await SocksClient.createConnection({ proxy: { host: proxy.host, port, type: 5, userId: proxy.username, password: p.proxyPassword }, command: 'connect', destination: { host: p.host, port: p.port }, timeout: 20000, set_tcp_nodelay: true })).socket;
     return new Promise((resolve, reject) => {
       const destination = `${p.host.includes(':') ? '[' + p.host + ']' : p.host}:${p.port}`;
       const req = http.request({ host: proxy.host, port, method: 'CONNECT', path: destination, headers: proxy.username ? { 'Proxy-Authorization': 'Basic ' + Buffer.from(proxy.username + ':' + (p.proxyPassword || '')).toString('base64') } : {} });
@@ -117,6 +117,9 @@ class SSHService {
             if (yes) { this.store.data.fingerprints[endpoint] = fingerprint; this.store.persist(); } done(yes);
           }).catch(() => done(false));
         } });
+        // Send interactive keystrokes without waiting to coalesce TCP packets.
+        // For SSH tunnels, the outer connection owns the TCP socket.
+        client.setNoDelay(true);
       } catch (e) { fail(e); }
     });
     return client;
