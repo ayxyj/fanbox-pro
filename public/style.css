@@ -757,7 +757,7 @@ kbd {
 .ctx-sep { height: 1px; background: var(--border); margin: 5px 4px; }
 
 /* ---------- 内嵌终端面板 ---------- */
-#main-body { flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
+#main-body { --terminal-divider:6px; flex: 1; display: flex; min-height: 0; min-width: 0; overflow: hidden; }
 #main-body.dock-bottom { flex-direction: column; }
 #main-body.dock-right { flex-direction: row; }
 /* 文件管理 = 文件区 + 预览（子集）；方向与终端 dock 垂直，二者互不抢空间 */
@@ -775,7 +775,7 @@ kbd {
 #main-body.term-max > #terminal-panel { flex: 1 1 auto !important; width: 100% !important; height: 100% !important; }
 #content { min-height: 0; min-width: 0; }
 
-#terminal-resizer { flex: 0 0 6px; background: transparent; z-index: 5; position: relative; }
+#terminal-resizer { flex: 0 0 var(--terminal-divider); background: transparent; z-index: 5; position: relative; }
 #terminal-resizer.hidden { display: none; }
 .dock-bottom #terminal-resizer { width: 100%; cursor: row-resize; }
 .dock-right #terminal-resizer { height: 100%; cursor: col-resize; }
@@ -783,8 +783,9 @@ kbd {
 #main-body.fm-squeezed > #filemgmt { display: none; }
 #main-body.fm-squeezed > #terminal-panel { flex: 1 1 auto !important; width: auto !important; height: auto !important; }
 
-/* 终端尺寸只由分隔条/applyDock 的内联宽高决定，flex 不增不减——打开预览等都动不了它 */
-#terminal-panel { flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; }
+/* Keep the preferred split size, but cap the visible panel after resolution/zoom changes.
+   CSS limits do not overwrite inline/storage values, so larger screens restore the split. */
+#terminal-panel { max-width:100%; max-height:100%; flex: 0 0 auto; display: flex; flex-direction: column; background: var(--bg); min-height: 0; min-width: 0; }
 #terminal-panel.hidden { display: none; }
 #terminal-panel.term-drop { position: relative; }
 #terminal-panel.term-drop::after {
@@ -795,11 +796,11 @@ kbd {
   animation: dropIn 0.16s cubic-bezier(0.2, 0.7, 0.3, 1);
 }
 @keyframes dropIn { from { opacity: 0; transform: scale(0.985); } to { opacity: 1; transform: scale(1); } }
-.dock-bottom #terminal-panel { width: 100%; border-top: 1px solid var(--border); }
-.dock-right #terminal-panel { height: 100%; border-left: 1px solid var(--border); }
+.dock-bottom #terminal-panel { max-height:calc(100% - var(--terminal-divider)); width: 100%; border-top: 1px solid var(--border); }
+.dock-right #terminal-panel { max-width:calc(100% - var(--terminal-divider)); height: 100%; border-left: 1px solid var(--border); }
 
-.term-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; min-height: 34px; gap: 3px 6px; padding: 3px 6px 3px 8px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex: 0 0 auto; }
-.term-tabs-shell { display: flex; align-items: center; gap: 2px; flex: 1 1 220px; min-width: 160px; max-width: 100%; overflow: hidden; }
+.term-head { min-width:0; max-width:100%; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; min-height: 34px; gap: 3px 6px; padding: 3px 6px 3px 8px; background: var(--bg-2); border-bottom: 1px solid var(--border); flex: 0 0 auto; }
+.term-tabs-shell { display: flex; align-items: center; gap: 2px; flex: 1 1 220px; min-width: min(160px,100%); max-width: 100%; overflow: hidden; }
 .term-tabs-nav { flex: none; width: 22px; height: 24px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--text-dim); cursor: pointer; }
 .term-tabs-nav:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
 .term-tabs-nav:disabled { opacity: .3; cursor: default; }

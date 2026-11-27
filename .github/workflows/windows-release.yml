@@ -69,6 +69,8 @@ jobs:
         run: node tests/terminal-selection-smoke.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify terminal switch rendering
         run: node tests/terminal-switch-render-smoke.js dist/win-unpacked/fanbox-pro.exe
+      - name: Verify terminal controls after display changes
+        run: node tests/terminal-toolbar-display-ui.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify visible terminal questions
         run: node tests/terminal-visible-question-ui.js dist/win-unpacked/fanbox-pro.exe
       - name: Verify Skills close and scan lifecycle
